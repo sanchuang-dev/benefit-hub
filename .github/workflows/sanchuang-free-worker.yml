@@ -1,7 +1,6 @@
-# Sanchuang Organization starter template. Deliberately FAIL-CLOSED until the
-# repository's reviewed enrollment PR sets ENABLED and the real engineering base,
-# and replaces the verification_command sentinel with trustworthy checks.
-# Install on the repository's default branch; never use main as a substitute for dev.
+# Benefit Hub opt-in caller based on the immutable Sanchuang Free Worker V2 template.
+# After review and merge to the repository default dev branch, deliver Draft PRs to dev.
+# A real pnpm baseline is mandatory for code patches; doc-only bootstrap is limited.
 name: Sanchuang Free Worker (opt-in)
 
 on:
@@ -70,7 +69,7 @@ jobs:
         id: guard
         shell: bash
         env:
-          # Repository maintainer must change these in an independently reviewed PR.
+          # Enrollment is specifically reviewed for benefit-hub / dev.
           ENROLLED: "true"
           ENGINEERING_BASE: "dev"
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
