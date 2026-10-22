@@ -1,0 +1,172 @@
+# Benefit Hub paid Worker: repository default dev is also its delivery base.
+# Paid and free worker calls share the same per-Issue concurrency lock.
+# /paid-worker run is explicit paid opt-in; /free-worker run stays on the FREE caller.
+name: Sanchuang Paid Worker (OpenCode Go)
+
+on:
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Existing explicitly authorized OPEN Issue number
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+# Share the free Worker's per-Issue lock to avoid simultaneous paid/free work.
+concurrency:
+  # Valid paid commands share the existing free per-Issue lock. Other comments
+  # must never block a real dispatch, even when malformed or posted by a bot.
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' && (
+        github.event.issue.pull_request ||
+        github.event.comment.user.type != 'User' ||
+        github.event.sender.login != github.event.comment.user.login ||
+        github.actor != github.event.comment.user.login ||
+        github.event.comment.body != '/paid-worker run'
+      )
+      && format('paid-worker-ignored-{0}', github.run_id)
+      || format('free-worker-{0}-{1}', github.repository, github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number)
+    }}
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  enrollment:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issue_comment' && github.event.action == 'created' && startsWith(github.event.comment.body, '/paid-worker'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      issue_number: ${{ steps.guard.outputs.issue_number }}
+    steps:
+      - name: Enforce explicit paid opt-in and live Issue guard
+        id: guard
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO_DEFAULT: ${{ github.event.repository.default_branch }}
+          ACTOR: ${{ github.actor }}
+          EVENT_NAME: ${{ github.event_name }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+        run: |
+          set -euo pipefail
+          # Only a reviewed workflow at the latest default-branch tip is trusted.
+          test "$REPO_DEFAULT" = "dev"
+          test "$GITHUB_REF" = "refs/heads/$REPO_DEFAULT"
+          live_tip="$(gh api "repos/$GITHUB_REPOSITORY/branches/$REPO_DEFAULT" --jq '.commit.sha')"
+          test "$GITHUB_SHA" = "$live_tip" || {
+            echo "::error::Dispatch from the current dev tip, not a stale revision." >&2
+            exit 1
+          }
+          # dev is the approved phase-one implementation AND workflow registration branch.
+          gh api "repos/$GITHUB_REPOSITORY/branches/dev" --jq '.name' | grep -Fxq dev
+          if test "$EVENT_NAME" = issue_comment; then
+            : "${GITHUB_EVENT_PATH:?Missing event payload}"
+            # Match the WHOLE comment, including trailing whitespace/newlines;
+            # do not parse Issue text or interpolate author-controlled code.
+            jq -e '
+              .action == "created" and
+              .comment.body == "/paid-worker run" and
+              .comment.user.type == "User" and
+              .comment.user.login == .sender.login and
+              .issue.state == "open" and
+              (.issue | has("pull_request") | not)
+            ' "$GITHUB_EVENT_PATH" >/dev/null || {
+              echo "::error::Only a newly-created exact /paid-worker run on an open Issue is allowed." >&2
+              exit 1
+            }
+            ISSUE_NUMBER="$(jq -er '.issue.number | numbers' "$GITHUB_EVENT_PATH")"
+            comment_id="$(jq -er '.comment.id | numbers' "$GITHUB_EVENT_PATH")"
+            author="$(jq -r '.comment.user.login' "$GITHUB_EVENT_PATH")"
+            test "$author" = "$ACTOR" || {
+              echo "::error::The event actor and comment author differ." >&2
+              exit 1
+            }
+            case "$comment_id" in ''|*[!0-9]*|0) exit 1 ;; esac
+            # Fresh read after the concurrency queue: edited/deleted comments,
+            # identity changes and moved comments must fail closed.
+            comment_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id")"
+            jq -e --slurpfile event "$GITHUB_EVENT_PATH" '
+              .id == $event[0].comment.id and
+              .user.id == $event[0].comment.user.id and
+              .user.login == $event[0].comment.user.login and
+              .user.type == "User" and
+              .issue_url == $event[0].issue.url and
+              .body == $event[0].comment.body
+            ' <<< "$comment_json" >/dev/null || {
+              echo "::error::Dispatch comment changed or was removed." >&2
+              exit 1
+            }
+          fi
+          case "$ISSUE_NUMBER" in
+            ''|*[!0-9]*|0)
+              echo "::error::Issue number must be a positive integer." >&2
+              exit 1 ;;
+          esac
+          # Check the CURRENT human dispatcher's write authority in either route.
+          permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq '.permission')"
+          case "$permission" in
+            admin|maintain|write) ;;
+            *) echo "::error::Dispatcher lacks live repository write permission." >&2; exit 1 ;;
+          esac
+          issue="$(gh api "repos/$GITHUB_REPOSITORY/issues/$ISSUE_NUMBER")"
+          jq -e '.state == "open" and (has("pull_request") | not) and
+                 ((.body // "" | gsub("[[:space:]]"; "") | length) > 0)' \
+            <<< "$issue" >/dev/null || {
+            echo "::error::Only an existing open work-item Issue is eligible." >&2
+            exit 1
+          }
+          echo "issue_number=$ISSUE_NUMBER" >> "$GITHUB_OUTPUT"
+
+  worker:
+    needs: enrollment
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    uses: sanchuang-dev/.github/.github/workflows/sanchuang-paid-worker.yml@43a2aa17be3451c90cce6cb82425012b26096811
+    with:
+      issue_number: ${{ fromJSON(needs.enrollment.outputs.issue_number) }}
+      base_branch: dev
+      provider: opencode-go
+      model: deepseek-v4.1-flash
+      verification_command: |
+        set -euo pipefail
+        git diff --cached --check
+        changed="$(git diff --cached --name-only)"
+        if test -z "$changed"; then
+          echo "::error::Worker produced no staged patch." >&2
+          exit 1
+        fi
+        if test -f pnpm-lock.yaml && test -f pnpm-workspace.yaml && test -f package.json; then
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+          node - <<'NODE'
+        const scripts = require("./package.json").scripts || {};
+        for (const key of ["lint","typecheck","test","build"]) {
+          const cmd = scripts[key];
+          if (typeof cmd !== "string" || !cmd.trim() || /^(true|echo|:|exit 0)(\s|$)/.test(cmd.trim())) {
+            throw new Error("Missing meaningful package.json script: " + key);
+          }
+        }
+        NODE
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+        else
+          if printf '%s\n' "$changed" | grep -Ev '^(README\.md|AGENTS\.md|docs/.*\.md)$'; then
+            echo "::error::Code or workflow changes require a real pnpm baseline and tests." >&2
+            exit 1
+          fi
+          echo "Documentation-only staged patch passed whitespace and file-scope checks."
+        fi
+    secrets:
+      opencode_go_api_key: ${{ secrets.SANCHUANG_OPENCODE_GO_API_KEY }}

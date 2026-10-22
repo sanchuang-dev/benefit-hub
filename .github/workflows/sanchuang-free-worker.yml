@@ -1,0 +1,217 @@
+# Benefit Hub opt-in caller based on the immutable Sanchuang Free Worker V2 template.
+# After review and merge to the repository default dev branch, deliver Draft PRs to dev.
+# A real pnpm baseline is mandatory for code patches; doc-only bootstrap is limited.
+name: Sanchuang Free Worker (opt-in)
+
+on:
+  # Only newly CREATED comments are dispatch candidates; edits never retrigger.
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Existing explicitly authorized OPEN Issue number
+        required: true
+        type: number
+      model:
+        description: Official native OpenCode free model (no paid fallback)
+        required: true
+        type: choice
+        default: mimo-v2.6-flash-free
+        options:
+          - mimo-v2.6-flash-free
+          - deepseek-v4.1-flash-free
+
+permissions:
+  contents: read
+
+# This lock covers the ENTIRE run: a queued directive is validated only AFTER
+# the prior dispatch finishes. Never validate authorization before queueing.
+# The group is identical for comment and manual dispatches of the same Issue.
+concurrency:
+  # Cheap event-only routing keeps ordinary/PR/bot comments out of the Issue
+  # dispatch lock. This is NOT authorization; enrollment rechecks live GitHub API.
+  group: >-
+    ${{
+      github.event_name == 'issue_comment' && (
+        github.event.issue.pull_request ||
+        github.event.comment.user.type != 'User' ||
+        github.event.sender.login != github.event.comment.user.login ||
+        github.actor != github.event.comment.user.login ||
+        (
+          github.event.comment.body != '/free-worker run' &&
+          github.event.comment.body != '/free-worker run model=mimo-v2.6-flash-free' &&
+          github.event.comment.body != '/free-worker run model=deepseek-v4.1-flash-free'
+        )
+      )
+      && format('free-worker-ignored-{0}', github.run_id)
+      || format('free-worker-{0}-{1}', github.repository, github.event_name == 'issue_comment' && github.event.issue.number || inputs.issue_number)
+    }}
+  # Single-pending mode silently replaces previously authorized dispatches.
+  # GitHub supports up to 100 FIFO waiters; the live guard runs after the wait.
+  queue: max
+  cancel-in-progress: false
+
+jobs:
+  enrollment:
+    # For issue_comment the event always runs at the default branch.
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'issue_comment' && github.event.action == 'created' && startsWith(github.event.comment.body, '/free-worker'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+    outputs:
+      engineering_base: ${{ steps.guard.outputs.engineering_base }}
+      issue_number: ${{ steps.guard.outputs.issue_number }}
+      model: ${{ steps.guard.outputs.model }}
+    steps:
+      - name: Enforce repository-specific opt-in and delivery base
+        id: guard
+        shell: bash
+        env:
+          # Enrollment is specifically reviewed for benefit-hub / dev.
+          ENROLLED: "true"
+          ENGINEERING_BASE: "dev"
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_ISSUE_NUMBER: ${{ inputs.issue_number }}
+          DISPATCH_MODEL: ${{ inputs.model }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          if test "$GITHUB_REF_NAME" != "$DEFAULT_BRANCH"; then
+            echo "::error::Dispatch must run from the repository default branch."
+            exit 1
+          fi
+          if test "$ENROLLED" != "true" || test "$ENGINEERING_BASE" = "__SET_APPROVED_ENGINEERING_BASE__"; then
+            echo "::error::Review enrollment and configure engineering base and verification before dispatch."
+            exit 1
+          fi
+          case "$ENGINEERING_BASE" in
+            main|master|test|prod)
+              echo "::error::Standard Worker cannot target a documentation/default or release branch. Use a separately reviewed exception caller."
+              exit 1
+              ;;
+          esac
+          git check-ref-format --branch "$ENGINEERING_BASE"
+          gh api "repos/$GITHUB_REPOSITORY/branches/$ENGINEERING_BASE" --jq '.name' >/dev/null
+          # Parse user-authored text as data, not workflow expressions or shell code.
+          # Match the complete comment, with no flags, extra lines or arbitrary arguments.
+          if test "$EVENT_NAME" = issue_comment; then
+            : "${GITHUB_EVENT_PATH:?Missing runner-provided GitHub event payload path}"
+            issue_number="$(jq -r '.issue.number // empty' "$GITHUB_EVENT_PATH")"
+            state="$(jq -r '.issue.state // empty' "$GITHUB_EVENT_PATH")"
+            comment_author="$(jq -r '.comment.user.login // empty' "$GITHUB_EVENT_PATH")"
+            sender="$(jq -r '.sender.login // empty' "$GITHUB_EVENT_PATH")"
+            author_type="$(jq -r '.comment.user.type // empty' "$GITHUB_EVENT_PATH")"
+            issue_is_pr="$(jq -r 'has("issue") and (.issue | has("pull_request"))' "$GITHUB_EVENT_PATH")"
+            comment_id="$(jq -er '.comment.id | numbers' "$GITHUB_EVENT_PATH")"
+            test "$state" = open && test "$issue_is_pr" = false ||
+              { echo "::error::Only an open work-item Issue may be dispatched." >&2; exit 1; }
+            test -n "$comment_author" && test "$comment_author" = "$ACTOR" && test "$sender" = "$ACTOR" &&
+              test "$author_type" = User ||
+              { echo "::error::Comment author must be the authenticated human event actor." >&2; exit 1; }
+            case "$issue_number:$comment_id" in
+              *[!0-9:]*|0:*|*:0|:*)
+                echo "::error::Invalid Issue/comment identity." >&2; exit 1 ;;
+            esac
+            # jq compares the JSON string exactly: shell command substitution would
+            # strip trailing newlines and accidentally accept multiline directives.
+            model="$(jq -er '
+              if .comment.body == "/free-worker run" or
+                 .comment.body == "/free-worker run model=mimo-v2.6-flash-free" then
+                "mimo-v2.6-flash-free"
+              elif .comment.body == "/free-worker run model=deepseek-v4.1-flash-free" then
+                "deepseek-v4.1-flash-free"
+              else
+                error("Invalid dispatch directive")
+              end
+            ' "$GITHUB_EVENT_PATH")" ||
+              { echo "::error::Use exactly /free-worker run [model=allowlisted-free-model]." >&2; exit 1; }
+            # Reject edited/deleted comments and mismatched identity at execution time.
+            # Do not trust only the event's potentially stale text or author.
+            comment_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id")"
+            jq -e --slurpfile event "$GITHUB_EVENT_PATH" '
+              .id == $event[0].comment.id and
+              .user.id == $event[0].comment.user.id and
+              .user.login == $event[0].comment.user.login and
+              .user.type == "User" and
+              .issue_url == $event[0].issue.url and
+              .body == $event[0].comment.body
+            ' <<< "$comment_json" >/dev/null ||
+              { echo "::error::Dispatch comment was removed, edited or mismatched." >&2; exit 1; }
+            # Check CURRENT repository permission, not self-declared association in a comment.
+            permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$comment_author/permission" --jq '.permission')"
+            case "$permission" in
+              write|maintain|admin) ;;
+              *) echo "::error::Comment author has no repository write/maintain/admin permission." >&2; exit 1 ;;
+            esac
+            # Recheck live Issue state before granting the worker job any write permission.
+            issue_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/$issue_number")"
+            test "$(jq -r '.state' <<< "$issue_json")" = open &&
+              test "$(jq -r 'has("pull_request")' <<< "$issue_json")" = false &&
+              test "$(jq -r '.body // "" | gsub("[[:space:]]"; "") | length' <<< "$issue_json")" -gt 0 ||
+              { echo "::error::Issue closed, is a PR, or has no task contract." >&2; exit 1; }
+          else
+            issue_number="$DISPATCH_ISSUE_NUMBER"
+            model="$DISPATCH_MODEL"
+            case "$model" in mimo-v2.6-flash-free|deepseek-v4.1-flash-free) ;; *)
+              echo "::error::Invalid free model." >&2; exit 1 ;;
+            esac
+          fi
+          case "$issue_number" in ''|*[!0-9]*|0)
+            echo "::error::Issue number must be a positive integer." >&2; exit 1 ;;
+          esac
+          {
+            echo "engineering_base=$ENGINEERING_BASE"
+            echo "issue_number=$issue_number"
+            echo "model=$model"
+          } >> "$GITHUB_OUTPUT"
+
+  worker:
+    needs: enrollment
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: write
+    uses: sanchuang-dev/.github/.github/workflows/sanchuang-free-worker-v2.yml@985ff50c297b844af65a920bd38f9c0b1ae31098
+    with:
+      issue_number: ${{ fromJSON(needs.enrollment.outputs.issue_number) }}
+      model: ${{ needs.enrollment.outputs.model }}
+      base_branch: ${{ needs.enrollment.outputs.engineering_base }}
+      verification_command: |
+        set -euo pipefail
+        git diff --cached --check
+        changed="$(git diff --cached --name-only)"
+        if test -z "$changed"; then
+          echo "::error::Worker produced no staged patch." >&2
+          exit 1
+        fi
+        if test -f pnpm-lock.yaml && test -f pnpm-workspace.yaml && test -f package.json; then
+          # Once the monorepo exists, every code patch MUST pass real quality scripts.
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+          node - <<'NODE'
+        const scripts = require("./package.json").scripts || {};
+        for (const key of ["lint","typecheck","test","build"]) {
+          const cmd = scripts[key];
+          if (typeof cmd !== "string" || !cmd.trim() || /^(true|echo|:|exit 0)(\s|$)/.test(cmd.trim())) {
+            throw new Error("Missing meaningful package.json script: " + key);
+          }
+        }
+        NODE
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm typecheck
+          pnpm test
+          pnpm build
+        else
+          # The repository currently has no executable pnpm baseline.
+          # Only documentation-only Issues can pass before the scaffold lands.
+          if printf '%s\n' "$changed" | grep -Ev '^(README\.md|AGENTS\.md|docs/.*\.md)$'; then
+            echo "::error::Code or workflow changes require a real pnpm baseline and tests." >&2
+            exit 1
+          fi
+          echo "Documentation-only staged patch passed whitespace and file-scope checks."
+        fi
