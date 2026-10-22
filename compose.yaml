@@ -1,0 +1,35 @@
+# Caddy is installed on the host; do not run a second proxy container.
+services:
+  benefit-hub:
+    image: benefit-hub:${BENEFIT_IMAGE_TAG:-dev}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    ports:
+      - "127.0.0.1:${BENEFIT_HTTP_PORT:-18080}:3000"
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATABASE_FILE: /data/benefit.sqlite
+    volumes:
+      - "${BENEFIT_DATA_DIR:-/srv/benefit-hub/data}:/data"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
