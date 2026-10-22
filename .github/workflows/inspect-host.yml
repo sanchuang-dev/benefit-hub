@@ -1,6 +1,9 @@
 name: Inspect Company Aliyun Host
 
 on:
+  push:
+    branches: [feat/run-caddy-tls-preflight]
+    paths: [.github/workflows/inspect-host.yml]
   workflow_dispatch:
 
 permissions:
