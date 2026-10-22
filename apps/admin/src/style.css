@@ -1,0 +1,8 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100%; }
+body { font-family: Inter, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+.page { min-height: 100vh; background: #f6f7f9; }
+.shell { width: 100%; max-width: 900px; margin: 0 auto; padding: clamp(40px,8vw,96px) 24px; }
+.content { display: flex; width: 100%; }
+.heading { padding: 0 4px; }
+.footnote { margin: 16px 0 0; }

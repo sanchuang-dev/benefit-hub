@@ -1,0 +1,170 @@
+name: Benefit Hub CI
+
+on:
+  push:
+    branches: [dev, feat/bootstrap-runtime]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check lint, strict types, tests and build
+        run: pnpm check
+      - name: Build production Docker image
+        run: docker build --tag benefit-hub:ci .
+      - name: Verify runtime health and disabled fulfillment
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name benefit-hub-ci \
+            --publish 127.0.0.1:18081:3000 \
+            --tmpfs /data \
+            benefit-hub:ci
+          trap 'docker rm -f benefit-hub-ci >/dev/null 2>&1 || :' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18081/healthz >/tmp/benefit-health.json; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = "1" || { docker logs benefit-hub-ci; exit 1; }
+          grep -q '"status":"ok"' /tmp/benefit-health.json
+          curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
+            grep -q '"vendorFulfillmentEnabled":false'
+          curl --fail --silent http://127.0.0.1:18081/ |
+            grep -q '<title>Benefit Hub'
+
+      - name: Export verified image for dev deployment
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker tag benefit-hub:ci "benefit-hub:${GITHUB_SHA}"
+          docker save "benefit-hub:${GITHUB_SHA}" | gzip -1 > benefit-image.tar.gz
+          test -s benefit-image.tar.gz
+      - name: Upload verified image
+        if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benefit-image
+          path: benefit-image.tar.gz
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  deploy:
+    needs: verify
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: benefit-image
+      - name: Install SSH transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+      - name: Verify server and deploy isolated Benefit Hub stack
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+          DEPLOY_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          case "$DEPLOY_SHA" in *[!a-f0-9]*|'') echo "::error::Invalid commit SHA."; exit 1 ;; esac
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Server identity not on approved target."; exit 1 ;;
+          esac
+          case "$TARGET_PORT" in *[!0-9]*|'') echo "::error::Invalid SSH port."; exit 1 ;; esac
+          case "$TARGET_USER" in *[!a-zA-Z0-9_.-]*|'') echo "::error::Invalid SSH user."; exit 1 ;; esac
+          test -n "$SSHPASS" || { echo "::error::SSH password secret missing."; exit 1; }
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = "8.148.148.135"
+          mkdir -m 700 -p "$RUNNER_TEMP/ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
+          test -s "$RUNNER_TEMP/ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = "SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw" || { echo "::error::SSH host fingerprint drift."; exit 1; }
+          ssh_opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ConnectTimeout=15 -p "$TARGET_PORT")
+          connect() { sshpass -e ssh "${ssh_opts[@]}" "$TARGET_USER@$TARGET_HOST" "$@"; }
+          connect 'sh -s' <<'REMOTE'
+          set -eu
+          test "$(id -u)" = 0 || { echo "Expected restricted deployment target user configuration."; exit 1; }
+          command -v docker
+          docker compose version
+          docker info --format '{{.ServerVersion}}'
+          if ss -lnt | grep -Eq '127\.0\.0\.1:18080\b|0\.0\.0\.0:18080\b|\*:18080\b'; then
+            if ! docker ps --format '{{.Names}}' | grep -Fxq 'benefit-hub-benefit-hub-1'; then
+              echo "Port 18080 occupied by an unrelated process; refusing to deploy."; exit 1
+            fi
+          fi
+          mkdir -p /srv/benefit-hub/releases /srv/benefit-hub/data
+          chown 10001:10001 /srv/benefit-hub/data
+          chmod 700 /srv/benefit-hub/data
+          REMOTE
+          scp_opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ConnectTimeout=15 -P "$TARGET_PORT")
+          sshpass -e scp "${scp_opts[@]}" benefit-image.tar.gz "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/releases/$DEPLOY_SHA.tar.gz"
+          sshpass -e scp "${scp_opts[@]}" compose.yaml "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/compose.yaml"
+          connect "DEPLOY_SHA=$DEPLOY_SHA sh -s" <<'REMOTE'
+          set -eu
+          cd /srv/benefit-hub
+          gzip -dc "/srv/benefit-hub/releases/$DEPLOY_SHA.tar.gz" | docker load
+          docker image inspect "benefit-hub:$DEPLOY_SHA" >/dev/null
+          prev=""
+          if test -f .env; then
+            prev="$(sed -n 's/^BENEFIT_IMAGE_TAG=//p' .env | head -1)"
+          fi
+          echo "BENEFIT_IMAGE_TAG=$DEPLOY_SHA" > .env
+          echo "BENEFIT_HTTP_PORT=18080" >> .env
+          echo "BENEFIT_DATA_DIR=/srv/benefit-hub/data" >> .env
+          chmod 600 .env
+          docker compose --project-name benefit-hub -f compose.yaml config -q
+          if ! docker compose --project-name benefit-hub -f compose.yaml up -d --no-build; then
+            echo "Startup failed"
+            if test -n "$prev" && docker image inspect "benefit-hub:$prev" >/dev/null 2>&1; then
+              sed -i "s/^BENEFIT_IMAGE_TAG=.*/BENEFIT_IMAGE_TAG=$prev/" .env
+              docker compose --project-name benefit-hub -f compose.yaml up -d --no-build || :
+            fi
+            exit 1
+          fi
+          ok=0
+          for n in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          if test "$ok" != 1; then
+            docker compose --project-name benefit-hub -f compose.yaml ps
+            echo "Health check failed"
+            if test -n "$prev" && docker image inspect "benefit-hub:$prev" >/dev/null 2>&1; then
+              sed -i "s/^BENEFIT_IMAGE_TAG=.*/BENEFIT_IMAGE_TAG=$prev/" .env
+              docker compose --project-name benefit-hub -f compose.yaml up -d --no-build || :
+            fi
+            exit 1
+          fi
+          docker compose --project-name benefit-hub -f compose.yaml ps
+          curl --fail --silent http://127.0.0.1:18080/healthz
+          echo
+          echo "Benefit Hub internal deployment verified. No public Caddy route is configured by this job."
+          REMOTE

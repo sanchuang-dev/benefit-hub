@@ -1,0 +1,28 @@
+{
+  "name": "@sanchuang-dev/benefit-admin",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "antd": "^6.0.0",
+    "react-router": "^7.9.0",
+    "@tanstack/react-query": "^5.90.0",
+    "zustand": "^5.0.8",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/node": "^22.18.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.0",
+    "@vitejs/plugin-react": "^5.0.0"
+  }
+}

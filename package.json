@@ -1,0 +1,21 @@
+{
+  "name": "@sanchuang-dev/benefit-hub",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.19.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "oxlint apps",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm build && pnpm -r --if-present test",
+    "build": "pnpm -r --if-present build",
+    "check": "pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "devDependencies": {
+    "oxlint": "^1.35.0",
+    "typescript": "^5.9.3"
+  }
+}
