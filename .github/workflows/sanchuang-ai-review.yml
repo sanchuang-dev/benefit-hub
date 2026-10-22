@@ -1,0 +1,54 @@
+# Organization AI Review gateway. Runs only from trusted dev-base workflow code.
+# PR head is untrusted and is NEVER checked out or executed with provider credentials.
+name: Sanchuang AI PR Review
+
+on:
+  pull_request_target:
+    branches: [dev]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-${{ github.repository }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  configuration:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Validate repository-specific reviewer configuration
+        shell: bash
+        env:
+          REVIEW_ENDPOINT: ${{ vars.SANCHUANG_AI_REVIEW_ENDPOINT }}
+          REVIEW_MODEL: ${{ vars.SANCHUANG_AI_REVIEW_MODEL }}
+          HAS_KEY: ${{ secrets.SANCHUANG_AI_REVIEW_API_KEY != '' }}
+        run: |
+          set -euo pipefail
+          if test "$HAS_KEY" != "true" || test -z "$REVIEW_MODEL"; then
+            echo "::error::Configure SANCHUANG_AI_REVIEW_API_KEY (secret) and SANCHUANG_AI_REVIEW_MODEL (variable)." >&2
+            exit 1
+          fi
+          case "$REVIEW_ENDPOINT" in
+            https://*) ;;
+            *) echo "::error::Configure HTTPS SANCHUANG_AI_REVIEW_ENDPOINT repository variable." >&2; exit 1 ;;
+          esac
+
+  review:
+    needs: configuration
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    uses: sanchuang-dev/.github/.github/workflows/ai-review-openai-compatible.yml@6d61f17fa3f3c49af141d39c529639697395c665
+    with:
+      pr_number: ${{ github.event.pull_request.number }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      endpoint: ${{ vars.SANCHUANG_AI_REVIEW_ENDPOINT }}
+      model: ${{ vars.SANCHUANG_AI_REVIEW_MODEL }}
+    secrets:
+      api_key: ${{ secrets.SANCHUANG_AI_REVIEW_API_KEY }}
