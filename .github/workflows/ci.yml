@@ -124,8 +124,9 @@ jobs:
           chown 10001:10001 /srv/benefit-hub/data
           chmod 700 /srv/benefit-hub/data
           REMOTE
-          sshpass -e scp "${ssh_opts[@]}" benefit-image.tar.gz "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/releases/$DEPLOY_SHA.tar.gz"
-          sshpass -e scp "${ssh_opts[@]}" compose.yaml "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/compose.yaml"
+          scp_opts=(-o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PubkeyAuthentication=no -o PreferredAuthentications=password -o ConnectTimeout=15 -P "$TARGET_PORT")
+          sshpass -e scp "${scp_opts[@]}" benefit-image.tar.gz "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/releases/$DEPLOY_SHA.tar.gz"
+          sshpass -e scp "${scp_opts[@]}" compose.yaml "$TARGET_USER@$TARGET_HOST:/srv/benefit-hub/compose.yaml"
           connect "DEPLOY_SHA=$DEPLOY_SHA sh -s" <<'REMOTE'
           set -eu
           cd /srv/benefit-hub
