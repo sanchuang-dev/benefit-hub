@@ -1,0 +1,50 @@
+name: Benefit Hub CI
+
+on:
+  push:
+    branches: [dev, feat/bootstrap-runtime]
+  pull_request:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Enable pinned pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check lint, strict types, tests and build
+        run: pnpm check
+      - name: Build production Docker image
+        run: docker build --tag benefit-hub:ci .
+      - name: Verify runtime health and disabled fulfillment
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name benefit-hub-ci \
+            --publish 127.0.0.1:18081:3000 \
+            --tmpfs /data \
+            benefit-hub:ci
+          trap 'docker rm -f benefit-hub-ci >/dev/null 2>&1 || :' EXIT
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18081/healthz >/tmp/benefit-health.json; then ready=1; break; fi
+            sleep 1
+          done
+          test "$ready" = "1" || { docker logs benefit-hub-ci; exit 1; }
+          grep -q '"status":"ok"' /tmp/benefit-health.json
+          curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
+            grep -q '"vendorFulfillmentEnabled":false'
+          curl --fail --silent http://127.0.0.1:18081/ |
+            grep -q '<title>Benefit Hub'
