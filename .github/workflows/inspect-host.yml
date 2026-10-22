@@ -113,5 +113,15 @@ jobs:
           for item in lines[-70:]:
               print(item)
           '
+          printf '\n== CADDY ROLLBACK STATE ==\n'
+          systemctl is-active caddy || :
+          if grep -Fq 'benefit.proto.3cgroup.cn {' /etc/caddy/Caddyfile; then
+            echo 'BENEFIT_ROUTE_PRESENT=yes'
+          else
+            echo 'BENEFIT_ROUTE_PRESENT=no'
+          fi
+          sha256sum /etc/caddy/Caddyfile | cut -d ' ' -f 1 | sed 's/^/LIVE_CADDY_SHA256=/'
+          printf '\n== LOCAL BENEFIT UPSTREAM ==\n'
+          curl -fsS --max-time 6 http://127.0.0.1:18080/healthz || :
           printf '\n== FINISHED (READ-ONLY) ==\n'
           REMOTE
