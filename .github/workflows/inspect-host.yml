@@ -87,5 +87,28 @@ jobs:
           fi
           printf '\n== CADDY ==\n'
           command -v caddy 2>/dev/null || :
+          printf '\n== CADDY TLS ISSUANCE (2026-10-22 06:58–07:02 UTC, allowlisted fields only) ==\n'
+          journalctl --utc -u caddy --since '2026-10-22 06:58:00 UTC' \
+            --until '2026-10-22 07:02:30 UTC' -o cat --no-pager 2>/dev/null | \
+            python3 -c '
+          import json, sys, re
+          keys = ("level", "logger", "msg", "error", "identifier", "domain", "issuer", "challenge_type")
+          lines = []
+          for raw in sys.stdin:
+              if not any(token in raw.lower() for token in ("benefit", "certificate", "acme", "challenge", "tls", "rate limit")):
+                  continue
+              try:
+                  obj = json.loads(raw)
+              except (ValueError, TypeError):
+                  continue
+              selected = {key: obj[key] for key in keys if isinstance(obj.get(key), str)}
+              if not selected:
+                  continue
+              data = json.dumps(selected, ensure_ascii=False)
+              data = re.sub(r"(?i)(token|password|authorization|secret)[=:\\s]+[^,\\s}]+", r"\\1=[REDACTED]", data)
+              lines.append(data[:1200])
+          for item in lines[-70:]:
+              print(item)
+          '
           printf '\n== FINISHED (READ-ONLY) ==\n'
           REMOTE
