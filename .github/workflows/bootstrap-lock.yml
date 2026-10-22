@@ -1,0 +1,45 @@
+# Temporary bootstrap workflow to generate an exact pnpm lockfile on feature branch.
+# Cannot affect dev or production, and must be removed before merge.
+name: Bootstrap pnpm lockfile
+
+on:
+  push:
+    branches: [feat/bootstrap-runtime]
+    paths:
+      - package.json
+      - pnpm-workspace.yaml
+      - apps/api/package.json
+      - apps/admin/package.json
+      - .github/workflows/bootstrap-lock.yml
+
+permissions:
+  contents: write
+
+jobs:
+  lockfile:
+    if: github.repository == 'sanchuang-dev/benefit-hub' && github.ref == 'refs/heads/feat/bootstrap-runtime'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/bootstrap-runtime
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate and commit pnpm lockfile
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.19.0 --activate
+          pnpm install --lockfile-only --no-frozen-lockfile
+          test -s pnpm-lock.yaml
+          git diff --check
+          if git status --porcelain pnpm-lock.yaml | grep -q .; then
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git config user.name "github-actions[bot]"
+            git add pnpm-lock.yaml
+            git commit -m "build: freeze pnpm workspace lockfile"
+            git push origin HEAD:feat/bootstrap-runtime
+          fi
