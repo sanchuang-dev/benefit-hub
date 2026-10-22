@@ -1,0 +1,91 @@
+name: Inspect Company Aliyun Host
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Preflight identity and credentials
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          HAS_PASSWORD: ${{ secrets.PROTO_SSH_KEY != '' }}
+        run: |
+          set -euo pipefail
+          test "$HAS_PASSWORD" = "true" || { echo "::error::PROTO_SSH_KEY is missing."; exit 1; }
+          test -n "$TARGET_USER" && test -n "$TARGET_PORT" || { echo "::error::SSH user/port missing."; exit 1; }
+          case "$TARGET_PORT" in *[!0-9]*|'') echo "::error::Invalid SSH port."; exit 1 ;; esac
+          case "$TARGET_USER" in *[!a-zA-Z0-9_.-]*|'') echo "::error::Invalid SSH username."; exit 1 ;; esac
+          # This host was independently identified from the company's existing
+          # proto.3cgroup.cn DNS and a previously trusted SSH known_hosts entry.
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::PROTO_HOST does not identify the independently verified prototype server."; exit 1 ;;
+          esac
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = "8.148.148.135" || {
+            echo "::error::Prototype DNS has drifted; reverify target host."; exit 1;
+          }
+      - name: Install SSH inspection client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Verify pinned host identity and inspect read-only
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 -p "$RUNNER_TEMP/ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
+          test -s "$RUNNER_TEMP/ssh/known_hosts" || { echo "::error::Unable to read host public key."; exit 1; }
+          fingerprint="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fingerprint" = "SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw" || {
+            echo "::error::Host SSH identity mismatch; refusing to connect."; exit 1;
+          }
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -o ConnectTimeout=12 \
+            -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          printf '== HOST ==\n'; hostname; uname -a
+          printf '\n== OS ==\n'; cat /etc/os-release 2>/dev/null || :
+          printf '\n== ID/PERMISSIONS ==\n'; id; if sudo -n true >/dev/null 2>&1; then echo sudo_noninteractive=yes; else echo sudo_noninteractive=no; fi
+          printf '\n== DOCKER ==\n'
+          if command -v docker >/dev/null 2>&1; then
+            docker --version || :
+            docker compose version || :
+            docker info --format 'ServerVersion={{.ServerVersion}} Driver={{.Driver}}' 2>/dev/null || echo docker_daemon_unavailable_or_permission_denied
+          else
+            echo docker_command_missing
+          fi
+          printf '\n== SYSTEM RESOURCES ==\n'
+          df -h / || :
+          free -h || :
+          printf '\n== PORTS ==\n'
+          (ss -lnt 2>/dev/null || netstat -lnt 2>/dev/null || :) | head -35
+          printf '\n== SERVICES ==\n'
+          if command -v systemctl >/dev/null 2>&1; then
+            for service in caddy docker containerd nginx; do
+              printf '%s: ' "$service"
+              systemctl is-active "$service" 2>/dev/null || :
+            done
+          fi
+          printf '\n== CADDY ==\n'
+          command -v caddy 2>/dev/null || :
+          printf '\n== FINISHED (READ-ONLY) ==\n'
+          REMOTE
