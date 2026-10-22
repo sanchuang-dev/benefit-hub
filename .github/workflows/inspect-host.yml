@@ -153,5 +153,20 @@ jobs:
               --write-out 'CURL_HTTP=%{http_code} REMOTE_IP=%{remote_ip} TOTAL=%{time_total}s\\n' \
               https://acme-v02.api.letsencrypt.org/directory || echo "ACME_PROTOCOL_FAILED=yes"
           done
+          printf '\n== ACME ALTERNATIVE ENDPOINTS / REPEATABILITY ==\n'
+          for endpoint in \
+            https://acme-v02.api.letsencrypt.org/directory \
+            https://acme.zerossl.com/v2/DV90 \
+            https://api.zerossl.com/; do
+            echo "ENDPOINT=$endpoint"
+            for attempt in 1 2 3; do
+              printf 'ATTEMPT=%s ' "$attempt"
+              curl --noproxy '*' -4 --http2 -sS \
+                --connect-timeout 4 --max-time 10 \
+                --output /dev/null \
+                --write-out 'HTTP=%{http_code} TCP=%{time_connect}s TLS=%{time_appconnect}s TOTAL=%{time_total}s\\n' \
+                "$endpoint" || echo "REQUEST_FAILED=yes"
+            done
+          done
           printf '\n== FINISHED (READ-ONLY) ==\n'
           REMOTE
