@@ -123,5 +123,35 @@ jobs:
           sha256sum /etc/caddy/Caddyfile | cut -d ' ' -f 1 | sed 's/^/LIVE_CADDY_SHA256=/'
           printf '\n== LOCAL BENEFIT UPSTREAM ==\n'
           curl -fsS --max-time 6 http://127.0.0.1:18080/healthz || :
+          printf '\n== ACME OUTBOUND CONNECTIVITY (NO CONFIG CHANGES) ==\n'
+          printf 'UTC='; date -u +%FT%TZ
+          printf 'ACME_DNS_A_RECORDS='; getent ahostsv4 acme-v02.api.letsencrypt.org | awk '{print $1}' | sort -u | paste -sd, - || :
+          printf 'ACME_DNS_AAAA_RECORDS='; getent ahostsv6 acme-v02.api.letsencrypt.org | awk '{print $1}' | sort -u | paste -sd, - || :
+          printf 'IPV6_DEFAULT_ROUTE='
+          if ip -6 route show default 2>/dev/null | grep -q '^default '; then echo yes; else echo no; fi
+          for var in HTTPS_PROXY HTTP_PROXY ALL_PROXY NO_PROXY; do
+            if printenv "$var" >/dev/null 2>&1; then echo "PROXY_VAR_${var}=present"; else echo "PROXY_VAR_${var}=absent"; fi
+          done
+          for family in 4 6; do
+            for endpoint in \
+              https://acme-v02.api.letsencrypt.org/directory \
+              https://acme-staging-v02.api.letsencrypt.org/directory; do
+              echo "CHECK_IPv${family}_${endpoint}"
+              curl --noproxy '*' -"${family}" --http1.1 -sS \
+                --connect-timeout 4 --max-time 11 \
+                --output /dev/null \
+                --write-out 'CURL_HTTP=%{http_code} REMOTE_IP=%{remote_ip} TCP=%{time_connect}s TLS=%{time_appconnect}s TOTAL=%{time_total}s\\n' \
+                "$endpoint" || echo "ACME_CONNECTIVITY_FAILED=yes"
+            done
+          done
+          printf '\n== ACME HTTP2 VS HTTP1 (IPv4) ==\n'
+          for version in --http1.1 --http2; do
+            echo "PROTOCOL=$version"
+            curl --noproxy '*' -4 "$version" -sS \
+              --connect-timeout 4 --max-time 11 \
+              --output /dev/null \
+              --write-out 'CURL_HTTP=%{http_code} REMOTE_IP=%{remote_ip} TOTAL=%{time_total}s\\n' \
+              https://acme-v02.api.letsencrypt.org/directory || echo "ACME_PROTOCOL_FAILED=yes"
+          done
           printf '\n== FINISHED (READ-ONLY) ==\n'
           REMOTE
