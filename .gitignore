@@ -1,0 +1,22 @@
+# Dependencies and build outputs
+**/node_modules/
+**/dist/
+**/.vite/
+**/coverage/
+**/test-results/
+**/playwright-report/
+
+# Local runtime files and credentials
+.env
+.env.*
+!.env.example
+**/*.sqlite
+**/*.sqlite-*
+**/*.db
+**/*.db-*
+*.pem
+*.key
+**/*.log
+
+# OS/editor files
+.DS_Store

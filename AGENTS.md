@@ -23,6 +23,11 @@ Node.js 22, TypeScript strict, Hono, pnpm workspaces, React/Vite/Ant Design, Rea
 - SQLite is on persistent /data volume, outside the image. Deploys and rollbacks must never delete it or auto-downgrade schema.
 - Respect provider contracts; credentials live server-side, never in browser bundle.
 
+## Code quality and directory ownership
+- Follow [docs/code-quality.md](docs/code-quality.md) for module paths, naming, risk-tiered Q1/Q2/Q3 tests, and PR review evidence; do not generate empty architecture scaffolding.
+- Vitest is the unified unit/integration runner; frontend UI tests use React Testing Library with jsdom. Playwright is not yet installed.
+- Keep Ant Design as the UI base; no replacement basic controls or second design system.
+
 ## Verification
 For changes involving signing, persistence, credentials, schema or deployment: require independent contract tests and exact-commit evidence. Docker image builds and real runtime health must be verified before claiming deployment. No green-by-mock or disabled checks. Host inspections precede port allocation, Docker installation or Caddy edits.
 
