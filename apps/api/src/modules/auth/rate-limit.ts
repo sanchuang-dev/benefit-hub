@@ -38,15 +38,25 @@ export function createFailureRateLimiter(options: FailureRateLimiterOptions): Fa
     return active;
   };
 
-  const pruneIfLarge = (at: number): void => {
-    if (failures.size <= MAX_TRACKED_KEYS) return;
-    // Deleting entries while iterating a Map is well-defined.
+  const pruneExpiredIfFull = (at: number): void => {
+    if (failures.size < MAX_TRACKED_KEYS) return;
+    // A wave of distinct usernames must not grow the limiter without bound.
     for (const key of failures.keys()) activeTimestamps(key, at);
+  };
+
+  const atCapacityForNewKey = (key: string, at: number): boolean => {
+    if (failures.has(key)) return false;
+    pruneExpiredIfFull(at);
+    return failures.size >= MAX_TRACKED_KEYS;
   };
 
   return {
     check(key) {
       const at = now();
+      if (atCapacityForNewKey(key, at)) {
+        // Fail closed rather than evicting another account's active lockout.
+        return { allowed: false, retryAfterSeconds: Math.max(Math.ceil(options.windowMs / 1000), 1) };
+      }
       const active = activeTimestamps(key, at);
       if (active.length < options.maxFailures) return { allowed: true, retryAfterSeconds: 0 };
 
@@ -57,7 +67,7 @@ export function createFailureRateLimiter(options: FailureRateLimiterOptions): Fa
 
     recordFailure(key) {
       const at = now();
-      pruneIfLarge(at);
+      if (atCapacityForNewKey(key, at)) return;
       const active = activeTimestamps(key, at);
       active.push(at);
       failures.set(key, active);
