@@ -62,9 +62,10 @@ apps/
       app.ts
   admin/
     src/
+      app/              # 路由、Provider、主题及页面骨架
       pages/            # 总览/商品/发放/系统设置
-      features/
-      components/
+      features/         # 业务域内部组件与数据交互
+      shared/           # 仅真实跨模块复用的能力
 packages/
   contracts/            # 跨前后端的公共 DTO/Schema，不能含密钥
   provider-yangmao/     # 签名、协议、供应商返回的归一化
@@ -81,7 +82,7 @@ Dockerfile
 compose.yaml
 ```
 
-业务模块不能直接引用 provider 内部签名实现或供应商表结构；供应商适配层不能直接决定运营侧的商品展示、定价和活动规则。
+目录展示仅表示**目标归属而非必须预建的空目录**；详细命名和测试放置以 [code-quality.md](./code-quality.md) 为准。业务模块不能直接引用 provider 内部签名实现或供应商表结构；供应商适配层不能直接决定运营侧的商品展示、定价和活动规则。
 
 ## 4. 代码与 API 纪律
 

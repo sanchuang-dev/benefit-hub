@@ -1,6 +1,6 @@
 # Benefit Hub · 组织 Worker 与 AI Review 接入
 
-> 第一版：2026-10-22。本文是工程开关和运维说明，**不是已运行成功的声明**。仓库默认分支/施工基线均为 `dev`。组织规范以 [sanchuang-dev/.github/AGENTS.md](https://github.com/sanchuang-dev/.github/blob/main/AGENTS.md) 当前版本为准。
+> 2026-10-23 复核。本文是工程开关和运维说明，**工作流入口已进入 dev，但不能据此宣称真实 Worker 派工或 AI Review 已通过端到端验收**。仓库默认分支/施工基线均为 `dev`。组织规范以 [sanchuang-dev/.github/AGENTS.md](https://github.com/sanchuang-dev/.github/blob/main/AGENTS.md) 当前版本为准。
 
 ## 1. 接入的三个组织能力
 
@@ -22,14 +22,11 @@
 - 免费与付费共享 `free-worker-<repo>-<issue>` 并发锁，**不并行执行同一 Issue**。
 - Worker 不得合并、关卡、部署、发布、自动创建 Issue，也没有真实供应商环境凭证。
 
-### 当前 pnpm 基线缺失时的真实门槛
+### 当前 pnpm / Worker 验证基线
 
-当前 `dev` 仓库只有 README，**尚没有**可运行的 pnpm Workspace + lockfile + Hono/React 代码。调用器采用双条件真实验证：
+当前 `dev` **已经具备**可运行的 pnpm Workspace、lockfile、Hono/React bootstrap 和真实 `lint`、`typecheck`、`test`、`build` 脚本。两个 Worker caller 对代码补丁要求 `pnpm install --frozen-lockfile` 与全部质量检查，使用组织固定的 pnpm 10.19.0；PR #7 将原有 `node:test` 切换为 Vitest，合入之前依照 `dev` 当前实际测试命令验收。
 
-1. 如存在 `package.json`、`pnpm-workspace.yaml`、`pnpm-lock.yaml`：必须有有意义的 `lint`、`typecheck`、`test`、`build` 脚本，且执行 `pnpm install --frozen-lockfile` 和全部检查。
-2. 如缺少上述任一基线文件：仅允许 `README.md`、`AGENTS.md`、`docs/**/*.md` 文档修改通过；**任何应用代码、CI/workflow 或 Docker 文件改动均失败**。
-
-两种情况均执行暂存差异空白检查和非空补丁检查。不能用 `true`、`echo pass` 或禁用检查伪造验收。后续实现工作区时，需要冻结真实脚本、pnpm 版本，重新审查这段验证命令。
+Caller 中保留“当工作区三要件缺失时仅允许文档补丁”的历史兜底逻辑；**那不是当前仓库没有代码的证明，也不可用于规避应用代码质量验证**。暂存差异空白检查、非空补丁检查持续生效，不得通过 `true`、`echo pass` 或禁用检查伪造验收。
 
 ## 3. 初次设置（GitHub Actions）
 
@@ -39,7 +36,7 @@
 - AI Review：此仓库需要 Variables `SANCHUANG_AI_REVIEW_ENDPOINT`（完整 HTTPS OpenAI-compatible chat/completions 路径或可追加该路径的 /v1）、`SANCHUANG_AI_REVIEW_MODEL`（网关实际支持的模型标识）；Secret `SANCHUANG_AI_REVIEW_API_KEY`。
 - 组织 reusable workflow 必须允许跨仓库调用；新项目初次接入需要跑一次真实 Issue → Draft PR 和一次真实 PR Review 才能标记全链路可用。
 
-这些凭证/Variable 当前**没有通过工具检查过真实设置或成功调用**，不能把 workflow 文件存在理解为“模型已连通”。
+仓库已有的 PR #6/#7 **组织 AI Review 均在配置校验阶段失败**，没有进入模型审查，见 [PR #6 Run](https://github.com/sanchuang-dev/benefit-hub/actions/runs/39746190399) 和 [PR #7 Run](https://github.com/sanchuang-dev/benefit-hub/actions/runs/39754107500)。这不能简单归因为某一个具体 Secret 缺失，因为当前没有足够证据读取其配置状态；修好后仍需真实审查成功记录。付费 Worker 凭证、免费 Worker 能否在 Benefit Hub 完成真实 Issue→Draft PR，同样尚未通过该仓库的端到端验证。
 
 ### AI Review 安全边界
 
@@ -49,7 +46,7 @@ Review 的结论是组织 P0–P2 缺陷与验证缺口判断，**不替代人�
 
 ## 4. 生效与核验步骤
 
-1. 独立审查这个接入 PR 并合入 `dev`。仓库默认分支才会注册实际触发入口；PR 当前分支上的 workflow 尚不是可用执行入口。
+1. **Caller 已合入默认 `dev`**，仍要核对默认分支当前工作流和权限；文件存在或历史 PR 合并不意味着每条派工链已成功烟测。
 2. 核实上述权限、Secrets、Variables；**仅公开仓库代码与文档，不暴露任何 Key**。
 3. 选一张明确授权的低风险 Open Issue 验证免费或付费 Worker，检查 `worker → verify → delivery`、Draft PR 的 base、diff 与实际 CI。
 4. 提交有实质差异的 `feat/* → dev` 测试 PR，核对 AI Review 的组织标准化评审评论及当前 commit 身份。
