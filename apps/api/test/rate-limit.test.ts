@@ -2,6 +2,20 @@ import { describe, expect, it } from 'vitest';
 import { createFailureRateLimiter } from '../src/modules/auth/rate-limit.js';
 
 describe('login failure limiter cardinality', () => {
+  it('holds concurrent reservations without counting successful requests as failures', () => {
+    const limiter = createFailureRateLimiter({ maxFailures: 2, windowMs: 30_000, now: () => 1000 });
+    expect(limiter.reserve('user').allowed).toBe(true);
+    expect(limiter.reserve('user').allowed).toBe(true);
+    expect(limiter.reserve('user').allowed).toBe(false);
+    limiter.settle('user', false);
+    expect(limiter.reserve('user').allowed).toBe(true);
+    limiter.settle('user', true);
+    limiter.settle('user', false);
+    expect(limiter.reserve('user').allowed).toBe(true);
+    limiter.settle('user', true);
+    expect(limiter.reserve('user').allowed).toBe(false);
+  });
+
   it('never grows past the fixed key cap even with a flood of distinct account names', () => {
     let now = 10_000;
     const limiter = createFailureRateLimiter({

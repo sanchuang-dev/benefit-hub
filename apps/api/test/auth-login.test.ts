@@ -115,6 +115,35 @@ describe('admin login', () => {
     expect((await limited.json()).error).toBe('TOO_MANY_ATTEMPTS');
   });
 
+  it('reserves limiter slots before concurrent password checks', async () => {
+    await seedAccount(server, { username: 'ops.admin' });
+
+    // Each client obtains its own CSRF token. All 12 password checks are
+    // submitted concurrently; only five can reach credential verification.
+    const responses = await Promise.all(
+      Array.from({ length: 12 }, (_, index) =>
+        new TestClient(server).login('ops.admin', `incorrect-password-${index}`),
+      ),
+    );
+    const statuses = responses.map((response) => response.status);
+    expect(statuses.filter((status) => status === 401)).toHaveLength(5);
+    expect(statuses.filter((status) => status === 429)).toHaveLength(7);
+  });
+
+  it('does not clear address-wide failures after another account logs in successfully', async () => {
+    await seedAccount(server, { username: 'ops.admin' });
+    const client = new TestClient(server);
+
+    expect((await client.login('unknown-0', 'wrong-password')).status).toBe(401);
+    expect((await client.login('ops.admin', TEST_PASSWORD)).status).toBe(200);
+    for (let i = 1; i < 20; i += 1) {
+      expect((await client.login(`unknown-${i}`, 'wrong-password')).status).toBe(401);
+    }
+    const limited = await client.login('another-user', 'wrong-password');
+    expect(limited.status).toBe(429);
+    expect((await limited.json()).error).toBe('TOO_MANY_ATTEMPTS');
+  });
+
   it('does not authenticate an account with invalid input lengths', async () => {
     await seedAccount(server, { username: 'ops.admin' });
     const client = new TestClient(server);

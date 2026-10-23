@@ -29,7 +29,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   });
 
   app.use(
-    '/api/v1/*',
+    '*',
     secureHeaders({
       xFrameOptions: 'DENY',
       xContentTypeOptions: 'nosniff',

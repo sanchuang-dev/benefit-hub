@@ -86,9 +86,11 @@ export function createAuthRoutes(deps: { db: AppDatabase; config: AppConfig }): 
     const accountKey = `account:${username}`;
     const addressKey = `address:${clientAddress(c, config)}`;
 
-    const accountLimit = accountLimiter.check(accountKey);
-    const addressLimit = addressLimiter.check(addressKey);
+    const accountLimit = accountLimiter.reserve(accountKey);
+    const addressLimit = addressLimiter.reserve(addressKey);
     if (!accountLimit.allowed || !addressLimit.allowed) {
+      if (accountLimit.allowed) accountLimiter.settle(accountKey, false);
+      if (addressLimit.allowed) addressLimiter.settle(addressKey, false);
       const retryAfterSeconds = Math.max(accountLimit.retryAfterSeconds, addressLimit.retryAfterSeconds, 1);
       recordAuthEvent(db, 'login.rate_limited', { detail: 'too_many_attempts' });
       return c.json(apiError('TOO_MANY_ATTEMPTS', '尝试次数过多，请稍后再试'), 429, {
@@ -97,37 +99,43 @@ export function createAuthRoutes(deps: { db: AppDatabase; config: AppConfig }): 
       });
     }
 
-    const account = findAccountByUsername(db, username);
-    const passwordValid = await verifyPasswordOrDummy(parsed.data.password, account?.passwordHash ?? null);
+    let rejected = false;
+    try {
+      const account = findAccountByUsername(db, username);
+      const passwordValid = await verifyPasswordOrDummy(parsed.data.password, account?.passwordHash ?? null);
 
-    if (!account || account.disabled || !passwordValid) {
-      accountLimiter.recordFailure(accountKey);
-      addressLimiter.recordFailure(addressKey);
-      recordAuthEvent(db, 'login.failed', {
-        accountId: account?.id ?? null,
-        detail: account?.disabled ? 'account_disabled' : 'invalid_credentials',
-      });
-      return c.json(apiError('INVALID_CREDENTIALS', '账号或密码不正确'), 401, NO_STORE_HEADERS);
+      if (!account || account.disabled || !passwordValid) {
+        rejected = true;
+        recordAuthEvent(db, 'login.failed', {
+          accountId: account?.id ?? null,
+          detail: account?.disabled ? 'account_disabled' : 'invalid_credentials',
+        });
+        return c.json(apiError('INVALID_CREDENTIALS', '账号或密码不正确'), 401, NO_STORE_HEADERS);
+      }
+
+      accountLimiter.reset(accountKey);
+      // Keep address-wide failure history: logging into a different valid
+      // account must not wipe prior failures against other usernames.
+      purgeExpiredSessions(db);
+
+      const session = createSession(db, account.id, config.sessionTtlMs);
+      setSessionCookie(c, session, config);
+      const csrfToken = issueCsrfToken(c, config);
+      recordAuthEvent(db, 'login.succeeded', { accountId: account.id });
+
+      return c.json(
+        {
+          admin: publicAccount(account),
+          session: { expiresAt: session.expiresAt },
+          csrfToken,
+        },
+        200,
+        NO_STORE_HEADERS,
+      );
+    } finally {
+      accountLimiter.settle(accountKey, rejected);
+      addressLimiter.settle(addressKey, rejected);
     }
-
-    accountLimiter.reset(accountKey);
-    addressLimiter.reset(addressKey);
-    purgeExpiredSessions(db);
-
-    const session = createSession(db, account.id, config.sessionTtlMs);
-    setSessionCookie(c, session, config);
-    const csrfToken = issueCsrfToken(c, config);
-    recordAuthEvent(db, 'login.succeeded', { accountId: account.id });
-
-    return c.json(
-      {
-        admin: publicAccount(account),
-        session: { expiresAt: session.expiresAt },
-        csrfToken,
-      },
-      200,
-      NO_STORE_HEADERS,
-    );
   });
 
   router.post('/logout', (c) => {

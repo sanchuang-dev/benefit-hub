@@ -44,6 +44,17 @@ describe('Benefit Hub bootstrap API', () => {
     expect(response.headers.get('referrer-policy')).toBe('no-referrer');
   });
 
+  it('protects the login SPA shell against framing, not only API responses', async () => {
+    const app = createBootstrapApp();
+    // The production server adds its SPA fallback routes after createApp().
+    app.get('/login', (c) => c.html('<!doctype html><html><body>login</body></html>'));
+    const response = await app.request('/login');
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-frame-options')).toBe('DENY');
+    expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(response.headers.get('referrer-policy')).toBe('no-referrer');
+  });
+
   it('returns a JSON 404 for unknown API routes', async () => {
     const response = await createBootstrapApp().request('/api/v1/nope');
     expect(response.status).toBe(404);
