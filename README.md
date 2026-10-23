@@ -8,6 +8,7 @@ Benefit Hub 独立提供权益供应商适配、内部发放订单与履约查�
 
 | 入口 | 内容 |
 | --- | --- |
+| [数字权益模块 V1 业务战略](docs/digital-benefits-strategy-v1.md) | **上层数字中台战略背景**；不扩大 Benefit Hub 一期范围 |
 | [产品一期范围](docs/product-scope.md) | 服务适配层、四页运营后台、首期不做的事项、验收目标 |
 | [技术架构](docs/architecture.md) | Hono、React/Ant Design、pnpm、SQLite/Drizzle、代码架构和数据边界 |
 | [羊毛接口契约摘要](docs/integrations/yangmao.md) | A/B/C/D 供应商流程、签名、限领、履约、待联调问题 |
