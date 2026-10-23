@@ -1,6 +1,6 @@
 # Benefit Hub · 第一阶段部署与运维约定
 
-> 2026-10-22 已确定的环境策略及待验证操作。**不是部署完成记录。**
+> 2026-10-22 更新：**基础容器及公网 HTTPS 入口已完成实证**；数据库、管理员登录、真实供应商业务能力及备份恢复仍需单独交付、验证。此文不代表真实权益运营就绪。
 >
 > 架构见 [architecture.md](./architecture.md)，产品范围见 [product-scope.md](./product-scope.md)。`sanchuang-dev/proto-infra` 继续独立维护其静态原型和 Caddy 约定。
 
@@ -14,18 +14,18 @@
 
 ## 2. 服务器及隔离
 
-目标是公司**新买的**、目前用于原型展示的阿里云 2C2G 服务器；必须先核实机型、内存、磁盘、Docker/Compose、现有监听端口及 Caddy 现状，不能把仓库 README 当运行时证明。
+基础设施已经通过 GitHub Actions 远程检查：公司阿里云原型服务器 8.148.148.135，Docker/Compose 与 Caddy 已运行；Benefit Hub 应用容器在独立目录部署。未来修改网络/部署策略时仍必须重新核实现场状态，不能把静态文档当运行时证明。
 
 ```text
 外部 HTTPS
     |
 宿主机现有 Caddy（保持原型服务正常）
     |
-127.0.0.1:18080（提议端口，未检查占用）
+127.0.0.1:18080（已验证的回环监听端口）
     |
 Benefit Hub 单应用容器（Hono + React 静态产物）
     |
-/data/benefit.sqlite
+/data/benefit.sqlite（规划，业务库尚未落地）
     |
 宿主机 /srv/benefit-hub/data（独立持久化）
 ```
@@ -35,19 +35,19 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 - 宿主机端口仅监听 `127.0.0.1`；外部 80/443 继续由现有 Caddy 管理。
 - Docker/Compose 运行目录、挂载和权限独立于 `/srv/proto`；不能清理或覆盖已存在的原型网站。
 - 容器以非 root 运行；镜像内不嵌供应商 Secret、SSH 密码、管理员明文密码。
-- `Dockerfile`、`compose.yaml` 当前是**工程草案**，应用工作区及 lockfile 未落地，不能声称可成功构建/运行。
+- 当前 Dockerfile、compose.yaml、pnpm workspace 与 lockfile 已进入 dev；已完成构建、容器健康检查和原型入口访问，**并不意味着登录、订单或数据库业务功能已实现**。
 
 ## 3. 镜像构建及交付
 
-目前倾向：
+当前基础部署路径已验收，后续业务版本仍按相同安全门槛推进：
 
 1. 对 `feat/*` PR 执行 pnpm lint/typecheck/test/build，并验证 Docker 构建。
 2. 经审查合并到 `dev`，CI 再构建同一来源的容器镜像，按**不可变 commit SHA** 标记。
-3. 镜像通过 GHCR 或安全的镜像传输方式送到公司服务器；**是否使用 GHCR、访问权限和国内网络可达性仍需验证**，不能提前断言已接通。
+3. 当前 CI 将已构建验证的镜像导出为归档文件，经已核验主机身份的 SSH 传输到公司服务器并 docker load；**没有声称已接入 GHCR**。
 4. 部署仅更新 Benefit Hub 的独立 Compose 服务；持久化目录不随镜像替换删除。
 5. 验证容器健康检查、`GET /healthz`、后台登录入口、真实 HTTPS 访问和已存在原型站点未受影响。
 
-**当前尚未实现自动部署 workflow**；目标是将来 `dev` 合并可自动部署，并保留失败停止与上一个健康镜像回退。
+**当前已有 dev push 构建与自动部署 workflow**：feature PR 只进行 CI，dev push 会构建镜像并尝试部署。即使是纯文档合并，也会触发不必要的容器重建/部署；需要在工作流演进时加入文档路径排除或其他经审核的跳过机制。
 
 ## 4. SSH 与 Secrets
 
@@ -60,7 +60,7 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 | `PROTO_SSH_PORT` | SSH 端口 |
 | `PROTO_SSH_KEY` | **SSH 登录密码**（名称沿用，不解释成私钥） |
 
-用户已表示配置了新仓库 Secret，但我们**无法读取其值，也尚未用 workflow 验证实际可用**。不另造 `PROTO_PASSWORD` 命名，也不因实现工具方便擅自改为私钥认证。
+上述仓库 Secret 的登录链路已通过实际 GitHub Actions 验证；**无法也不应该回显其值**。不另造 `PROTO_PASSWORD` 命名，也不因实现工具方便擅自改为私钥认证。
 
 部署前核验 SSH 主机身份，不关闭主机验证；勿在日志、命令行参数输出或仓库中暴露密码。管理后台 Session Secret、羊毛 AppSecret 等**运行时**秘密与上述 SSH 部署密钥分别管理，待首次联调时明确加载方式。
 
@@ -75,22 +75,24 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 
 ## 6. 发布门槛与验收证据
 
-- [ ] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API、React Admin，且镜像构建验证通过。
-- [ ] 公司新服务器 Docker/Compose、磁盘/内存、端口占用和已运行 Caddy/原型服务已读检查。
-- [ ] SSH 凭证实际可用、主机身份已核实；无明文 Secret 进入 CI 日志或镜像。
+- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；实际运营页面仍待实现。
+- [x] 公司原型服务器 Docker/Compose、端口占用及 Caddy/原型服务已读检查（后续变更须复核）。
+- [x] SSH 凭证链路和主机指纹已在 CI 实测通过；不得回显 Secret。
 - [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在。
 - [ ] 镜像有可回退的上一个健康版本，数据库迁移与备份有明确恢复方案。
-- [ ] Caddy 新站点路由经验证，已有网站不回归，真实 HTTPS 入口可访问。
+- [x] Caddy Benefit Hub 新站点和 HTTPS 健康检查通过，发布作业也回归检查了既有原型站点；真实后台登录仍未实现。
 - [ ] 业务发券启用前，签名、幂等、异常恢复、管理员访问控制通过合同与真实联调验收。
 
 **明确禁止**：自动部署触发时无条件安装 Docker、开放新公网端口、覆盖 `/etc/caddy/Caddyfile`、修改别的项目 Compose 服务、删除挂载的数据目录。
 
 ## 7. 第一阶段仍未确定的基础设施细节
 
-- Benefit Hub 域名、Caddy 站点配置位置和内网监听端口（18080 暂为提议）。
-- Docker/Compose 是否已安装，2C2G 当前资源是否足够，实际系统与磁盘容量。
-- 镜像发布与拉取路径：GHCR 直拉或可靠的其他传输途径。
+- Benefit Hub 域名、Caddy 站点配置和 18080 回环端口已验证；未来变更仍归 proto-infra 与 Benefit Hub 各自仓库所有。
+- Docker/Compose 与基本可运行性已验证；实际业务负载下的 2C2G 资源容量仍需测量。
+- 当前使用 CI 镜像归档经 SSH 传输，未来是否改用 GHCR 需另行验证国内网络和安全性。
 - 生产环境的应用级密钥和管理员初始化/更换方案。
 - 备份位置、自动化频率及恢复演练责任。
 
-这些须以真实服务器检查结果为准，不允许凭历史对话或静态仓库文件推断上线成功。
+部署证据（2026-10-22）：[应用基础构建/部署](https://github.com/sanchuang-dev/benefit-hub/actions/runs/39738038904)、[公网 Caddy/HTTPS 真实验收](https://github.com/sanchuang-dev/proto-infra/actions/runs/39741032139)。
+
+**本期还缺**：数据库持久化与迁移、备份恢复演练、管理员认证和权限、真实供应商接口凭证与联调、履约订单与安全发放流程。任何进一步上线声明都必须凭新证据，不能凭上述基础设施部署替代。

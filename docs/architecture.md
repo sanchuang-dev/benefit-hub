@@ -1,6 +1,6 @@
 # Benefit Hub · 技术架构与工程决策
 
-> 状态：第一期设计基线（2026-10-22）。这里记录**已经讨论确定**的架构与工程边界，不代表功能已经实现。
+> 状态：第一期技术路线（2026-10-22 更新）。**基础设施占位应用已部署，真实后台业务功能、登录与供应商履约尚未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
 >
 > 视觉、颜色、排版、页面组件的风格规范只属于根目录 `design.md`。产品功能范围见 [product-scope.md](./product-scope.md)，羊毛供应商契约见 [integrations/yangmao.md](./integrations/yangmao.md)，部署见 [operations.md](./operations.md)。
 
@@ -44,9 +44,9 @@
 | 管理端内部类型 | Hono RPC 类型推导可选 | 不能替代真正的 HTTP 运行时校验 |
 | 入口与 TLS | 服务器已有 Caddy | 不在业务容器里再运行一套反向代理 |
 
-技术依赖精确版本以首次 lockfile 为准；这里是选型，不是已经完成安装的清单。
+基础工作区与 lockfile 已存在；当前 apps/admin/package.json 中已声明 React 19、Ant Design ^6.0.0、React Router 7、TanStack Query 5、Zustand 5 和 lucide-react。**依赖声明不等于后台页面已交付**；以 lockfile 与 CI 的实际构建为准。
 
-## 3. 代码组织（目标结构，尚未落地）
+## 3. 代码组织（业务目标结构；基础工作区已建立，模块未全部落地）
 
 ```text
 apps/
@@ -62,9 +62,10 @@ apps/
       app.ts
   admin/
     src/
+      app/              # 路由、Provider、主题及页面骨架
       pages/            # 总览/商品/发放/系统设置
-      features/
-      components/
+      features/         # 业务域内部组件与数据交互
+      shared/           # 仅真实跨模块复用的能力
 packages/
   contracts/            # 跨前后端的公共 DTO/Schema，不能含密钥
   provider-yangmao/     # 签名、协议、供应商返回的归一化
@@ -81,7 +82,7 @@ Dockerfile
 compose.yaml
 ```
 
-业务模块不能直接引用 provider 内部签名实现或供应商表结构；供应商适配层不能直接决定运营侧的商品展示、定价和活动规则。
+目录展示仅表示**目标归属而非必须预建的空目录**；详细命名和测试放置以 [code-quality.md](./code-quality.md) 为准。业务模块不能直接引用 provider 内部签名实现或供应商表结构；供应商适配层不能直接决定运营侧的商品展示、定价和活动规则。
 
 ## 4. 代码与 API 纪律
 
@@ -93,6 +94,54 @@ compose.yaml
 - **前端**：用 Ant Design 成熟组件实现表单/表格；URL 参数记录可分享筛选；TanStack Query 管理数据刷新，发券类动作不做“乐观成功”。
 - **安全**：公开仓库不得提交真实 API 密钥、登录密码、手机号样本、卡密、数据库文件、备份或脱敏前日志。
 - **CI 期望**：`pnpm install --frozen-lockfile`，lint、typecheck、test、build；关键调用链在适配、幂等和数据状态层提供针对性的集成证据。
+
+## 4A. 前端技术路线：Ant Design First（施工强约束）
+
+设计及交互的唯一规范来源：[../design.md](../design.md)。**选用 Ant Design 6 就以其为 UI 基础，不再自建同类组件体系**。该规则适用于人工、牛马和任何代码生成工具；不因示例看起来更漂亮而绕开组件库。
+
+### 组件选型与禁止项
+
+| 能力 | 第一选择 | 不接受的做法 |
+| --- | --- | --- |
+| 全局布局与菜单 | Ant Design Layout / Menu / Grid | 手写第二套 Layout、导航树和折叠交互 |
+| 工作页签与商品 Tab | Tabs（工作页签可用 editable-card），业务两 Tab 使用受控 Tabs | 自制 tab DOM/状态库、重复打开同一路由 |
+| 表格 | Table 的 pagination/columns/fixed/scroll/empty/ellipsis | 手写原生 table、分页与固定列系统 |
+| 商品双视图 | Table + Card/Row/Col 或 Grid + Segmented | 第二套独立数据列表、手写分段控件 |
+| 筛选与编辑 | Form / Form.Item + Input / Select / DatePicker / InputNumber / Switch | 手工 DOM 校验、自造 Input/Select 组件 |
+| 商品/订单详情 | Drawer + Descriptions + Tabs/Timeline | 自造 Overlay/抽屉/时间线 |
+| 映射流程 | Steps + Form + Modal/Popconfirm + Alert / Tag | 新造步骤条、确认框、状态标签 |
+| 加载/空状态/反馈 | Skeleton、Spin、Empty、Result、Alert、App.useApp() 的 message/notification/modal | 自造 Toast、Spinner、Modal provider |
+| 主题/全局尺寸 | ConfigProvider theme.token + theme.components | 大片 CSS 强行覆盖 .ant-* 内部 DOM 或再建一套 token 引擎 |
+
+- 默认使用 Ant Design 6 **正式支持的属性、API 与 Design Token**；如实际 lockfile 版本与官方最新文档不一致，以仓库已安装版本为准。
+- 入口以 ConfigProvider（zh_CN、主题）包裹 Ant Design App，并在组件下通过 App.useApp() 获取反馈实例。不要混杂静态 message 调用与另一套自制反馈系统。
+- 外层页面网格和极少量品牌封面样式可以使用普通 CSS；业务状态编排可以写 React 组合组件，**但组合组件内部调用 Ant Design 标准控件，不重实现标准组件**。
+- 当前仓库已安装 lucide-react：只作为已有的导航/语义图标方案；不再额外引入多套互相重复的 Icon/UI 组件库。禁止图标仅以颜色表达状态。
+- **暂不引入** Tailwind、shadcn/ui、Material UI、Mantine、Ant Design Pro 整套脚手架、额外 form/table/state/UI 框架。未来如果确有 Ant Design 缺口，先提交具体差异与使用理由，再评审是否引入；本次讨论不授权新增。
+
+### 页面、路由和状态的所有权
+
+- React Router 管理登录入口、四个主导航页、独立订单详情、浏览器历史与 URL 查询参数。顶部工作页签使用受控 Tabs 与路由映射；路由才是页面位置的来源，避免再复制一套“当前页面”真相源。
+- TanStack Query 管理 API 读写、分页缓存、失效、重试与可观察的加载/错误状态。**供应商扣额/发放/映射激活等写操作不做乐观成功**。
+- React 局部 useState / Ant Design Form 实例承载当前编辑会话、草稿表单及临时 Drawer 状态。只有确属跨页面共享的 UI 偏好才使用 Zustand；不要把整份列表数据或 Query 缓存搬进 Zustand。
+- 商品两个业务 Tab 分别保持筛选、分页、排序与表格/卡片偏好；卡片和 Table **消费相同的请求结果**。URL 查询参数可分享；用户切换页面不应悄悄丢失条件。
+- 用户权限来自服务端会话与权限判断；前端可以隐藏/禁用操作并解释原因，但不能充当鉴权边界。
+
+### 映射版本与权限属于服务端领域，不是组件状态
+
+- 每个内部商品同一时刻最多一条生效供应商映射；版本历史与订单版本关联由数据库和 API 保证，不能靠只显示一个选中 Card 来保证。
+- 保存草稿、校验、显式激活是**三次不同业务意图/操作**：保存草稿不生效，字段变化会使校验结果过期；激活前确认差异，服务端核查草稿版本与前置条件，审计保存和激活；切换生效版本要有并发保护。
+- 校验区分本地规则与供应商实际契约测试；上游未联调时不能在正式业务页面显示“已验证成功”。
+- 管理权限分只读查看者、管理员两层，不引入 RBAC 引擎/审批流；供应商原始商品数据只读，后台内不允许擅自修改上游。
+- 订单详情必须分别呈现“供应商是否受理”“是否扣额度”“用户是否履约”“最后核实”，**不从 HTTP 200 或 code=0 推导业务完成**。
+
+### 交付和代码卫生
+
+1. **先实现标准组件页**：登录封面 + Form；Layout/Menu/Tabs 骨架；商品 Table/Card/Segmented；Drawer 详情；再接草稿/校验/激活与履约时间线。无必要不先抽象通用业务框架。
+2. 设计 Token 统一放在顶层 ConfigProvider；业务 CSS 仅写布局/封面/必要局部空隙，不穿透篡改 Ant Design 私有类名；重复功能一处实现。
+3. 验收必须包含浏览器实图：1366px 桌面与窄屏；表格/卡片切换、两个 Tab 筛选状态保持、路由/页签一致性、抽屉关闭未保存提示、无数据/异常/权限态、键盘焦点。
+4. 使用真实 API 前不允许靠随机假订单或永远成功的 mock 形成“功能已完成”结论。功能未接入就展示明确的未实现提示；合同测试可用隔离的固定测试夹具。
+5. 后端仍遵守签名、幂等、权限、审计和 SQLite 持久化约束；前端组件选型不降低真实履约的验收门槛。
 
 ## 5. 核心领域与状态原则
 
@@ -148,9 +197,9 @@ compose.yaml
 
 ### 待验证/待选
 - AppKey/AppSecret、refCode、测试/生产地址以及 A/B/C 与 D 的完整细分文档、商品编码；是否提供供测试使用的安全沙箱。
-- 订单最终状态表、管理员初始化与权限颗粒度、后台 UI 视觉风格（写入 `design.md`）。
-- 服务器 Docker/Compose 版本、磁盘余量、可用端口、Caddy 路由与 HTTPS 域名。
-- 镜像从 CI 到服务器的具体传输及鉴权方式、数据备份/恢复演练、迁移时序。
+- 订单最终状态表、管理员初始化/重置与 CSRF 防护细节；UI 风格已冻结在根目录 design.md，但尚未实施。
+- 基础容器/HTTPS 已有实机验收记录；业务登录与真实数据能力仍需单独验收，后续服务器资源容量按实际负载检查。
+- CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态**：仓库当前只有初始 README，以及 Draft PR #1 内的 Docker 草案和本文档。应用、工作区锁文件、自动部署流水线、实机运行与接口联调都未交付。
+**实施状态（2026-10-22 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过；**登录、商品目录/映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。
