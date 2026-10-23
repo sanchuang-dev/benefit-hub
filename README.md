@@ -1,6 +1,6 @@
 # Benefit Hub · 三创权益服务与轻量运营平台
 
-**阶段：基础运行/HTTPS 已上线，运营后台和真实供应商履约尚未实现。** 本仓库公开；严禁提交供应商密钥、用户记录、卡密、数据库或运行时日志。
+**阶段：基础运行/HTTPS 已上线；管理员账号密码登录与最小权限已在代码中实现（BHB-002，待线上验收）；商品、订单与真实供应商履约尚未实现。** 本仓库公开；严禁提交供应商密钥、用户记录、卡密、数据库或运行时日志。
 
 Benefit Hub 独立提供权益供应商适配、内部发放订单与履约查询、轻量运营后台。第一家供应商为羊毛系统，覆盖 A/B/C/D 四种 Open API 模式；不替业务项目实现支付、抽奖、积分清算。
 
@@ -23,12 +23,14 @@ Benefit Hub 独立提供权益供应商适配、内部发放订单与履约查�
 - SQLite + Drizzle 单实例；数据库脱离 Docker 镜像持久化。必要时经迁移计划切换 PostgreSQL。
 - 单应用容器提供 API/运营前端；使用宿主机已有 Caddy，CI 侧编译并交付镜像，避免给 2C2G 服务器增加构建压力。
 
-## 当前状态（2026-10-22 有实证的范围）
+## 当前状态（2026-10-23 有实证的范围）
 
 - **已运行**：dev 具备 Node/Hono 与 React/Ant Design 基础占位页、pnpm workspace/lockfile、Docker CI/CD。原型公网入口为 https://benefit.proto.3cgroup.cn/ ，健康检查返回 service=benefit-hub。
-- **尚未交付**：账号密码登录、四模块实际运营页面、内部/供应商商品目录、草稿/校验/显式激活的映射版本、订单履约持久化、真实羊毛系统 A/B/C/D 联调与发券能力。
+- **BHB-002 已实现（待合并后线上验收）**：品牌封面登录页、SQLite 管理员账号（scrypt 哈希）、HttpOnly/Secure/SameSite 会话、CSRF 双重提交、登录限速、`admin`/`viewer` 服务端权限判断、退出/过期反馈、SQLite 迁移与审计事件、管理员初始化/重置 CLI。验证方式见 `apps/api/test`、`apps/admin/src/**/*.test.tsx` 与 [docs/operations.md](docs/operations.md)。
+- **尚未交付**：四模块实际运营页面、内部/供应商商品目录、草稿/校验/显式激活的映射版本、订单履约持久化、真实羊毛系统 A/B/C/D 联调与发券能力。
 - **UI 设计与技术路线**：以 [design.md](design.md) 和 [docs/architecture.md](docs/architecture.md) 为施工依据。Ant Design 能解决的 UI 不能自造替代组件。
 - **安全边界**：基础页面在线不等于可真实对客提供权益，禁止把模拟数据/未实现功能表述为真实发放。
+- **管理员账号**：代码与镜像中没有任何默认账号或默认密码；首次部署后必须通过服务器上的 `node dist/cli/admin.js` 创建，步骤见 [docs/operations.md](docs/operations.md#管理员账号初始化与重置bhb-002)。
 
 基础容器部署证据：[Benefit Hub CI](https://github.com/sanchuang-dev/benefit-hub/actions/runs/39738038904)；独立 Caddy HTTPS 入口验证：[proto-infra](https://github.com/sanchuang-dev/proto-infra/actions/runs/39741032139)。后续功能须各自验收，不从基础健康检查推断实现。
 
