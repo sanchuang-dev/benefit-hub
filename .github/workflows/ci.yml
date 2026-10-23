@@ -34,7 +34,7 @@ jobs:
           set -euo pipefail
           docker run --detach --name benefit-hub-ci \
             --publish 127.0.0.1:18081:3000 \
-            --tmpfs /data \
+            --tmpfs /data:rw,uid=10001,gid=10001,mode=0700 \
             benefit-hub:ci
           trap 'docker rm -f benefit-hub-ci >/dev/null 2>&1 || :' EXIT
           ready=0

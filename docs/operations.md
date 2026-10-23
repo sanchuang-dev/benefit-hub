@@ -1,6 +1,6 @@
 # Benefit Hub · 第一阶段部署与运维约定
 
-> 2026-10-22 更新：**基础容器及公网 HTTPS 入口已完成实证**；数据库、管理员登录、真实供应商业务能力及备份恢复仍需单独交付、验证。此文不代表真实权益运营就绪。
+> 2026-10-23 更新：**基础容器及公网 HTTPS 入口已完成实证**；管理员登录与最小权限已在代码中实现（BHB-002），线上验收、真实供应商业务能力及备份恢复仍需单独交付、验证。此文不代表真实权益运营就绪。
 >
 > 架构见 [architecture.md](./architecture.md)，产品范围见 [product-scope.md](./product-scope.md)。`sanchuang-dev/proto-infra` 继续独立维护其静态原型和 Caddy 约定。
 
@@ -64,12 +64,40 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 
 部署前核验 SSH 主机身份，不关闭主机验证；勿在日志、命令行参数输出或仓库中暴露密码。管理后台 Session Secret、羊毛 AppSecret 等**运行时**秘密与上述 SSH 部署密钥分别管理，待首次联调时明确加载方式。
 
+### 管理员账号初始化与重置（BHB-002）
+
+- 代码中**不存在**默认管理员账号或默认密码；首次部署后由运维管理员在服务器上创建账号。
+- 密码只从标准输入读取，且必须通过管道传入，避免进入 shell 历史、进程参数或镜像层：
+
+```bash
+# 在容器内创建首个管理员（密码不回显）
+read -rs ADMIN_PASSWORD
+printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
+  exec -T benefit-hub node dist/cli/admin.js create --username ops --password-stdin
+```
+
+- 其他命令：`create --role viewer` 创建只读账号、`reset-password` 重置密码、`disable` 停用账号、`list` 列出账号。重置密码或停用会同时撤销该账号的全部现有会话。
+- 密码策略：至少 12 个字符、不超过 256 个字符、首尾不能为空白、不能包含账号名。
+- 数据库迁移在应用启动时按序自动应用（`schema_migrations` 记录），只允许新增；镜像回滚不会自动回滚或删除数据结构。
+
+### 登录相关的运行时配置
+
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
+| `DATABASE_FILE` | `/data/benefit.sqlite` | 持久化卷内路径 |
+| `SESSION_TTL_HOURS` | `8` | 会话绝对有效期（1–168） |
+| `COOKIE_SECURE` | `NODE_ENV=production` 时为 true | 生产必须保持 true；本地 http 联调才可关闭 |
+| `TRUST_PROXY` | `false`（compose 为 `true`） | 仅当宿主机 Caddy 在容器前时才信任 `X-Forwarded-For` |
+
+登录限速（同一账号 15 分钟 5 次失败、同一来源 15 分钟 20 次）保存在进程内存，重启只会解除锁定，不会放行凭据。
+
 ## 5. SQLite 数据安全
 
 - 首期只有一个应用写实例，文件位于 `/data/benefit.sqlite`（挂载宿主机 `/srv/benefit-hub/data`，路径可经确认调整）。
 - 原定运行 UID/GID 10001，首次部署前检查目录权限与宿主机所有权。
 - 使用 SQLite 一致性备份机制（backup API 或 `VACUUM INTO` 等），不能只复制正在使用的主 DB 而忽略 WAL。
 - 数据库 migration 与镜像升级分开审查；回滚镜像不等于回滚数据结构，禁止自动删库/重建。
+- BHB-002 引入的迁移只做 `CREATE TABLE/INDEX`，启动时自动应用并记录；已有管理员账号、会话与审计记录在重启和再次迁移后保留（由 `apps/api/test/db-migrations.test.ts` 验证）。会话存在 SQLite 中，容器重启后仍然有效，直到绝对有效期结束、退出、改密或停用。
 - 避免多个服务实例/容器同时把同一个 SQLite 文件当多主数据库使用。
 - 启用备份保留和实际恢复演练后才可承载真实权益扣减与发放记录。
 
@@ -78,9 +106,9 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 - [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；实际运营页面仍待实现。
 - [x] 公司原型服务器 Docker/Compose、端口占用及 Caddy/原型服务已读检查（后续变更须复核）。
 - [x] SSH 凭证链路和主机指纹已在 CI 实测通过；不得回显 Secret。
-- [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在。
+- [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在（BHB-002 仅在本地临时 SQLite 验证迁移/重启，未在服务器复核）。
 - [ ] 镜像有可回退的上一个健康版本，数据库迁移与备份有明确恢复方案。
-- [x] Caddy Benefit Hub 新站点和 HTTPS 健康检查通过，发布作业也回归检查了既有原型站点；真实后台登录仍未实现。
+- [x] Caddy Benefit Hub 新站点和 HTTPS 健康检查通过，发布作业也回归检查了既有原型站点；账号密码登录已在代码中实现并通过本地 HTTP/SQLite 测试，**线上登录验收仍未进行**。
 - [ ] 业务发券启用前，签名、幂等、异常恢复、管理员访问控制通过合同与真实联调验收。
 
 **明确禁止**：自动部署触发时无条件安装 Docker、开放新公网端口、覆盖 `/etc/caddy/Caddyfile`、修改别的项目 Compose 服务、删除挂载的数据目录。
@@ -95,4 +123,4 @@ Benefit Hub 单应用容器（Hono + React 静态产物）
 
 部署证据（2026-10-22）：[应用基础构建/部署](https://github.com/sanchuang-dev/benefit-hub/actions/runs/39738038904)、[公网 Caddy/HTTPS 真实验收](https://github.com/sanchuang-dev/proto-infra/actions/runs/39741032139)。
 
-**本期还缺**：数据库持久化与迁移、备份恢复演练、管理员认证和权限、真实供应商接口凭证与联调、履约订单与安全发放流程。任何进一步上线声明都必须凭新证据，不能凭上述基础设施部署替代。
+**本期还缺**：线上管理员初始化与登录验收、备份恢复演练、真实供应商接口凭证与联调、履约订单与安全发放流程。任何进一步上线声明都必须凭新证据，不能凭上述基础设施部署替代。

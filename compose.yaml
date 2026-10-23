@@ -14,6 +14,11 @@ services:
       HOST: 0.0.0.0
       PORT: "3000"
       DATABASE_FILE: /data/benefit.sqlite
+      # Session cookies must be Secure behind the host Caddy TLS terminator.
+      COOKIE_SECURE: "true"
+      # Caddy sets X-Forwarded-For; the app port is only published on 127.0.0.1.
+      TRUST_PROXY: "true"
+      SESSION_TTL_HOURS: "8"
     volumes:
       - "${BENEFIT_DATA_DIR:-/srv/benefit-hub/data}:/data"
     read_only: true
