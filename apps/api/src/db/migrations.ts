@@ -88,4 +88,66 @@ export const migrations: readonly Migration[] = [
         ON catalog_product_events (product_id, created_at);
     `,
   },
+  {
+    id: '0003_benefit_orders',
+    sql: `
+      CREATE TABLE IF NOT EXISTS benefit_orders (
+        id TEXT PRIMARY KEY NOT NULL,
+        business_source TEXT NOT NULL,
+        business_order_no TEXT NOT NULL,
+        product_id TEXT NOT NULL REFERENCES catalog_products(id) ON DELETE RESTRICT,
+        fulfillment_mode TEXT NOT NULL CHECK (fulfillment_mode IN ('A', 'B', 'C', 'D')),
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'processing', 'awaiting_claim', 'partially_completed', 'completed', 'failed', 'unknown')
+        ),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (length(business_source) BETWEEN 1 AND 64),
+        CHECK (length(business_order_no) BETWEEN 1 AND 128)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_benefit_orders_business_identity
+        ON benefit_orders (business_source, business_order_no);
+      CREATE INDEX IF NOT EXISTS idx_benefit_orders_product_created
+        ON benefit_orders (product_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_benefit_orders_status_created
+        ON benefit_orders (status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS benefit_order_status_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        order_id TEXT NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'processing', 'awaiting_claim', 'partially_completed', 'completed', 'failed', 'unknown')
+        ),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_benefit_order_status_events_version
+        ON benefit_order_status_events (order_id, version);
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_status_events_order_created
+        ON benefit_order_status_events (order_id, created_at, version);
+
+      CREATE TABLE IF NOT EXISTS fulfillment_attempts (
+        id TEXT PRIMARY KEY NOT NULL,
+        order_id TEXT NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL CHECK (operation IN ('grant', 'query', 'reissue')),
+        upstream_request_no TEXT,
+        upstream_order_no TEXT,
+        result TEXT NOT NULL CHECK (result IN ('accepted', 'rejected', 'unknown')),
+        observed_status TEXT CHECK (
+          observed_status IS NULL
+          OR observed_status IN ('pending', 'processing', 'awaiting_claim', 'partially_completed', 'completed', 'failed', 'unknown')
+        ),
+        occurred_at INTEGER NOT NULL,
+        last_verified_at INTEGER,
+        CHECK (upstream_request_no IS NULL OR length(upstream_request_no) BETWEEN 1 AND 128),
+        CHECK (upstream_order_no IS NULL OR length(upstream_order_no) BETWEEN 1 AND 128)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_fulfillment_attempts_order
+        ON fulfillment_attempts (order_id, occurred_at);
+    `,
+  },
 ];
