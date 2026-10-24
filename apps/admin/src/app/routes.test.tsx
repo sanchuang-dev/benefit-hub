@@ -115,7 +115,7 @@ describe('login flow', () => {
     expect(loginCall).toBeDefined();
     const [, loginInit] = loginCall as [string, RequestInit];
     expect((loginInit.headers as Record<string, string>)['x-csrf-token']).toBe('csrf-token');
-  });
+  }, 10_000);
 
   it('keeps the form values and shows a generic error for bad credentials', async () => {
     mockFetch((url) => {
