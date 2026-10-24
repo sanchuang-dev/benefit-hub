@@ -107,6 +107,15 @@ describe('login flow', () => {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(screen.getAllByText('运维管理员').length).toBeGreaterThan(0);
+    expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '发放记录' }));
+    expect(await screen.findByRole('heading', { name: '发放记录' })).toBeTruthy();
+    const fulfillmentTab = await screen.findByRole('tab', { name: /发放记录/ });
+    expect(fulfillmentTab).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '总览' }));
+    expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
 
     const loginCall = (vi.mocked(fetch).mock.calls as [string, RequestInit][]).find(
       ([url]) => url === '/api/v1/auth/login',
