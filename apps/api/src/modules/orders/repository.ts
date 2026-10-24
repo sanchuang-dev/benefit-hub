@@ -4,19 +4,23 @@ import type { AppDatabase } from '../../db/client.js';
 import {
   benefitOrders,
   benefitOrderStatusEvents,
+  catalogProducts,
   fulfillmentAttempts,
+  supplierProductMappingVersions,
+  supplierProductMappings,
 } from '../../db/schema.js';
 import {
   assertAttemptOperation,
   assertAttemptResult,
-  assertFulfillmentMode,
   assertOrderStatus,
   normalizeBusinessOrderNo,
   normalizeBusinessSource,
   normalizeUpstreamRef,
   OrderInputError,
   OrderIntentConflictError,
+  OrderMappingUnavailableError,
   OrderNotFoundError,
+  OrderProductNotActiveError,
   OrderProductNotFoundError,
   OrderVersionConflictError,
   requireOrderId,
@@ -30,16 +34,19 @@ import {
   type AttemptResult,
   type BenefitOrder,
   type FulfillmentAttempt,
-  type FulfillmentMode,
   type OrderStatus,
   type OrderStatusEvent,
 } from './benefit-orders.js';
 
+/**
+ * Creating a new order only needs the caller's business identity and the
+ * internal product. Fulfillment mode is deliberately not an input: it is frozen
+ * from the product's active mapping snapshot inside the repository transaction.
+ */
 export interface CreateOrderIntentInput {
   businessSource: string;
   businessOrderNo: string;
   productId: string;
-  fulfillmentMode: FulfillmentMode;
 }
 
 export interface CreateOrderIntentResult {
@@ -77,13 +84,18 @@ export interface AppendFulfillmentAttemptInput {
 export interface BenefitOrderRepository {
   /**
    * Creates the order intent, or returns the existing order for the same
-   * `businessSource + businessOrderNo`. Replaying equivalent key parameters is
-   * idempotent; a different product or fulfillment mode for the same business
-   * identity fails with `OrderIntentConflictError` instead of overwriting.
+   * `businessSource + businessOrderNo`.
    *
-   * Only referential integrity is checked here. Whether the product is enabled
-   * or fulfils the requested mode belongs to the later grant slice, not to
-   * intent persistence.
+   * Replay is resolved before any current-state check: an equivalent existing
+   * order is returned with its original frozen product, mode and mapping
+   * version even if the product has since been disabled or the mapping has been
+   * rotated. A different `productId` for the same business identity fails with
+   * `OrderIntentConflictError` instead of overwriting.
+   *
+   * A genuinely new order requires an existing `active` internal product with a
+   * current active mapping version. The mode and `mappingVersionId` are copied
+   * from that immutable snapshot inside one short IMMEDIATE transaction, which
+   * serializes against mapping activation.
    */
   createOrGetIntent(input: CreateOrderIntentInput): CreateOrderIntentResult;
   getById(orderId: string): BenefitOrder | null;
@@ -111,6 +123,7 @@ interface OrderRow {
   version: number;
   createdAt: number;
   updatedAt: number;
+  mappingVersionId: string | null;
 }
 
 interface StatusEventRow {
@@ -144,6 +157,7 @@ function toBenefitOrder(row: OrderRow): BenefitOrder {
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+    mappingVersionId: row.mappingVersionId,
   };
 }
 
@@ -181,82 +195,110 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       const businessSource = normalizeBusinessSource(input.businessSource);
       const businessOrderNo = normalizeBusinessOrderNo(input.businessOrderNo);
       const productId = requireProductId(input.productId);
-      const fulfillmentMode = assertFulfillmentMode(input.fulfillmentMode);
       const now = Date.now();
 
-      const row: OrderRow = {
-        id: randomUUID(),
-        businessSource,
-        businessOrderNo,
-        productId,
-        fulfillmentMode,
-        status: 'pending',
-        version: 1,
-        createdAt: now,
-        updatedAt: now,
-      };
+      // IMMEDIATE takes the write lock at BEGIN, so replay detection, the
+      // active-pointer read and the order insert form one serialized unit with
+      // mapping activation. Two connections racing for the same business
+      // identity therefore cannot both create a row, and a concurrent
+      // activation either commits before this read or waits until after it.
+      return db.transaction(
+        (tx) => {
+          // Replay is resolved before eligibility: an already accepted order is
+          // never invalidated by a later product disable or mapping rotation.
+          const existing = tx
+            .select()
+            .from(benefitOrders)
+            .where(
+              and(
+                eq(benefitOrders.businessSource, businessSource),
+                eq(benefitOrders.businessOrderNo, businessOrderNo),
+              ),
+            )
+            .limit(1)
+            .get();
 
-      // `ON CONFLICT DO NOTHING` is the idempotency decision point: the unique
-      // index serializes concurrent writers, so only one row can ever exist.
-      // The initial status fact is committed atomically with a newly created
-      // intent, so the history can never lag behind the order row.
-      let inserted;
-      try {
-        inserted = db.transaction((tx) => {
-          const result = tx
-            .insert(benefitOrders)
-            .values(row)
-            .onConflictDoNothing({
-              target: [benefitOrders.businessSource, benefitOrders.businessOrderNo],
+          if (existing) {
+            const order = toBenefitOrder(existing);
+            if (order.productId !== productId) {
+              throw new OrderIntentConflictError(
+                `业务单号 ${businessSource}/${businessOrderNo} 已存在且关键参数不同，未覆盖已有订单`,
+              );
+            }
+            return { order, created: false };
+          }
+
+          const product = tx
+            .select({ status: catalogProducts.status })
+            .from(catalogProducts)
+            .where(eq(catalogProducts.id, productId))
+            .limit(1)
+            .get();
+          if (!product) throw new OrderProductNotFoundError(`内部商品不存在：${productId}`);
+          if (product.status !== 'active') {
+            throw new OrderProductNotActiveError(`内部商品已停用，不能创建新订单：${productId}`);
+          }
+
+          const mapping = tx
+            .select()
+            .from(supplierProductMappings)
+            .where(eq(supplierProductMappings.productId, productId))
+            .limit(1)
+            .get();
+          if (!mapping?.activeVersionId) {
+            throw new OrderMappingUnavailableError(
+              `内部商品尚无生效供应商映射版本，不能创建新订单：${productId}`,
+            );
+          }
+
+          const version = tx
+            .select()
+            .from(supplierProductMappingVersions)
+            .where(
+              and(
+                eq(supplierProductMappingVersions.id, mapping.activeVersionId),
+                eq(supplierProductMappingVersions.mappingId, mapping.id),
+              ),
+            )
+            .limit(1)
+            .get();
+          if (!version) {
+            // The database pointer trigger and foreign key make this
+            // unreachable; a silent "no mapping" fallback would hide corruption.
+            throw new Error(`Active supplier mapping version missing for mapping ${mapping.id}`);
+          }
+
+          const row: OrderRow = {
+            id: randomUUID(),
+            businessSource,
+            businessOrderNo,
+            productId,
+            // Frozen from the immutable snapshot, not chosen by the caller.
+            fulfillmentMode: toFulfillmentMode(version.fulfillmentMode),
+            status: 'pending',
+            version: 1,
+            createdAt: now,
+            updatedAt: now,
+            mappingVersionId: version.id,
+          };
+
+          // The initial status fact is committed atomically with the new intent,
+          // so history can never lag behind the order row.
+          tx.insert(benefitOrders).values(row).run();
+          tx.insert(benefitOrderStatusEvents)
+            .values({
+              id: randomUUID(),
+              orderId: row.id,
+              status: row.status,
+              version: row.version,
+              createdAt: now,
             })
             .run();
 
-          if (result.changes > 0) {
-            tx.insert(benefitOrderStatusEvents)
-              .values({
-                id: randomUUID(),
-                orderId: row.id,
-                status: row.status,
-                version: row.version,
-                createdAt: now,
-              })
-              .run();
-          }
-          return result;
-        });
-      } catch (error) {
-        if (isForeignKeyViolation(error)) {
-          throw new OrderProductNotFoundError(`内部商品不存在：${productId}`);
-        }
-        throw error;
-      }
-
-      if (inserted.changes > 0) return { order: toBenefitOrder(row), created: true };
-
-      const existing = db
-        .select()
-        .from(benefitOrders)
-        .where(
-          and(
-            eq(benefitOrders.businessSource, businessSource),
-            eq(benefitOrders.businessOrderNo, businessOrderNo),
-          ),
-        )
-        .limit(1)
-        .get();
-      if (!existing) {
-        // Orders are never deleted in this slice, so a conflicting insert must
-        // be readable afterwards. Treat anything else as a real failure.
-        throw new Error('Benefit order conflict could not be resolved');
-      }
-
-      const order = toBenefitOrder(existing);
-      if (order.productId !== productId || order.fulfillmentMode !== fulfillmentMode) {
-        throw new OrderIntentConflictError(
-          `业务单号 ${businessSource}/${businessOrderNo} 已存在且关键参数不同，未覆盖已有订单`,
-        );
-      }
-      return { order, created: false };
+          return { order: toBenefitOrder(row), created: true };
+        },
+        { behavior: 'immediate' },
+      );
     },
 
     getById(orderId) {
