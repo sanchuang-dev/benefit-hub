@@ -1,0 +1,256 @@
+name: BHB-005 Final Acceptance
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/bhb-005-finalize.yml
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  final-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install SSH password transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Wait for exact dev deployment and verify persisted viewer
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          set +x
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo '::error::Unapproved server'; exit 1 ;;
+          esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          test -n "$SSHPASS" || { echo '::error::Missing SSH secret'; exit 1; }
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
+
+          mkdir -m 700 -p "$RUNNER_TEMP/ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
+          test -s "$RUNNER_TEMP/ssh/known_hosts"
+          fingerprint="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fingerprint" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' ||
+            { echo '::error::SSH host identity mismatch'; exit 1; }
+
+          ssh_opts=(-o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"
+                    -o PubkeyAuthentication=no
+                    -o PreferredAuthentications=password
+                    -o ConnectTimeout=15 -p "$TARGET_PORT")
+          remote="$TARGET_USER@$TARGET_HOST"
+
+          deployed=0
+          for attempt in $(seq 1 60); do
+            live_sha="$(sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+              "sed -n 's/^BENEFIT_IMAGE_TAG=//p' /srv/benefit-hub/.env 2>/dev/null | head -1" || true)"
+            if [ "$live_sha" = "$GITHUB_SHA" ]; then
+              deployed=1
+              break
+            fi
+            sleep 5
+          done
+          test "$deployed" = 1 || { echo '::error::Exact dev deployment did not become active'; exit 1; }
+
+          accounts="$(sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+            "cd /srv/benefit-hub && docker compose --project-name benefit-hub -f compose.yaml exec -T benefit-hub node dist/cli/admin.js list")"
+          printf '%s\n' "$accounts" |
+            awk -F '\t' '$1=="preview" && $2=="viewer" && $3=="active" {ok=1} END {exit !ok}' ||
+            { echo '::error::preview viewer did not persist across container recreation'; exit 1; }
+
+          sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+            "curl -fsS --max-time 5 http://127.0.0.1:18080/healthz" |
+            grep -q '"status":"ok"'
+          curl -fsS --max-time 10 https://benefit.proto.3cgroup.cn/api/v1/system/status |
+            grep -q '"vendorFulfillmentEnabled":false'
+          echo 'Exact deployment active; preview viewer persisted; runtime healthy.'
+
+      - name: Real Chromium login, refresh, authorization, logout and error-feedback smoke
+        shell: bash
+        env:
+          PREVIEW_PASSWORD: ${{ secrets.BENEFIT_PREVIEW_INITIAL_PASSWORD }}
+          BASE_URL: https://benefit.proto.3cgroup.cn
+        run: |
+          set -euo pipefail
+          set +x
+          test -n "$PREVIEW_PASSWORD" || { echo '::error::Missing BENEFIT_PREVIEW_INITIAL_PASSWORD'; exit 1; }
+
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || command -v chromium || true)"
+          test -n "$chrome" || { echo '::error::No supported Chrome/Chromium binary on runner'; exit 1; }
+          "$chrome" --headless=new --no-sandbox --disable-gpu --hide-scrollbars \
+            --window-size=1440,900 --remote-debugging-port=9222 \
+            --user-data-dir="$RUNNER_TEMP/bhb005-chrome" about:blank \
+            >"$RUNNER_TEMP/bhb005-chrome.log" 2>&1 &
+          chrome_pid=$!
+          trap 'kill "$chrome_pid" >/dev/null 2>&1 || :' EXIT
+
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 http://127.0.0.1:9222/json/version >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          test "$ready" = 1 || { cat "$RUNNER_TEMP/bhb005-chrome.log"; exit 1; }
+
+          mkdir -p "$RUNNER_TEMP/bhb005-evidence"
+          cat > "$RUNNER_TEMP/bhb005-browser-smoke.mjs" <<'NODE'
+          import { writeFileSync } from 'node:fs';
+
+          const base = process.env.BASE_URL;
+          const password = process.env.PREVIEW_PASSWORD;
+          if (!base || !password) throw new Error('Missing browser smoke environment');
+
+          const targetResponse = await fetch(
+            'http://127.0.0.1:9222/json/new?' + encodeURIComponent(base + '/login'),
+            { method: 'PUT' },
+          );
+          if (!targetResponse.ok) throw new Error('Chrome target creation failed: ' + targetResponse.status);
+          const target = await targetResponse.json();
+          const ws = new WebSocket(target.webSocketDebuggerUrl);
+
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => reject(new Error('CDP connect timeout')), 10000);
+            ws.addEventListener('open', () => { clearTimeout(timer); resolve(); }, { once: true });
+            ws.addEventListener('error', () => { clearTimeout(timer); reject(new Error('CDP connection failed')); }, { once: true });
+          });
+
+          let nextId = 1;
+          const pending = new Map();
+          ws.addEventListener('message', (event) => {
+            const message = JSON.parse(event.data);
+            if (!message.id) return;
+            const waiter = pending.get(message.id);
+            if (!waiter) return;
+            pending.delete(message.id);
+            if (message.error) waiter.reject(new Error(message.error.code + ': ' + message.error.message));
+            else waiter.resolve(message.result);
+          });
+
+          function send(method, params = {}) {
+            const id = nextId++;
+            return new Promise((resolve, reject) => {
+              pending.set(id, { resolve, reject });
+              ws.send(JSON.stringify({ id, method, params }));
+            });
+          }
+
+          async function evaluate(expression) {
+            const response = await send('Runtime.evaluate', {
+              expression,
+              awaitPromise: true,
+              returnByValue: true,
+            });
+            if (response.exceptionDetails) throw new Error('Browser evaluation failed');
+            return response.result && response.result.value;
+          }
+
+          async function waitFor(expression, label, timeoutMs = 15000) {
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() < deadline) {
+              if (await evaluate(expression)) return;
+              await new Promise((resolve) => setTimeout(resolve, 200));
+            }
+            throw new Error('Timed out waiting for ' + label);
+          }
+
+          async function insert(selector, text) {
+            const focused = await evaluate('(() => { const el = document.querySelector(' +
+              JSON.stringify(selector) + '); if (!el) return false; el.focus(); return true; })()');
+            if (!focused) throw new Error('Missing input: ' + selector);
+            await send('Input.insertText', { text });
+          }
+
+          async function screenshot(name) {
+            const shot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+            writeFileSync(process.env.RUNNER_TEMP + '/bhb005-evidence/' + name + '.png', Buffer.from(shot.data, 'base64'));
+          }
+
+          await send('Page.enable');
+          await send('Runtime.enable');
+          await send('Emulation.setDeviceMetricsOverride', {
+            width: 1440, height: 900, deviceScaleFactor: 1, mobile: false,
+          });
+          await waitFor("document.readyState === 'complete' && location.pathname === '/login'", 'login page');
+
+          await insert('input[autocomplete="username"]', 'preview');
+          await insert('input[autocomplete="current-password"]', password);
+          const submitted = await evaluate("(() => { const button = document.querySelector('button[type=\"submit\"]'); if (!button) return false; button.click(); return true; })()");
+          if (!submitted) throw new Error('Login button missing');
+          await waitFor(
+            "location.pathname === '/' && document.body.innerText.includes('Benefit Hub · 权益运营台')",
+            'successful login',
+          );
+          console.log('browser login: PASS');
+
+          await send('Page.reload', { ignoreCache: true });
+          await waitFor(
+            "document.readyState === 'complete' && document.body.innerText.includes('preview') && document.body.innerText.includes('只读')",
+            'session recovery after reload',
+          );
+          console.log('browser reload session: PASS');
+
+          await send('Page.navigate', { url: base + '/settings' });
+          await waitFor(
+            "document.readyState === 'complete' && document.body.innerText.includes('当前为只读身份') && document.body.innerText.includes('不能执行任何管理操作')",
+            'viewer settings state',
+          );
+          await screenshot('01-viewer-settings');
+
+          const writeAttempt = await evaluate("(async () => { const csrfResponse = await fetch('/api/v1/auth/csrf'); const csrf = await csrfResponse.json(); const response = await fetch('/api/v1/catalog/products', { method: 'POST', headers: { 'content-type': 'application/json', 'x-csrf-token': csrf.csrfToken }, body: JSON.stringify({ code: 'BHB005-SMOKE', name: 'Must Not Be Created' }) }); return { status: response.status, body: await response.json() }; })()");
+          if (!writeAttempt || writeAttempt.status !== 403 || writeAttempt.body.error !== 'FORBIDDEN') {
+            throw new Error('Viewer write boundary failed');
+          }
+          console.log('viewer server write rejection: PASS (403 FORBIDDEN)');
+
+          const menuOpened = await evaluate("(() => { const button = [...document.querySelectorAll('button')].find((el) => el.innerText.trim() === 'preview'); if (!button) return false; button.click(); return true; })()");
+          if (!menuOpened) throw new Error('Account menu button missing');
+          await waitFor("document.body.innerText.includes('退出登录')", 'logout menu');
+          const logoutClicked = await evaluate("(() => { const item = [...document.querySelectorAll('[role=\"menuitem\"]')].find((el) => el.innerText.includes('退出登录')); if (!item) return false; item.click(); return true; })()");
+          if (!logoutClicked) throw new Error('Logout menu item missing');
+          await waitFor(
+            "location.pathname === '/login' && document.body.innerText.includes('已安全退出登录。')",
+            'logout feedback',
+          );
+          await screenshot('02-logged-out');
+          console.log('browser logout feedback: PASS');
+
+          await insert('input[autocomplete="username"]', 'preview');
+          await insert('input[autocomplete="current-password"]', 'BHB005-intentionally-wrong-password');
+          await evaluate("document.querySelector('button[type=\"submit\"]').click()");
+          await waitFor("document.body.innerText.includes('账号或密码不正确')", 'invalid-login feedback');
+          await screenshot('03-invalid-login');
+          console.log('browser invalid-login feedback: PASS');
+
+          ws.close();
+          NODE
+
+          node "$RUNNER_TEMP/bhb005-browser-smoke.mjs"
+
+      - name: Upload sanitized browser evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: bhb-005-browser-evidence
+          path: ${{ runner.temp }}/bhb005-evidence/*.png
+          if-no-files-found: error
+          retention-days: 3
