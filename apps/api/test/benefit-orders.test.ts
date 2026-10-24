@@ -75,6 +75,9 @@ describe('benefit order persistence', () => {
     });
     expect(created.order.id).not.toBe(created.order.businessOrderNo);
     expect(created.order.createdAt).toBe(created.order.updatedAt);
+    expect(
+      repository.listStatusEvents(created.order.id).map(({ status, version }) => ({ status, version })),
+    ).toEqual([{ status: 'pending', version: 1 }]);
 
     // The row really lives in the SQLite file, not only in this process.
     const stored = server.database.sqlite
@@ -261,6 +264,23 @@ describe('benefit order status concurrency', () => {
       .prepare('SELECT status, version FROM benefit_orders WHERE id = ?')
       .get(order.id);
     expect(row).toEqual({ status: 'awaiting_claim', version: 3 });
+    expect(
+      repository.listStatusEvents(order.id).map(({ status, version }) => ({ status, version })),
+    ).toEqual([
+      { status: 'pending', version: 1 },
+      { status: 'processing', version: 2 },
+      { status: 'awaiting_claim', version: 3 },
+    ]);
+
+    server.restart();
+    const reopened = createBenefitOrderRepository(server.database.db);
+    expect(
+      reopened.listStatusEvents(order.id).map(({ status, version }) => ({ status, version })),
+    ).toEqual([
+      { status: 'pending', version: 1 },
+      { status: 'processing', version: 2 },
+      { status: 'awaiting_claim', version: 3 },
+    ]);
   });
 
   it('reports a missing order and invalid status input with stable domain errors', () => {
@@ -379,6 +399,13 @@ describe('fulfillment attempt facts', () => {
       'version',
       'created_at',
       'updated_at',
+    ]);
+    expect(columnsOf(server, 'benefit_order_status_events')).toEqual([
+      'id',
+      'order_id',
+      'status',
+      'version',
+      'created_at',
     ]);
     expect(columnsOf(server, 'fulfillment_attempts')).toEqual([
       'id',
@@ -520,6 +547,7 @@ describe('benefit order migration upgrade', () => {
           .all() as { name: string }[]
       ).map((row) => row.name);
       expect(tables).toContain('benefit_orders');
+      expect(tables).toContain('benefit_order_status_events');
       expect(tables).toContain('fulfillment_attempts');
 
       // New persistence works against the upgraded schema and legacy product.

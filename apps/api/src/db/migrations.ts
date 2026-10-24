@@ -114,6 +114,21 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_benefit_orders_status_created
         ON benefit_orders (status, created_at DESC);
 
+      CREATE TABLE IF NOT EXISTS benefit_order_status_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        order_id TEXT NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        status TEXT NOT NULL CHECK (
+          status IN ('pending', 'processing', 'awaiting_claim', 'partially_completed', 'completed', 'failed', 'unknown')
+        ),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_benefit_order_status_events_version
+        ON benefit_order_status_events (order_id, version);
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_status_events_order_created
+        ON benefit_order_status_events (order_id, created_at, version);
+
       CREATE TABLE IF NOT EXISTS fulfillment_attempts (
         id TEXT PRIMARY KEY NOT NULL,
         order_id TEXT NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,

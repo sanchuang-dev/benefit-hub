@@ -53,6 +53,15 @@ export interface BenefitOrder {
   updatedAt: number;
 }
 
+/** Immutable status/version fact for reconstructing an order's local state history. */
+export interface OrderStatusEvent {
+  id: string;
+  orderId: string;
+  status: OrderStatus;
+  version: number;
+  createdAt: number;
+}
+
 /**
  * One recorded upstream call/verification fact. Upstream references are stable
  * supplier identifiers only; credentials, phone numbers, card keys, and raw

@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
-import { benefitOrders, fulfillmentAttempts } from '../../db/schema.js';
+import {
+  benefitOrders,
+  benefitOrderStatusEvents,
+  fulfillmentAttempts,
+} from '../../db/schema.js';
 import {
   assertAttemptOperation,
   assertAttemptResult,
@@ -28,6 +32,7 @@ import {
   type FulfillmentAttempt,
   type FulfillmentMode,
   type OrderStatus,
+  type OrderStatusEvent,
 } from './benefit-orders.js';
 
 export interface CreateOrderIntentInput {
@@ -91,6 +96,7 @@ export interface BenefitOrderRepository {
    * later implementation work.
    */
   updateStatus(input: UpdateOrderStatusInput): BenefitOrder;
+  listStatusEvents(orderId: string): OrderStatusEvent[];
   appendAttempt(input: AppendFulfillmentAttemptInput): FulfillmentAttempt;
   listAttempts(orderId: string): FulfillmentAttempt[];
 }
@@ -105,6 +111,14 @@ interface OrderRow {
   version: number;
   createdAt: number;
   updatedAt: number;
+}
+
+interface StatusEventRow {
+  id: string;
+  orderId: string;
+  status: string;
+  version: number;
+  createdAt: number;
 }
 
 interface AttemptRow {
@@ -130,6 +144,16 @@ function toBenefitOrder(row: OrderRow): BenefitOrder {
     version: row.version,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
+  };
+}
+
+function toOrderStatusEvent(row: StatusEventRow): OrderStatusEvent {
+  return {
+    id: row.id,
+    orderId: row.orderId,
+    status: toOrderStatus(row.status),
+    version: row.version,
+    createdAt: row.createdAt,
   };
 }
 
@@ -174,15 +198,32 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
 
       // `ON CONFLICT DO NOTHING` is the idempotency decision point: the unique
       // index serializes concurrent writers, so only one row can ever exist.
+      // The initial status fact is committed atomically with a newly created
+      // intent, so the history can never lag behind the order row.
       let inserted;
       try {
-        inserted = db
-          .insert(benefitOrders)
-          .values(row)
-          .onConflictDoNothing({
-            target: [benefitOrders.businessSource, benefitOrders.businessOrderNo],
-          })
-          .run();
+        inserted = db.transaction((tx) => {
+          const result = tx
+            .insert(benefitOrders)
+            .values(row)
+            .onConflictDoNothing({
+              target: [benefitOrders.businessSource, benefitOrders.businessOrderNo],
+            })
+            .run();
+
+          if (result.changes > 0) {
+            tx.insert(benefitOrderStatusEvents)
+              .values({
+                id: randomUUID(),
+                orderId: row.id,
+                status: row.status,
+                version: row.version,
+                createdAt: now,
+              })
+              .run();
+          }
+          return result;
+        });
       } catch (error) {
         if (isForeignKeyViolation(error)) {
           throw new OrderProductNotFoundError(`内部商品不存在：${productId}`);
@@ -273,6 +314,16 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           );
         }
 
+        tx.insert(benefitOrderStatusEvents)
+          .values({
+            id: randomUUID(),
+            orderId,
+            status,
+            version: input.expectedVersion + 1,
+            createdAt: now,
+          })
+          .run();
+
         const row = tx
           .select()
           .from(benefitOrders)
@@ -282,6 +333,16 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
         if (!row) throw new OrderNotFoundError(`订单不存在：${orderId}`);
         return toBenefitOrder(row);
       });
+    },
+
+    listStatusEvents(orderId) {
+      const rows = db
+        .select()
+        .from(benefitOrderStatusEvents)
+        .where(eq(benefitOrderStatusEvents.orderId, requireOrderId(orderId)))
+        .orderBy(asc(benefitOrderStatusEvents.version))
+        .all();
+      return rows.map(toOrderStatusEvent);
     },
 
     appendAttempt(input) {

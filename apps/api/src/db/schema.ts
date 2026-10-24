@@ -114,6 +114,32 @@ export const benefitOrders = sqliteTable(
 );
 
 /**
+ * Immutable history of accepted order status versions. The initial pending
+ * state is version 1; every successful status update appends exactly one row in
+ * the same local transaction as the conditional order update.
+ */
+export const benefitOrderStatusEvents = sqliteTable(
+  'benefit_order_status_events',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    status: text('status').notNull(),
+    version: integer('version').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_status_events_version').on(table.orderId, table.version),
+    index('idx_benefit_order_status_events_order_created').on(
+      table.orderId,
+      table.createdAt,
+      table.version,
+    ),
+  ],
+);
+
+/**
  * Facts about one upstream call/verification attempt. The model intentionally
  * has no column for credentials, phone numbers, card keys, or raw supplier
  * responses: `upstreamRequestNo` / `upstreamOrderNo` hold bounded supplier
