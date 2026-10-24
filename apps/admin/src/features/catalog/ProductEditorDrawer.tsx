@@ -1,4 +1,3 @@
-import { useQueryClient } from '@tanstack/react-query';
 import {
   Alert,
   App as AntdApp,
@@ -12,12 +11,11 @@ import {
   Space,
   Spin,
 } from 'antd';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ApiError } from '../../shared/lib/api-client';
 import { centsToYuan, yuanToCents } from './money';
 import type { CatalogProduct, ProductStatus } from './api';
 import {
-  catalogQueryKeys,
   useCreateProductMutation,
   useProductQuery,
   useSetProductStatusMutation,
@@ -80,9 +78,10 @@ const DEFAULT_VALUES: ProductFormValues = {
 export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorDrawerProps) {
   const [form] = Form.useForm<ProductFormValues>();
   const { message } = AntdApp.useApp();
-  const queryClient = useQueryClient();
   const [formError, setFormError] = useState<{ message: string; code: string } | null>(null);
-  const filledProductId = useRef<string | null>(null);
+  // Keep the form values and optimistic-lock version from the same fetch.
+  const [editingSnapshot, setEditingSnapshot] = useState<{ id: string; version: number } | null>(null);
+  const [conflicted, setConflicted] = useState(false);
 
   const open = state !== null;
   const mode = state?.mode ?? 'create';
@@ -99,20 +98,38 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
 
   useEffect(() => {
     if (!open) {
-      filledProductId.current = null;
+      setEditingSnapshot(null);
+      setConflicted(false);
       return;
     }
     setFormError(null);
+    setEditingSnapshot(null);
+    setConflicted(false);
     form.resetFields();
-  }, [open, mode, productId, form]);
+    if (isCreate || !productId) return;
 
-  useEffect(() => {
-    if (!open || isCreate || !detail.data) return;
-    // Fill once per drawer session: a background refetch must not overwrite edits.
-    if (filledProductId.current === detail.data.id) return;
-    filledProductId.current = detail.data.id;
-    form.setFieldsValue(toFormValues(detail.data));
-  }, [open, isCreate, detail.data, form]);
+    // Never hydrate the form from stale cached detail on a new drawer session.
+    let cancelled = false;
+    void detail.refetch().then((result) => {
+      if (cancelled || !result.data || result.isError) return;
+      form.setFieldsValue(toFormValues(result.data));
+      setEditingSnapshot({ id: result.data.id, version: result.data.version });
+    });
+    return () => { cancelled = true; };
+    // A drawer session begins when its identity changes; query cache changes
+    // must not silently replace the form's editing snapshot.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, mode, productId, form, isCreate]);
+
+  const reloadLatest = async () => {
+    setEditingSnapshot(null);
+    const result = await detail.refetch();
+    if (result.isError || !result.data) return;
+    form.setFieldsValue(toFormValues(result.data));
+    setEditingSnapshot({ id: result.data.id, version: result.data.version });
+    setConflicted(false);
+    setFormError(null);
+  };
 
   const applyApiError = (error: unknown) => {
     if (!(error instanceof ApiError)) {
@@ -128,7 +145,8 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     if (fieldErrors.length > 0) form.setFields(fieldErrors);
 
     if (error.code === 'PRODUCT_VERSION_CONFLICT' && productId) {
-      void queryClient.invalidateQueries({ queryKey: catalogQueryKeys.detail(productId) });
+      setConflicted(true);
+      setEditingSnapshot(null);
     }
   };
 
@@ -146,13 +164,13 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
       if (isCreate) {
         await createMutation.mutateAsync(input);
       } else {
-        if (!detail.data) {
+        if (!editingSnapshot || conflicted) {
           setFormError({ message: '商品详情尚未加载完成，请稍后重试', code: 'DETAIL_NOT_LOADED' });
           return;
         }
         await updateMutation.mutateAsync({
-          id: detail.data.id,
-          version: detail.data.version,
+          id: editingSnapshot.id,
+          version: editingSnapshot.version,
           input,
         });
       }
@@ -164,7 +182,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
   };
 
   const handleStatusChange = async (status: ProductStatus) => {
-    if (!detail.data) return;
+    if (!editingSnapshot || conflicted) return;
     setFormError(null);
     try {
       await statusMutation.mutateAsync({
@@ -180,6 +198,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
 
   const title = isCreate ? '新建内部商品' : mode === 'edit' ? '编辑内部商品' : '内部商品详情';
   const status = detail.data?.status;
+  const ready = isCreate || (editingSnapshot?.id === productId && !conflicted);
 
   return (
     <Drawer
@@ -206,7 +225,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
                 <Button
                   danger={status === 'active'}
                   loading={statusMutation.isPending}
-                  disabled={saving}
+                  disabled={saving || !ready}
                 >
                   {status === 'active' ? '停用商品' : '启用商品'}
                 </Button>
@@ -216,7 +235,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           <Space>
             <Button onClick={onClose}>关闭</Button>
             {!readOnly ? (
-              <Button type="primary" loading={saving} onClick={() => form.submit()}>
+              <Button type="primary" loading={saving} disabled={!ready} onClick={() => form.submit()}>
                 保存
               </Button>
             ) : null}
@@ -279,6 +298,17 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
         />
       ) : null}
 
+      {conflicted ? (
+        <Alert
+          className="product-drawer-alert"
+          type="warning"
+          showIcon
+          title="商品已被他人修改"
+          description="保存已锁定。请重新加载最新详情，核对字段后再编辑。"
+          action={<Button onClick={() => void reloadLatest()}>重新加载详情</Button>}
+        />
+      ) : null}
+
       {formError ? (
         <Alert
           className="product-drawer-alert"
@@ -289,7 +319,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
         />
       ) : null}
 
-      <Spin spinning={!isCreate && detail.isPending}>
+      <Spin spinning={!isCreate && !ready && !conflicted}>
         <Form<ProductFormValues>
           form={form}
           layout="vertical"
@@ -354,7 +384,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           </Form.Item>
           {!isCreate && detail.data ? (
             <Form.Item label="版本">
-              <Input value={`v${detail.data.version}`} readOnly />
+              <Input value={editingSnapshot ? `v${editingSnapshot.version}` : '加载中'} readOnly />
             </Form.Item>
           ) : null}
         </Form>
