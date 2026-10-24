@@ -531,4 +531,31 @@ describe('product writes', () => {
     expect(writes[1]).toMatchObject({ name: '其他管理员修改', version: 3 });
   });
 
+  it('warns before discarding unsaved product edits', { timeout: 60_000 }, async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([]);
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    expect(await screen.findByText('还没有内部商品', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(findButtonText('新建商品'));
+    fireEvent.change(await screen.findByLabelText('商品名称'), {
+      target: { value: '尚未保存的商品' },
+    });
+    fireEvent.click(findButtonText('关闭'));
+
+    expect(await screen.findByText('放弃未保存的修改？')).toBeTruthy();
+    fireEvent.click(findButtonText('继续编辑'));
+    expect(await screen.findByText('新建内部商品')).toBeTruthy();
+    expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe('尚未保存的商品');
+
+    fireEvent.click(findButtonText('关闭'));
+    expect(await screen.findByText('放弃未保存的修改？')).toBeTruthy();
+    fireEvent.click(findButtonText('放弃修改'));
+    await waitFor(() => expect(screen.queryByText('新建内部商品')).toBeNull());
+  });
+
 });
