@@ -2,7 +2,7 @@ import { Button, Result, Spin } from 'antd';
 import { Navigate } from 'react-router';
 import { ApiError } from '../shared/lib/api-client';
 import { useSessionQuery } from '../features/auth/use-auth';
-import { AppShell } from './AppShell';
+import { AppShell } from './shell/AppShell';
 
 /**
  * Client-side gate for navigation only. Every protected API call is
