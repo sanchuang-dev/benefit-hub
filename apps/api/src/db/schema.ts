@@ -165,9 +165,12 @@ export const supplierProductMappingVersions = sqliteTable(
  * upstream business identity. `status` is our provider-agnostic status and
  * `version` is the optimistic concurrency token for status changes.
  *
- * Only the product reference is stored here. Binding an order to the mapping
- * version that was active when it was created belongs to a later slice, so no
- * placeholder mapping-version foreign key is invented on this table.
+ * `mapping_version_id` freezes the immutable supplier mapping snapshot that was
+ * current when the order was created; `fulfillment_mode` is copied from that
+ * snapshot rather than chosen by the caller. Migration 0005 adds the column as
+ * nullable (orders created before the mechanism keep NULL, never a guessed
+ * version) plus triggers that require a current, same-product, same-mode
+ * snapshot on every new insert and reject later rebinding.
  */
 export const benefitOrders = sqliteTable(
   'benefit_orders',
@@ -178,6 +181,10 @@ export const benefitOrders = sqliteTable(
     productId: text('product_id')
       .notNull()
       .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    mappingVersionId: text('mapping_version_id').references(
+      () => supplierProductMappingVersions.id,
+      { onDelete: 'restrict' },
+    ),
     fulfillmentMode: text('fulfillment_mode').notNull(),
     status: text('status').notNull(),
     version: integer('version').notNull(),

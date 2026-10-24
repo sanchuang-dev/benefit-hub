@@ -261,4 +261,74 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0005_benefit_order_mapping_version',
+    sql: `
+      -- BHB-008: an order freezes the supplier mapping snapshot that was active
+      -- when the order was created. This column stays nullable on purpose:
+      -- orders written by migration 0003 predate the mapping-version mechanism
+      -- and must keep NULL instead of being backfilled with a guessed version.
+      -- Nullable-then-trigger-guarded keeps the additive upgrade safe while new
+      -- inserts are constrained below.
+      ALTER TABLE benefit_orders
+        ADD COLUMN mapping_version_id TEXT
+          REFERENCES supplier_product_mapping_versions(id) ON DELETE RESTRICT;
+
+      CREATE INDEX IF NOT EXISTS idx_benefit_orders_mapping_version
+        ON benefit_orders (mapping_version_id);
+
+      -- Every genuinely new order must carry a mapping version. Historical rows
+      -- are untouched because this fires on INSERT only.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_mapping_version_required
+      BEFORE INSERT ON benefit_orders
+      WHEN NEW.mapping_version_id IS NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'new benefit order requires a mapping version');
+      END;
+
+      -- A single trigger checks the snapshot in a fixed order (product, mode,
+      -- then current pointer). Keeping the checks together makes the rejection
+      -- deterministic instead of depending on trigger firing order.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_mapping_version_snapshot
+      BEFORE INSERT ON benefit_orders
+      WHEN NEW.mapping_version_id IS NOT NULL
+      BEGIN
+        -- The frozen snapshot must describe the same product as the order, so
+        -- a bug or manual statement cannot bind another product's config.
+        SELECT RAISE(ABORT, 'order mapping version must belong to the same product')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mapping_versions
+          WHERE id = NEW.mapping_version_id AND product_id = NEW.product_id
+        );
+
+        -- The order's fulfilment mode is copied from the snapshot, never
+        -- chosen independently; the database rejects any disagreement.
+        SELECT RAISE(ABORT, 'order fulfillment mode must match its mapping version')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mapping_versions
+          WHERE id = NEW.mapping_version_id
+            AND fulfillment_mode = NEW.fulfillment_mode
+        );
+
+        -- Freezing only the id is not enough: it must be the version that the
+        -- product's mapping root points at right now. This rejects inserts
+        -- built from a stale read, so an order can never bind a superseded
+        -- version after a concurrent activation.
+        SELECT RAISE(ABORT, 'order mapping version must be the current active version')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mappings
+          WHERE product_id = NEW.product_id
+            AND active_version_id = NEW.mapping_version_id
+        );
+      END;
+
+      -- Mapping activation must never rewrite an existing order's history.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_mapping_version_immutable
+      BEFORE UPDATE OF mapping_version_id ON benefit_orders
+      WHEN NEW.mapping_version_id IS NOT OLD.mapping_version_id
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order mapping version is frozen at creation');
+      END;
+    `,
+  },
 ];

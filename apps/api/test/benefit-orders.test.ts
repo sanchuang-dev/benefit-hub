@@ -17,6 +17,7 @@ import {
   createBenefitOrderRepository,
   type BenefitOrderRepository,
 } from '../src/modules/orders/repository.js';
+import { activateMapping } from './helpers/mapping-fixtures.js';
 import { TestServer } from './helpers/test-server.js';
 
 let server: TestServer | undefined;
@@ -32,6 +33,16 @@ function seedProduct(testServer: TestServer, code: string) {
     name: `测试商品 ${code}`,
     actorAccountId: 'test-actor',
   });
+}
+
+/**
+ * Seeds a product that can genuinely receive a new order under BHB-008: an
+ * `active` product with one current active mapping version (mode B by default).
+ */
+function seedOrderableProduct(testServer: TestServer, code: string) {
+  const product = seedProduct(testServer, code);
+  const version = activateMapping(testServer.database.db, product.id);
+  return { product, version };
 }
 
 function countOrders(testServer: TestServer): number {
@@ -53,14 +64,20 @@ function orderInput(productId: string, businessOrderNo = 'LO-1001') {
     businessSource: ' Local-Life ',
     businessOrderNo,
     productId,
-    fulfillmentMode: 'B' as const,
   };
+}
+
+function countStatusEvents(testServer: TestServer): number {
+  const row = testServer.database.sqlite
+    .prepare('SELECT COUNT(*) AS value FROM benefit_order_status_events')
+    .get() as { value: number };
+  return row.value;
 }
 
 describe('benefit order persistence', () => {
   it('persists an order intent and keeps it readable after the database is reopened', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const { product, version } = seedOrderableProduct(server, 'TX-TRAVEL-10');
     const repository = createBenefitOrderRepository(server.database.db);
 
     const created = repository.createOrGetIntent(orderInput(product.id));
@@ -69,6 +86,7 @@ describe('benefit order persistence', () => {
       businessSource: 'local-life',
       businessOrderNo: 'LO-1001',
       productId: product.id,
+      mappingVersionId: version.id,
       fulfillmentMode: 'B',
       status: 'pending',
       version: 1,
@@ -82,7 +100,8 @@ describe('benefit order persistence', () => {
     // The row really lives in the SQLite file, not only in this process.
     const stored = server.database.sqlite
       .prepare(
-        `SELECT business_source, business_order_no, product_id, fulfillment_mode, status, version
+        `SELECT business_source, business_order_no, product_id, mapping_version_id,
+                fulfillment_mode, status, version
            FROM benefit_orders WHERE id = ?`,
       )
       .get(created.order.id);
@@ -90,6 +109,7 @@ describe('benefit order persistence', () => {
       business_source: 'local-life',
       business_order_no: 'LO-1001',
       product_id: product.id,
+      mapping_version_id: version.id,
       fulfillment_mode: 'B',
       status: 'pending',
       version: 1,
@@ -105,7 +125,7 @@ describe('benefit order persistence', () => {
 
   it('replays an equivalent request without creating another order or changing its state', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
 
     const first = repository.createOrGetIntent(orderInput(product.id));
@@ -121,8 +141,8 @@ describe('benefit order persistence', () => {
 
   it('rejects conflicting key parameters for the same business identity', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
-    const otherProduct = seedProduct(server, 'COFFEE-1');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
+    const otherProduct = seedOrderableProduct(server, 'COFFEE-1').product;
     const repository = createBenefitOrderRepository(server.database.db);
 
     const first = repository.createOrGetIntent(orderInput(product.id));
@@ -130,18 +150,17 @@ describe('benefit order persistence', () => {
     expect(() =>
       repository.createOrGetIntent({ ...orderInput(product.id), productId: otherProduct.id }),
     ).toThrowError(OrderIntentConflictError);
-    expect(() =>
-      repository.createOrGetIntent({ ...orderInput(product.id), fulfillmentMode: 'D' }),
-    ).toThrowError(OrderIntentConflictError);
 
-    // The first order fact is untouched: no silent overwrite of product or mode.
+    // The first order fact is untouched: no silent overwrite of the product or
+    // of its frozen mapping version.
     expect(repository.getById(first.order.id)).toEqual(first.order);
     expect(countOrders(server)).toBe(1);
+    expect(countStatusEvents(server)).toBe(1);
   });
 
   it('keeps business order numbers case-sensitive while normalizing the source key', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
 
     const upper = repository.createOrGetIntent(orderInput(product.id, 'LO-ABC'));
@@ -155,7 +174,7 @@ describe('benefit order persistence', () => {
 
   it('enforces business identity uniqueness in the database itself', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const { product, version } = seedOrderableProduct(server, 'TX-TRAVEL-10');
     const repository = createBenefitOrderRepository(server.database.db);
 
     repository.createOrGetIntent(orderInput(product.id));
@@ -164,17 +183,18 @@ describe('benefit order persistence', () => {
       server?.database.sqlite
         .prepare(
           `INSERT INTO benefit_orders
-             (id, business_source, business_order_no, product_id, fulfillment_mode, status, version, created_at, updated_at)
-           VALUES ('direct-insert', 'local-life', 'LO-1001', ?, 'A', 'pending', 1, 0, 0)`,
+             (id, business_source, business_order_no, product_id, mapping_version_id,
+              fulfillment_mode, status, version, created_at, updated_at)
+           VALUES ('direct-insert', 'local-life', 'LO-1001', ?, ?, 'B', 'pending', 1, 0, 0)`,
         )
-        .run(product.id),
+        .run(product.id, version.id),
     ).toThrowError(/UNIQUE constraint failed: benefit_orders.business_source, benefit_orders.business_order_no/);
     expect(countOrders(server)).toBe(1);
   });
 
   it('creates exactly one order when two connections race for the same business intent', async () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const primary = createBenefitOrderRepository(server.database.db);
     const second = openDatabase(server.file);
 
@@ -193,7 +213,28 @@ describe('benefit order persistence', () => {
 
       expect(left.order.id).toBe(right.order.id);
       expect([left.created, right.created].filter(Boolean)).toHaveLength(1);
+      expect(left.order.mappingVersionId).toBe(right.order.mappingVersionId);
+      expect(left.order.mappingVersionId).not.toBeNull();
       expect(countOrders(server)).toBe(1);
+      expect(countStatusEvents(server)).toBe(1);
+      // The single committed order references one complete snapshot: the
+      // order's product/mode and the snapshot's product/mode agree.
+      expect(
+        server.database.sqlite
+          .prepare(
+            `SELECT o.product_id AS order_product, v.product_id AS version_product,
+                    o.fulfillment_mode AS order_mode, v.fulfillment_mode AS version_mode
+               FROM benefit_orders o
+               JOIN supplier_product_mapping_versions v ON v.id = o.mapping_version_id
+              WHERE o.id = ?`,
+          )
+          .get(left.order.id),
+      ).toEqual({
+        order_product: product.id,
+        version_product: product.id,
+        order_mode: 'B',
+        version_mode: 'B',
+      });
       expect(second.sqlite.prepare('SELECT COUNT(*) AS value FROM benefit_orders').get()).toEqual({
         value: 1,
       });
@@ -214,7 +255,7 @@ describe('benefit order persistence', () => {
 
   it('rejects invalid business identity input instead of storing an unusable key', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
 
     expect(() =>
@@ -230,7 +271,7 @@ describe('benefit order persistence', () => {
 describe('benefit order status concurrency', () => {
   it('updates status atomically and rejects a stale version without losing the newest state', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const { order } = repository.createOrGetIntent(orderInput(product.id));
 
@@ -285,7 +326,7 @@ describe('benefit order status concurrency', () => {
 
   it('reports a missing order and invalid status input with stable domain errors', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const { order } = repository.createOrGetIntent(orderInput(product.id));
 
@@ -309,7 +350,7 @@ describe('benefit order status concurrency', () => {
 describe('fulfillment attempt facts', () => {
   it('appends and reads attempts in occurrence order without changing order status', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const { order } = repository.createOrGetIntent(orderInput(product.id));
 
@@ -360,7 +401,7 @@ describe('fulfillment attempt facts', () => {
 
   it('rejects attempts for unknown orders at both the repository and database boundary', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const { order } = repository.createOrGetIntent(orderInput(product.id));
 
@@ -383,12 +424,13 @@ describe('fulfillment attempt facts', () => {
 
   it('stores no sensitive columns and bounds upstream references', () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const { order } = repository.createOrGetIntent(orderInput(product.id));
 
     // The persisted model is the evidence: no credential, phone, card-key, or
-    // raw supplier payload column exists for attempts to leak into.
+    // raw supplier payload column exists for attempts to leak into. BHB-008's
+    // forward-only ALTER appends the frozen mapping version as the last column.
     expect(columnsOf(server, 'benefit_orders')).toEqual([
       'id',
       'business_source',
@@ -399,6 +441,7 @@ describe('fulfillment attempt facts', () => {
       'version',
       'created_at',
       'updated_at',
+      'mapping_version_id',
     ]);
     expect(columnsOf(server, 'benefit_order_status_events')).toEqual([
       'id',
@@ -433,7 +476,7 @@ describe('fulfillment attempt facts', () => {
 
   it('does not hold a database transaction across an external supplier call', async () => {
     server = new TestServer();
-    const product = seedProduct(server, 'TX-TRAVEL-10');
+    const product = seedOrderableProduct(server, 'TX-TRAVEL-10').product;
     const repository = createBenefitOrderRepository(server.database.db);
     const second = openDatabase(server.file);
 
@@ -522,6 +565,7 @@ describe('benefit order migration upgrade', () => {
       expect(runMigrations(handle.sqlite)).toEqual([
         '0003_benefit_orders',
         '0004_supplier_product_mappings',
+        '0005_benefit_order_mapping_version',
       ]);
 
       // Existing tables and rows survive the additive migration untouched.
@@ -554,14 +598,21 @@ describe('benefit order migration upgrade', () => {
       expect(tables).toContain('fulfillment_attempts');
 
       // New persistence works against the upgraded schema and legacy product.
+      // BHB-008 requires a current active mapping version for a new order, so
+      // the legacy product gets one through the existing BHB-007 lifecycle.
+      const version = activateMapping(handle.db, 'legacy-product', {
+        productCode: 'YM-LEGACY-1',
+        fulfillmentMode: 'A',
+      });
       const repository = createBenefitOrderRepository(handle.db);
       const { order } = repository.createOrGetIntent({
         businessSource: 'card-doctor',
         businessOrderNo: 'LEGACY-ORDER-1',
         productId: 'legacy-product',
-        fulfillmentMode: 'A',
       });
       expect(order.productId).toBe('legacy-product');
+      expect(order.mappingVersionId).toBe(version.id);
+      expect(order.fulfillmentMode).toBe('A');
 
       // Re-running the migration list is a no-op on every restart.
       expect(runMigrations(handle.sqlite)).toEqual([]);
@@ -575,12 +626,14 @@ describe('benefit order migration upgrade', () => {
         { id: '0002_catalog_products' },
         { id: '0003_benefit_orders' },
         { id: '0004_supplier_product_mappings' },
+        { id: '0005_benefit_order_mapping_version' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
         '0002_catalog_products',
         '0003_benefit_orders',
         '0004_supplier_product_mappings',
+        '0005_benefit_order_mapping_version',
       ]);
     } finally {
       handle.close();
