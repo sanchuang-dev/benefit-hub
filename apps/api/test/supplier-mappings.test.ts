@@ -667,6 +667,18 @@ describe('supplier mapping schema boundaries', () => {
         .run(otherVersion.id, missingActive.mappingId),
     ).toThrowError(/active version must belong to the same mapping/);
 
+    // A snapshot cannot claim a product different from its mapping root.
+    expect(() =>
+      server?.database.sqlite
+        .prepare(
+          `INSERT INTO supplier_product_mapping_versions
+             (id, mapping_id, product_id, version_number, provider, product_code,
+              fulfillment_mode, deduction_unit, source_draft_version, activated_by, activated_at)
+           VALUES ('wrong-product', ?, ?, 8, 'yangmao', 'YM-1001', 'B', 'pack', 1, 'acc-1', 0)`,
+        )
+        .run(missingActive.mappingId, secondProduct.id),
+    ).toThrowError(/mapping snapshot product must match mapping product/);
+
     // Snapshots cannot mix the two deduction ledgers.
     expect(() =>
       server?.database.sqlite

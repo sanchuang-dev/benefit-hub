@@ -208,6 +208,20 @@ export const migrations: readonly Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_supplier_product_mapping_versions_mapping
         ON supplier_product_mapping_versions (mapping_id, version_number);
 
+      -- A snapshot redundantly carries product_id for direct historical reads.
+      -- Keep that denormalized value tied to its mapping root at the DB
+      -- boundary so future order-version references cannot observe a
+      -- cross-product snapshot created by ad-hoc SQL or later code.
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_version_product_owner
+      BEFORE INSERT ON supplier_product_mapping_versions
+      BEGIN
+        SELECT RAISE(ABORT, 'mapping snapshot product must match mapping product')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mappings
+          WHERE id = NEW.mapping_id AND product_id = NEW.product_id
+        );
+      END;
+
       -- Accepted history is append-only at the database boundary, not only in
       -- repository code.
       CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_versions_no_update
