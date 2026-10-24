@@ -97,7 +97,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 - 原定运行 UID/GID 10001，首次部署前检查目录权限与宿主机所有权。
 - 使用 SQLite 一致性备份机制（backup API 或 `VACUUM INTO` 等），不能只复制正在使用的主 DB 而忽略 WAL。
 - 数据库 migration 与镜像升级分开审查；回滚镜像不等于回滚数据结构，禁止自动删库/重建。
-- BHB-002 引入的迁移只做 `CREATE TABLE/INDEX`，启动时自动应用并记录；已有管理员账号、会话与审计记录在重启和再次迁移后保留（由 `apps/api/test/db-migrations.test.ts` 验证）。会话存在 SQLite 中，容器重启后仍然有效，直到绝对有效期结束、退出、改密或停用。
+- BHB-002/BHB-003 引入的迁移只做 `CREATE TABLE/INDEX`，启动时自动应用并记录；已有管理员账号、会话与审计记录在重启和再次迁移后保留（由 `apps/api/test/db-migrations.test.ts` 验证）。会话存在 SQLite 中，容器重启后仍然有效，直到绝对有效期结束、退出、改密或停用。内部商品及其操作审计同样保存在该文件中，停用商品不会删除行或历史。
 - 避免多个服务实例/容器同时把同一个 SQLite 文件当多主数据库使用。
 - 启用备份保留和实际恢复演练后才可承载真实权益扣减与发放记录。
 

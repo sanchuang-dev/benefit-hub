@@ -53,4 +53,39 @@ export const migrations: readonly Migration[] = [
         ON auth_events (created_at);
     `,
   },
+  {
+    id: '0002_catalog_products',
+    sql: `
+      CREATE TABLE IF NOT EXISTS catalog_products (
+        id TEXT PRIMARY KEY NOT NULL,
+        code TEXT NOT NULL,
+        name TEXT NOT NULL,
+        short_description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('active', 'disabled')),
+        display_price_cents INTEGER,
+        estimated_cost_cents INTEGER,
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (display_price_cents IS NULL OR display_price_cents >= 0),
+        CHECK (estimated_cost_cents IS NULL OR estimated_cost_cents >= 0)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_catalog_products_code
+        ON catalog_products (code);
+      CREATE INDEX IF NOT EXISTS idx_catalog_products_status_created
+        ON catalog_products (status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS catalog_product_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL REFERENCES catalog_products(id) ON DELETE RESTRICT,
+        actor_account_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('created', 'updated', 'enabled', 'disabled')),
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_catalog_product_events_product
+        ON catalog_product_events (product_id, created_at);
+    `,
+  },
 ];

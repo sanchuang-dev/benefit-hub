@@ -7,9 +7,10 @@ import { recordAuthEvent } from './audit.js';
 import { NO_STORE_HEADERS } from './http.js';
 
 /**
- * Minimal admin-only surface. It is deliberately read-only: this slice has no
- * management write API yet, and the next slice must gate future writes with the
- * same `requireSession` + `requireRole('admin')` chain.
+ * Minimal admin-only surface for account listing. Management writes use the
+ * admin CLI; catalogue writes (BHB-003) reuse the same
+ * `requireSession` + `requireRole('admin')` chain instead of a new identity
+ * system.
  */
 export function createAdminAccountRoutes(deps: { db: AppDatabase; config: AppConfig }): Hono<AppEnv> {
   const { db, config } = deps;
