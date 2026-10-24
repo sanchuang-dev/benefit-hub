@@ -109,14 +109,6 @@ describe('login flow', () => {
     expect(screen.getAllByText('运维管理员').length).toBeGreaterThan(0);
     expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('menuitem', { name: '发放记录' }));
-    expect(await screen.findByRole('heading', { name: '发放记录' })).toBeTruthy();
-    const fulfillmentTab = await screen.findByRole('tab', { name: /发放记录/ });
-    expect(fulfillmentTab).toBeTruthy();
-
-    fireEvent.click(screen.getByRole('tab', { name: '总览' }));
-    expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
-
     const loginCall = (vi.mocked(fetch).mock.calls as [string, RequestInit][]).find(
       ([url]) => url === '/api/v1/auth/login',
     );
@@ -146,6 +138,33 @@ describe('login flow', () => {
     expect(await screen.findByText('账号或密码不正确', undefined, { timeout: 5000 })).toBeTruthy();
     expect((screen.getByLabelText('账号') as HTMLInputElement).value).toBe('ops.admin');
     expect(screen.getByText('运营后台登录')).toBeTruthy();
+  });
+
+  it('opens visited modules as session-local route tabs', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          vendorFulfillmentEnabled: false,
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+
+    expect(await screen.findByRole('tab', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: '发放记录' }));
+
+    expect(await screen.findByRole('heading', { name: '发放记录' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /发放记录/ })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '总览' }));
+    expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
   });
 
   it('logs out through the user menu and returns to the login screen', async () => {
