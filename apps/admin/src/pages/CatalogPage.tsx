@@ -24,6 +24,7 @@ import {
 } from '../features/catalog/ProductEditorDrawer';
 import { useProductsQuery } from '../features/catalog/use-catalog';
 import { formatDateTime } from '../shared/lib/format-date-time';
+import './CatalogPage.css';
 
 const { Title, Paragraph, Text } = Typography;
 
