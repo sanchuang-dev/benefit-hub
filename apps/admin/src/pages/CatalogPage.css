@@ -1,3 +1,41 @@
-.catalog-filters {
-  margin-bottom: 16px;
+/*
+ * Catalogue page adaptation on top of the shared console shell.
+ * One content surface holds the filter toolbar and the table so the page does
+ * not grow a second nested card hierarchy.
+ */
+.catalog-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 16px;
+}
+
+.catalog-header-text {
+  min-width: 0;
+}
+
+.catalog-header-actions {
+  flex: 0 0 auto;
+}
+
+.catalog-surface {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+}
+
+.catalog-toolbar {
+  padding: 12px 16px;
+  row-gap: 8px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.catalog-feedback {
+  padding: 16px;
+}
+
+.catalog-amount {
+  font-variant-numeric: tabular-nums;
 }

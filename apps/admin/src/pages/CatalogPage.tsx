@@ -2,7 +2,6 @@ import {
   Alert,
   Button,
   Empty,
-  Flex,
   Form,
   Input,
   Select,
@@ -83,7 +82,7 @@ export function CatalogPage() {
       title: '商品编码',
       dataIndex: 'code',
       key: 'code',
-      width: 180,
+      width: 150,
       render: (code: string) => <Text code>{code}</Text>,
     },
     {
@@ -96,7 +95,7 @@ export function CatalogPage() {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      width: 100,
+      width: 88,
       render: (status: ProductStatus) =>
         status === 'active' ? <Tag color="green">已启用</Tag> : <Tag>已停用</Tag>,
     },
@@ -104,12 +103,12 @@ export function CatalogPage() {
       title: '供应商映射',
       dataIndex: 'vendorFulfillmentEnabled',
       key: 'vendorMapping',
-      width: 190,
+      width: 188,
       render: (enabled: CatalogProduct['vendorFulfillmentEnabled']) =>
         enabled ? (
           <Tag color="green">已映射供应商</Tag>
         ) : (
-          <Space size={4} wrap>
+          <Space size={6} wrap={false}>
             <Tag>未映射供应商</Tag>
             <Text type="secondary">不能发放</Text>
           </Space>
@@ -119,29 +118,33 @@ export function CatalogPage() {
       title: '展示价',
       dataIndex: 'displayPriceCents',
       key: 'displayPriceCents',
-      width: 120,
+      width: 108,
       align: 'right',
-      render: (cents: number | null) => (cents === null ? '—' : formatCents(cents)),
+      className: 'catalog-amount',
+      render: (cents: number | null) =>
+        cents === null ? <Text type="secondary">—</Text> : formatCents(cents),
     },
     {
       title: '预估成本',
       dataIndex: 'estimatedCostCents',
       key: 'estimatedCostCents',
-      width: 120,
+      width: 108,
       align: 'right',
-      render: (cents: number | null) => (cents === null ? '—' : formatCents(cents)),
+      className: 'catalog-amount',
+      render: (cents: number | null) =>
+        cents === null ? <Text type="secondary">—</Text> : formatCents(cents),
     },
     {
       title: '更新时间',
       dataIndex: 'updatedAt',
       key: 'updatedAt',
-      width: 190,
-      render: (updatedAt: number) => formatDateTime(updatedAt),
+      width: 216,
+      render: (updatedAt: number) => <Text type="secondary">{formatDateTime(updatedAt)}</Text>,
     },
     {
       title: '操作',
       key: 'actions',
-      width: 120,
+      width: 108,
       fixed: 'right',
       render: (_, product) => (
         <Space size={0}>
@@ -179,29 +182,31 @@ export function CatalogPage() {
 
   return (
     <div className="page">
-      <Flex className="page-header" justify="space-between" align="flex-start" gap={16} wrap>
-        <div>
+      <header className="page-header catalog-header">
+        <div className="catalog-header-text">
           <Title level={2}>商品管理</Title>
           <Paragraph type="secondary">
             内部商品由本平台维护名称、展示价与启停；供应商商品与履约映射尚未接入。
           </Paragraph>
         </div>
-        {isAdmin ? (
-          <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>
-            新建商品
-          </Button>
-        ) : (
-          <Tooltip title="只读身份不能新建商品">
-            <span>
-              <Button type="primary" icon={<Plus size={16} />} disabled>
-                新建商品
-              </Button>
-            </span>
-          </Tooltip>
-        )}
-      </Flex>
+        <div className="catalog-header-actions">
+          {isAdmin ? (
+            <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>
+              新建商品
+            </Button>
+          ) : (
+            <Tooltip title="只读身份不能新建商品">
+              <span>
+                <Button type="primary" icon={<Plus size={16} />} disabled>
+                  新建商品
+                </Button>
+              </span>
+            </Tooltip>
+          )}
+        </div>
+      </header>
 
-      <Space orientation="vertical" size={16} className="page-stack">
+      <Space orientation="vertical" size={12} className="page-stack">
         {!isAdmin ? (
           <Alert
             type="info"
@@ -211,72 +216,77 @@ export function CatalogPage() {
           />
         ) : null}
 
-        <Form<FilterFormValues>
-          form={filterForm}
-          className="catalog-filters"
-          layout="inline"
-          initialValues={{ keyword: '', status: 'all' }}
-          onFinish={applyFilters}
-        >
-          <Form.Item name="keyword" label="关键词">
-            <Input allowClear placeholder="商品编码、名称或描述" style={{ width: 240 }} />
-          </Form.Item>
-          <Form.Item name="status" label="状态">
-            <Select
-              style={{ width: 140 }}
-              options={[
-                { value: 'all', label: '全部状态' },
-                { value: 'active', label: '已启用' },
-                { value: 'disabled', label: '已停用' },
-              ]}
-            />
-          </Form.Item>
-          <Form.Item>
-            <Space>
-              <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
-                查询
-              </Button>
-              <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
-                重置
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
+        <section className="catalog-surface" aria-label="内部商品列表">
+          <Form<FilterFormValues>
+            form={filterForm}
+            className="catalog-toolbar"
+            layout="inline"
+            initialValues={{ keyword: '', status: 'all' }}
+            onFinish={applyFilters}
+          >
+            <Form.Item name="keyword" label="关键词">
+              <Input allowClear placeholder="商品编码、名称或描述" style={{ width: 240 }} />
+            </Form.Item>
+            <Form.Item name="status" label="状态">
+              <Select
+                style={{ width: 140 }}
+                options={[
+                  { value: 'all', label: '全部状态' },
+                  { value: 'active', label: '已启用' },
+                  { value: 'disabled', label: '已停用' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item>
+              <Space size={8}>
+                <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
+                  查询
+                </Button>
+                <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
+                  重置
+                </Button>
+              </Space>
+            </Form.Item>
+          </Form>
 
-        {listQuery.isError ? (
-          <Alert
-            type="error"
-            showIcon
-            title="商品加载失败"
-            description={listQuery.error.message}
-            action={
-              <Button size="small" onClick={() => listQuery.refetch()}>
-                重试
-              </Button>
-            }
-          />
-        ) : (
-          <Table<CatalogProduct>
-            rowKey="id"
-            columns={columns}
-            dataSource={products}
-            loading={listQuery.isPending || listQuery.isFetching}
-            locale={{ emptyText }}
-            scroll={{ x: 'max-content' }}
-            pagination={{
-              current: page,
-              pageSize,
-              total: listQuery.data?.total ?? 0,
-              pageSizeOptions: PAGE_SIZE_OPTIONS,
-              showSizeChanger: true,
-              showTotal: (total) => `共 ${total} 条`,
-              onChange: (nextPage, nextPageSize) => {
-                setPage(nextPage);
-                setPageSize(nextPageSize);
-              },
-            }}
-          />
-        )}
+          {listQuery.isError ? (
+            <div className="catalog-feedback">
+              <Alert
+                type="error"
+                showIcon
+                title="商品加载失败"
+                description={listQuery.error.message}
+                action={
+                  <Button size="small" onClick={() => listQuery.refetch()}>
+                    重试
+                  </Button>
+                }
+              />
+            </div>
+          ) : (
+            <Table<CatalogProduct>
+              rowKey="id"
+              size="middle"
+              columns={columns}
+              dataSource={products}
+              loading={listQuery.isPending || listQuery.isFetching}
+              locale={{ emptyText }}
+              scroll={{ x: 1060 }}
+              pagination={{
+                current: page,
+                pageSize,
+                total: listQuery.data?.total ?? 0,
+                pageSizeOptions: PAGE_SIZE_OPTIONS,
+                showSizeChanger: true,
+                showTotal: (total) => `共 ${total} 条`,
+                onChange: (nextPage, nextPageSize) => {
+                  setPage(nextPage);
+                  setPageSize(nextPageSize);
+                },
+              }}
+            />
+          )}
+        </section>
       </Space>
 
       <ProductEditorDrawer

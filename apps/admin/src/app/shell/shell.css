@@ -191,7 +191,8 @@
   line-height: 1.4 !important;
 }
 
-.page-header p {
+.page-header p,
+.page-header .ant-typography-secondary {
   margin-bottom: 0 !important;
   font-size: 13px;
 }
