@@ -1,0 +1,144 @@
+# BHB-005: one-time operations only, never public registration or a demo backdoor.
+# The operator privately sets BENEFIT_PREVIEW_INITIAL_PASSWORD in repository Actions Secrets.
+# Supported Issue #14 comments: /bhb-005 inspect and /bhb-005 provision-viewer
+name: Benefit Hub Account Bootstrap (BHB-005)
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benefit-hub-account-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  account-bootstrap:
+    if: >-
+      github.event.issue.number == 14 &&
+      !github.event.issue.pull_request &&
+      github.event.comment.user.type == 'User' &&
+      github.event.sender.login == github.event.comment.user.login &&
+      github.actor == github.event.comment.user.login &&
+      (
+        github.event.comment.body == '/bhb-005 inspect' ||
+        github.event.comment.body == '/bhb-005 provision-viewer'
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    permissions:
+      contents: read
+      issues: read
+    steps:
+      - name: Validate current maintainer, current Issue and unchanged command
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = 'sanchuang-dev/benefit-hub'
+          test "$GITHUB_REF" = 'refs/heads/dev'
+          live_tip="$(gh api "repos/$GITHUB_REPOSITORY/branches/dev" --jq '.commit.sha')"
+          test "$GITHUB_SHA" = "$live_tip" || { echo '::error::Outdated dev workflow run'; exit 1; }
+
+          # This is a one-off named maintainer operation, not an open-ended
+          # permission for any commenter (or GitHub App/Bot) to create accounts.
+          test "$GITHUB_ACTOR" = 'dangjingtao'
+          permission="$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$GITHUB_ACTOR/permission" --jq '.permission')"
+          case "$permission" in admin|maintain|write) ;; *) echo '::error::Maintainer permission required'; exit 1 ;; esac
+
+          jq -e '
+            .action == "created" and
+            .issue.number == 14 and
+            .issue.state == "open" and
+            (.issue | has("pull_request") | not) and
+            .comment.user.type == "User" and
+            .comment.user.login == .sender.login and
+            (.comment.body == "/bhb-005 inspect" or .comment.body == "/bhb-005 provision-viewer")
+          ' "$GITHUB_EVENT_PATH" >/dev/null
+          comment_id="$(jq -r '.comment.id' "$GITHUB_EVENT_PATH")"
+          comment_json="$(gh api "repos/$GITHUB_REPOSITORY/issues/comments/$comment_id")"
+          jq -e --slurpfile event "$GITHUB_EVENT_PATH" '
+            .id == $event[0].comment.id and
+            .user.id == $event[0].comment.user.id and
+            .body == $event[0].comment.body and
+            .issue_url == $event[0].issue.url
+          ' <<< "$comment_json" >/dev/null
+          gh api "repos/$GITHUB_REPOSITORY/issues/14" --jq '.state' | grep -Fxq open
+
+      - name: Install SSH password transport
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Inspect accounts and provision only an absent viewer when requested
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+          INITIAL_PASSWORD: ${{ secrets.BENEFIT_PREVIEW_INITIAL_PASSWORD }}
+          OPERATION: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          set +x
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo '::error::Unapproved server'; exit 1 ;;
+          esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          test -n "$SSHPASS" || { echo '::error::Missing SSH secret'; exit 1; }
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
+
+          mkdir -m 700 -p "$RUNNER_TEMP/ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
+          test -s "$RUNNER_TEMP/ssh/known_hosts"
+          fingerprint="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fingerprint" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' ||
+            { echo '::error::SSH host identity mismatch'; exit 1; }
+
+          ssh_opts=(-o StrictHostKeyChecking=yes
+                    -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"
+                    -o PubkeyAuthentication=no
+                    -o PreferredAuthentications=password
+                    -o ConnectTimeout=15 -p "$TARGET_PORT")
+          remote="$TARGET_USER@$TARGET_HOST"
+          list_accounts() {
+            sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+              "cd /srv/benefit-hub && test -d /srv/benefit-hub/data && docker compose --project-name benefit-hub -f compose.yaml exec -T benefit-hub node dist/cli/admin.js list"
+          }
+
+          accounts="$(list_accounts)"
+          admin_count="$(printf '%s\n' "$accounts" | awk -F '\t' '$2=="admin" && $3=="active" {n++} END {print n+0}')"
+          viewer_count="$(printf '%s\n' "$accounts" | awk -F '\t' '$2=="viewer" && $3=="active" {n++} END {print n+0}')"
+          preview="$(printf '%s\n' "$accounts" | awk -F '\t' '$1=="preview" {print $2 ":" $3; exit}')"
+          echo "Active admin accounts: $admin_count"
+          echo "Active viewer accounts: $viewer_count"
+          echo "preview account: ${preview:-absent}"
+          if [ "$OPERATION" = '/bhb-005 inspect' ]; then exit 0; fi
+
+          test "$OPERATION" = '/bhb-005 provision-viewer'
+          test -z "$preview" || { echo '::error::preview already exists; no password reset or overwrite'; exit 1; }
+          test -n "$INITIAL_PASSWORD" ||
+            { echo '::error::Set repository Actions Secret BENEFIT_PREVIEW_INITIAL_PASSWORD first'; exit 1; }
+          test "${#INITIAL_PASSWORD}" -ge 12 ||
+            { echo '::error::Initial password must be 12+ characters'; exit 1; }
+
+          # SSH transports only stdin: the password never appears in an
+          # argument, repository file, comment, artifact or workflow output.
+          printf '%s' "$INITIAL_PASSWORD" | sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+            "cd /srv/benefit-hub && docker compose --project-name benefit-hub -f compose.yaml exec -T benefit-hub node dist/cli/admin.js create --username preview --role viewer --password-stdin"
+          unset INITIAL_PASSWORD
+
+          verified="$(list_accounts)"
+          printf '%s\n' "$verified" | awk -F '\t' '$1=="preview" && $2=="viewer" && $3=="active" {ok=1} END {exit !ok}' ||
+            { echo '::error::Post-provision account verification failed'; exit 1; }
+          sshpass -e ssh "${ssh_opts[@]}" "$remote" \
+            "curl -fsS --max-time 5 http://127.0.0.1:18080/healthz" |
+            grep -q '"status":"ok"'
+          echo 'BHB-005 viewer provisioned and internal health verified; complete HTTPS login manually.'
