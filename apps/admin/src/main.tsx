@@ -26,7 +26,7 @@ const theme: ThemeConfig = {
       headerBg: '#FFFFFF',
       bodyBg: '#F5F6F8',
       siderBg: '#FFFFFF',
-      headerHeight: 48,
+      headerHeight: 52,
       headerPadding: '0 16px',
     },
     Menu: {
