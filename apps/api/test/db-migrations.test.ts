@@ -62,5 +62,10 @@ describe('database migrations', () => {
     expect(names).toContain('auth_events');
     expect(names).toContain('catalog_products');
     expect(names).toContain('catalog_product_events');
+    expect(names).toContain('benefit_orders');
+    expect(names).toContain('benefit_order_status_events');
+    expect(names).toContain('fulfillment_attempts');
+    expect(names).toContain('supplier_product_mappings');
+    expect(names).toContain('supplier_product_mapping_versions');
   });
 });

@@ -81,6 +81,83 @@ export const catalogProductEvents = sqliteTable('catalog_product_events', {
 });
 
 /**
+ * One supplier mapping aggregate per internal product: the current draft plus a
+ * pointer to the active immutable version. The unique `product_id` index is the
+ * database guarantee that a product can never have two competing mappings.
+ *
+ * `version` protects draft writes; `validated_version` records which draft
+ * version passed *local* validation and is cleared by edits and activation, so
+ * a stale validation can never authorise activation. `active_version_id` is
+ * declared as plain text here because it references
+ * `supplier_product_mapping_versions`, which in turn references this table;
+ * migration 0004 adds the foreign key and the ownership trigger that keeps the
+ * pointer on this mapping's own history.
+ *
+ * Draft rows may hold a not-yet-validated mode/deduction pairing so an operator
+ * can save and correct an intermediate draft; the immutable version table below
+ * enforces the pairing at the database boundary for anything that becomes active.
+ */
+export const supplierProductMappings = sqliteTable(
+  'supplier_product_mappings',
+  {
+    id: text('id').primaryKey(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    provider: text('provider').notNull(),
+    productCode: text('product_code').notNull(),
+    fulfillmentMode: text('fulfillment_mode').notNull(),
+    deductionUnit: text('deduction_unit').notNull(),
+    version: integer('version').notNull(),
+    validatedVersion: integer('validated_version'),
+    validatedAt: integer('validated_at'),
+    activeVersionId: text('active_version_id'),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [uniqueIndex('ux_supplier_product_mappings_product').on(table.productId)],
+);
+
+/**
+ * Immutable snapshot of one accepted mapping activation. Version numbers are
+ * monotonic per mapping (`ux_..._number`). Migration 0004 adds triggers that
+ * reject UPDATE/DELETE, so accepted history cannot be rewritten through any
+ * repository or ad-hoc SQL path. The snapshot itself is the complete mapping
+ * content; there are no credential, signature, phone, card-key, or raw supplier
+ * response columns.
+ */
+export const supplierProductMappingVersions = sqliteTable(
+  'supplier_product_mapping_versions',
+  {
+    id: text('id').primaryKey(),
+    mappingId: text('mapping_id')
+      .notNull()
+      .references(() => supplierProductMappings.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    versionNumber: integer('version_number').notNull(),
+    provider: text('provider').notNull(),
+    productCode: text('product_code').notNull(),
+    fulfillmentMode: text('fulfillment_mode').notNull(),
+    deductionUnit: text('deduction_unit').notNull(),
+    sourceDraftVersion: integer('source_draft_version').notNull(),
+    activatedBy: text('activated_by').notNull(),
+    activatedAt: integer('activated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_supplier_product_mapping_versions_number').on(
+      table.mappingId,
+      table.versionNumber,
+    ),
+    index('idx_supplier_product_mapping_versions_mapping').on(
+      table.mappingId,
+      table.versionNumber,
+    ),
+  ],
+);
+
+/**
  * One row per business grant intent. `id` is our internal order id and is never
  * derived from a supplier order number. The unique
  * `business_source + business_order_no` index is the idempotency guarantee, so a
@@ -88,8 +165,9 @@ export const catalogProductEvents = sqliteTable('catalog_product_events', {
  * upstream business identity. `status` is our provider-agnostic status and
  * `version` is the optimistic concurrency token for status changes.
  *
- * Only the product reference is stored here: there is no supplier mapping or
- * mapping-version entity yet, so no placeholder foreign key is invented.
+ * Only the product reference is stored here. Binding an order to the mapping
+ * version that was active when it was created belongs to a later slice, so no
+ * placeholder mapping-version foreign key is invented on this table.
  */
 export const benefitOrders = sqliteTable(
   'benefit_orders',
