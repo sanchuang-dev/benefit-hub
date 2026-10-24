@@ -185,11 +185,12 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     if (!editingSnapshot || conflicted) return;
     setFormError(null);
     try {
-      await statusMutation.mutateAsync({
+      const updated = await statusMutation.mutateAsync({
         id: detail.data.id,
         status,
         version: detail.data.version,
       });
+      setEditingSnapshot({ id: updated.id, version: updated.version });
       message.success(status === 'active' ? '商品已启用' : '商品已停用');
     } catch (error) {
       applyApiError(error);
