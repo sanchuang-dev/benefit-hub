@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
 import { ApiError } from '../shared/lib/api-client';
 import { useLoginMutation, useSessionQuery } from '../features/auth/use-auth';
+import './LoginPage.css';
 
 const { Title, Paragraph, Text } = Typography;
 
