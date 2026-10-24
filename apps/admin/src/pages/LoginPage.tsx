@@ -2,7 +2,7 @@ import { Alert, Button, Card, Form, Input, Typography } from 'antd';
 import { LockKeyhole, UserRound } from 'lucide-react';
 import { useState } from 'react';
 import { Navigate, useLocation, useNavigate } from 'react-router';
-import { ApiError } from '../features/auth/api';
+import { ApiError } from '../shared/lib/api-client';
 import { useLoginMutation, useSessionQuery } from '../features/auth/use-auth';
 
 const { Title, Paragraph, Text } = Typography;

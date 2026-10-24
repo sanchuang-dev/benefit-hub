@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { ApiError } from '../../shared/lib/api-client';
 import {
-  ApiError,
   fetchAccounts,
   fetchSession,
   fetchSystemStatus,
