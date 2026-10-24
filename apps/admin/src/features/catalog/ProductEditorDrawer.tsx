@@ -12,6 +12,7 @@ import {
   Spin,
 } from 'antd';
 import { useEffect, useState } from 'react';
+import './ProductEditorDrawer.css';
 import { ApiError } from '../../shared/lib/api-client';
 import { centsToYuan, yuanToCents } from './money';
 import type { CatalogProduct, ProductStatus } from './api';
