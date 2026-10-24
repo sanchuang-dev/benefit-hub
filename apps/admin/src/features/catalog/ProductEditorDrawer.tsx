@@ -77,11 +77,12 @@ const DEFAULT_VALUES: ProductFormValues = {
  */
 export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorDrawerProps) {
   const [form] = Form.useForm<ProductFormValues>();
-  const { message } = AntdApp.useApp();
+  const { message, modal } = AntdApp.useApp();
   const [formError, setFormError] = useState<{ message: string; code: string } | null>(null);
   // Keep the form values and optimistic-lock version from the same fetch.
   const [editingSnapshot, setEditingSnapshot] = useState<{ id: string; version: number } | null>(null);
   const [conflicted, setConflicted] = useState(false);
+  const [dirty, setDirty] = useState(false);
 
   const open = state !== null;
   const mode = state?.mode ?? 'create';
@@ -100,11 +101,13 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     if (!open) {
       setEditingSnapshot(null);
       setConflicted(false);
+      setDirty(false);
       return;
     }
     setFormError(null);
     setEditingSnapshot(null);
     setConflicted(false);
+    setDirty(false);
     form.resetFields();
     if (isCreate || !productId) return;
 
@@ -113,6 +116,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     void detail.refetch().then((result) => {
       if (cancelled || !result.data || result.isError) return;
       form.setFieldsValue(toFormValues(result.data));
+      setDirty(false);
       setEditingSnapshot({ id: result.data.id, version: result.data.version });
     });
     return () => { cancelled = true; };
@@ -126,6 +130,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     const result = await detail.refetch();
     if (result.isError || !result.data) return;
     form.setFieldsValue(toFormValues(result.data));
+    setDirty(false);
     setEditingSnapshot({ id: result.data.id, version: result.data.version });
     setConflicted(false);
     setFormError(null);
@@ -186,15 +191,31 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
     setFormError(null);
     try {
       const updated = await statusMutation.mutateAsync({
-        id: detail.data.id,
+        id: editingSnapshot.id,
         status,
-        version: detail.data.version,
+        version: editingSnapshot.version,
       });
       setEditingSnapshot({ id: updated.id, version: updated.version });
       message.success(status === 'active' ? '商品已启用' : '商品已停用');
     } catch (error) {
       applyApiError(error);
     }
+  };
+
+  const requestClose = () => {
+    if (saving) return;
+    if (!readOnly && dirty) {
+      modal.confirm({
+        title: '放弃未保存的修改？',
+        content: '当前表单有未保存的修改，关闭后将丢失。',
+        okText: '放弃修改',
+        cancelText: '继续编辑',
+        okButtonProps: { danger: true },
+        onOk: onClose,
+      });
+      return;
+    }
+    onClose();
   };
 
   const title = isCreate ? '新建内部商品' : mode === 'edit' ? '编辑内部商品' : '内部商品详情';
@@ -206,7 +227,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
       open={open}
       size={640}
       title={title}
-      onClose={onClose}
+      onClose={requestClose}
       destroyOnHidden
       footer={
         <Flex justify="space-between" align="center" gap={8}>
@@ -234,7 +255,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
             ) : null}
           </div>
           <Space>
-            <Button onClick={onClose}>关闭</Button>
+            <Button onClick={requestClose}>关闭</Button>
             {!readOnly ? (
               <Button type="primary" loading={saving} disabled={!ready} onClick={() => form.submit()}>
                 保存
@@ -327,6 +348,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           requiredMark={false}
           initialValues={DEFAULT_VALUES}
           disabled={readOnly}
+          onValuesChange={() => setDirty(true)}
           onFinish={handleSubmit}
         >
           <Form.Item
