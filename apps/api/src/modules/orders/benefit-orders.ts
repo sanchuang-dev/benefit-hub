@@ -40,12 +40,18 @@ export type AttemptResult = (typeof ATTEMPT_RESULTS)[number];
 /**
  * A persisted business grant intent. `businessSource + businessOrderNo` is the
  * caller-provided upstream identity; `id` is our stable internal order id.
+ *
+ * `mappingVersionId` is the immutable supplier mapping snapshot captured when a
+ * new order was created (BHB-008). It is `null` only for orders created before
+ * that snapshot mechanism existed: those historical facts are never backfilled
+ * or rebound to a later mapping version.
  */
 export interface BenefitOrder {
   id: string;
   businessSource: string;
   businessOrderNo: string;
   productId: string;
+  mappingVersionId: string | null;
   fulfillmentMode: FulfillmentMode;
   status: OrderStatus;
   version: number;
@@ -86,6 +92,10 @@ export class OrderIntentConflictError extends Error {}
 export class OrderVersionConflictError extends Error {}
 export class OrderNotFoundError extends Error {}
 export class OrderProductNotFoundError extends Error {}
+/** The internal product exists but is disabled, so no new order may reference it. */
+export class OrderProductDisabledError extends Error {}
+/** The product has no current active supplier mapping snapshot to freeze. */
+export class OrderMappingUnavailableError extends Error {}
 
 /**
  * Our own source key (for example `local-life`). It is lower-cased so two
@@ -153,13 +163,6 @@ export function requireTimestamp(raw: number, label: string): number {
     throw new OrderInputError(`${label}需为非负毫秒时间戳`);
   }
   return raw;
-}
-
-export function assertFulfillmentMode(raw: string): FulfillmentMode {
-  if (!(FULFILLMENT_MODES as readonly string[]).includes(raw)) {
-    throw new OrderInputError(`履约模式需为 ${FULFILLMENT_MODES.join('/')} 之一`);
-  }
-  return raw as FulfillmentMode;
 }
 
 export function assertOrderStatus(raw: string): OrderStatus {

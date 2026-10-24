@@ -1,6 +1,6 @@
 # Benefit Hub · 技术架构与工程决策
 
-> 状态：第一期技术路线（2026-10-24 更新）。**基础设施、账号密码登录、内部商品 CRUD 与运营后台商品管理已部署，BHB-004-A/B/C 已完成维护者真人线上验收；BHB-006 订单持久化/幂等底座已合入 dev；BHB-007 供应商映射草稿/本地校验/版本激活底座已完成实现并处于合并验收中。供应商商品目录、映射 HTTP API/前端、订单绑定映射版本与真实供应商履约仍未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
+> 状态：第一期技术路线（2026-10-24 更新）。**基础设施、账号密码登录、内部商品 CRUD 与运营后台商品管理已部署，BHB-004-A/B/C 已完成维护者真人线上验收；BHB-006 订单持久化/幂等底座已合入 dev；BHB-007 供应商映射草稿/本地校验/版本激活底座已合入 dev；BHB-008 订单创建时冻结生效映射版本的后端底座已实现。供应商商品目录、映射 HTTP API/前端与真实供应商履约仍未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
 >
 > 视觉、颜色、排版、页面组件的风格规范只属于根目录 `design.md`。产品功能范围见 [product-scope.md](./product-scope.md)，羊毛供应商契约见 [integrations/yangmao.md](./integrations/yangmao.md)，部署见 [operations.md](./operations.md)。
 
@@ -196,7 +196,8 @@ compose.yaml
 - 商品目录（BHB-003，仅后端）：`GET /api/v1/catalog/products`（分页/关键词/状态）与详情只要求有效会话；创建、编辑、启停要求 `admin`。编辑与启停必须携带当前版本号，条件更新失败返回 `PRODUCT_VERSION_CONFLICT`，不静默覆盖；写操作记录 `catalog_product_events`（操作者、动作、商品、时间）。业务编码由数据库唯一索引保证不重复。本切片没有供应商映射，API 对任何商品都返回 `vendorFulfillmentEnabled: false`；停用商品不得被后续发放逻辑使用。
 - 迁移：启动时按序应用未执行的增量迁移并记录在 `schema_migrations`，只允许向前变更；不做自动降级或删库。
 - 订单持久化底座（BHB-006，仅后端领域与 Repository）：`benefit_orders` 由数据库唯一索引保证 `business_source + business_order_no` 唯一，等价重复请求返回同一订单，关键参数冲突稳定失败，状态变更以版本号条件更新；`benefit_order_status_events` 与订单写入处于同一事务，保存每个已接受版本对应的内部状态与时间，保证状态轨迹可追溯；`fulfillment_attempts` 只记录操作类别、受限长度的上游关联号、内部结果/观察状态与时间，不保存凭证、手机号、卡密或原始供应商响应。该切片不提供发放 HTTP API、真实供应商调用或前端页面，外部 HTTP 调用必须在本地事务之外进行。
-- 供应商映射持久化底座（BHB-007，仅后端领域与 Repository）：`supplier_product_mappings` 由 `product_id` 唯一索引保证一个内部商品只有一个映射聚合，保存当前草稿与当前 active 版本指针；`supplier_product_mapping_versions` 保存每次显式激活的完整不可变快照、单调版本号、激活操作者引用与时间，迁移 0004 的触发器拒绝快照 UPDATE/DELETE 以及指向其他映射的 active 指针。草稿写入以版本号条件更新保护，任何编辑都会清除既有校验事实；`validateDraft` 只执行本地规则（内部商品存在、`yangmao`、受限 productCode、A/B/C/D，以及 A/B/C=礼包/次数、D=金额的扣减语义），**不代表上游验证成功**；`activateDraft` 仅接受当前已校验版本，在同一本地事务内插入快照并切换指针，过期/并发激活确定性失败。该切片不调用羊毛接口、不保存凭证或原始响应、不提供映射 HTTP API 或前端，订单也尚未关联映射版本（BHB-008）。
+- 供应商映射持久化底座（BHB-007，仅后端领域与 Repository）：`supplier_product_mappings` 由 `product_id` 唯一索引保证一个内部商品只有一个映射聚合，保存当前草稿与当前 active 版本指针；`supplier_product_mapping_versions` 保存每次显式激活的完整不可变快照、单调版本号、激活操作者引用与时间，迁移 0004 的触发器拒绝快照 UPDATE/DELETE 以及指向其他映射的 active 指针。草稿写入以版本号条件更新保护，任何编辑都会清除既有校验事实；`validateDraft` 只执行本地规则（内部商品存在、`yangmao`、受限 productCode、A/B/C/D，以及 A/B/C=礼包/次数、D=金额的扣减语义），**不代表上游验证成功**；`activateDraft` 仅接受当前已校验版本，在同一本地事务内插入快照并切换指针，过期/并发激活确定性失败。该切片不调用羊毛接口、不保存凭证或原始响应、不提供映射 HTTP API 或前端；订单绑定映射版本由 BHB-008 承接。
+- 订单冻结映射版本（BHB-008，仅后端领域/DB/Repository）：迁移 0005 为 `benefit_orders` 增加可空 `mapping_version_id`，历史 0003/0004 订单保持 `NULL` 且不回填猜测值。新建订单只提交业务来源、业务单号和内部商品：同一短 `IMMEDIATE` 事务内读取该商品当前 active 映射快照并写入订单与初始状态事实，订单复制快照的 `fulfillment_mode`，`mapping_version_id` 精确指向该快照。数据库触发器要求新行的快照存在、属于同一商品、mode 一致且仍是 active 版本，并禁止创建后修改 `product_id` / `fulfillment_mode` / `mapping_version_id`（历史 `NULL` 行同样不可改造）。等价业务身份重放先于当前商品/映射资格检查，因此映射切换或商品停用后仍返回原订单与原版本；改商品稳定冲突。该切片不调用羊毛、不提供 HTTP API/前端、不实现真实履约或 BHB-009。
 
 运营后台可展示供应商余额**最近快照**，但对接总览没有余额实时查询契约，不能暗示可随时查询准确余额。商品与价格属于我们的运营配置，除非供应商明确提供写接口，不反向修改上游商品。
 
@@ -215,4 +216,4 @@ compose.yaml
 - CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 服务、React/Ant Design 管理后台和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限；BHB-003 已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004-A/B/C 已完成运营壳层与商品管理 UI 整改、dev 部署及维护者真人线上验收。**供应商商品目录、映射 HTTP API/前端与真实羊毛接口发放、履约仍未实现**。BHB-006 已实现订单与履约尝试的持久化、数据库幂等唯一约束、版本保护和不可变状态历史，但仅有后端领域/DB/Repository 与测试，尚无发放 HTTP API、供应商调用或履约前端。BHB-007 已实现供应商映射的草稿持久化、本地校验事实、显式激活与不可变版本历史，同样只有后端领域/DB/Repository 与迁移测试，尚无映射 HTTP API、前端、供应商目录或真实上游校验。基础应用上线不代表可提供真实权益服务。
+**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 服务、React/Ant Design 管理后台和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限；BHB-003 已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004-A/B/C 已完成运营壳层与商品管理 UI 整改、dev 部署及维护者真人线上验收。**供应商商品目录、映射 HTTP API/前端与真实羊毛接口发放、履约仍未实现**。BHB-006 已实现订单与履约尝试的持久化、数据库幂等唯一约束、版本保护和不可变状态历史，但仅有后端领域/DB/Repository 与测试，尚无发放 HTTP API、供应商调用或履约前端。BHB-007 已实现供应商映射的草稿持久化、本地校验事实、显式激活与不可变版本历史并已合入 dev，同样只有后端领域/DB/Repository 与迁移测试，尚无映射 HTTP API、前端、供应商目录或真实上游校验。BHB-008 已实现订单创建时冻结当前生效映射版本、等价重放优先返回历史事实、数据库完整绑定约束与双连接并发证据，仍只有后端领域/DB/Repository 与测试。基础应用上线不代表可提供真实权益服务。

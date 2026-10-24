@@ -782,7 +782,10 @@ describe('supplier mapping migration upgrade', () => {
         )
         .run();
 
-      expect(runMigrations(handle.sqlite)).toEqual(['0004_supplier_product_mappings']);
+      expect(runMigrations(handle.sqlite)).toEqual([
+        '0004_supplier_product_mappings',
+        '0005_benefit_order_mapping_version',
+      ]);
 
       // Existing auth, catalogue and order data survives untouched.
       expect(
@@ -806,7 +809,7 @@ describe('supplier mapping migration upgrade', () => {
         handle.sqlite
           .prepare(
             `SELECT business_source, business_order_no, product_id, fulfillment_mode,
-                    status, version FROM benefit_orders WHERE id = 'order-legacy'`,
+                    status, version, mapping_version_id FROM benefit_orders WHERE id = 'order-legacy'`,
           )
           .get(),
       ).toEqual({
@@ -816,6 +819,7 @@ describe('supplier mapping migration upgrade', () => {
         fulfillment_mode: 'A',
         status: 'processing',
         version: 2,
+        mapping_version_id: null,
       });
       expect(
         handle.sqlite
@@ -875,12 +879,14 @@ describe('supplier mapping migration upgrade', () => {
         { id: '0002_catalog_products' },
         { id: '0003_benefit_orders' },
         { id: '0004_supplier_product_mappings' },
+        { id: '0005_benefit_order_mapping_version' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
         '0002_catalog_products',
         '0003_benefit_orders',
         '0004_supplier_product_mappings',
+        '0005_benefit_order_mapping_version',
       ]);
     } finally {
       handle.close();

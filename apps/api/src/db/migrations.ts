@@ -261,4 +261,51 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0005_benefit_order_mapping_version',
+    sql: `
+      -- Forward-only binding of an order to the immutable mapping snapshot that
+      -- was active when it was created. Existing pre-0005 orders deliberately
+      -- stay NULL: no snapshot was chosen at creation, so backfilling one would
+      -- fabricate history.
+      ALTER TABLE benefit_orders
+        ADD COLUMN mapping_version_id TEXT
+          REFERENCES supplier_product_mapping_versions(id) ON DELETE RESTRICT;
+
+      -- New orders must freeze one complete, current snapshot: it has to exist,
+      -- belong to the same product, carry the same fulfillment mode as the order
+      -- row, and still be the product's active version at INSERT time. A
+      -- concurrent activation cannot pass this check with a stale pointer
+      -- because the trigger evaluates the committed active pointer.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_mapping_binding_insert
+      BEFORE INSERT ON benefit_orders
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order must reference the current active mapping snapshot of the same product and mode')
+        WHERE NEW.mapping_version_id IS NULL
+           OR NOT EXISTS (
+             SELECT 1
+               FROM supplier_product_mappings AS m
+               JOIN supplier_product_mapping_versions AS v
+                 ON v.id = m.active_version_id AND v.mapping_id = m.id
+              WHERE m.product_id = NEW.product_id
+                AND m.active_version_id = NEW.mapping_version_id
+                AND v.product_id = NEW.product_id
+                AND v.fulfillment_mode = NEW.fulfillment_mode
+           );
+      END;
+
+      -- The frozen binding is a creation-time fact. Status, version and
+      -- timestamps may still move, but product, mode and mapping version may
+      -- never diverge from the snapshot afterwards. This also prevents legacy
+      -- NULL-mapping rows from being retrofitted into a different history.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_binding_frozen
+      BEFORE UPDATE OF product_id, fulfillment_mode, mapping_version_id ON benefit_orders
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order product, mode and mapping version are frozen at creation')
+        WHERE NEW.product_id IS NOT OLD.product_id
+           OR NEW.fulfillment_mode IS NOT OLD.fulfillment_mode
+           OR NEW.mapping_version_id IS NOT OLD.mapping_version_id;
+      END;
+    `,
+  },
 ];
