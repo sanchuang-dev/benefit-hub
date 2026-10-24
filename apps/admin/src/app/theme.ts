@@ -27,5 +27,14 @@ export const adminTheme: ThemeConfig = {
       itemSelectedColor: '#2563EB',
       itemHeight: 36,
     },
+    // Desktop operations tables: ~44px rows with stable header treatment.
+    Table: {
+      headerBg: '#FAFBFC',
+      headerColor: '#475569',
+      headerSplitColor: '#EEF0F2',
+      rowHoverBg: '#F5F8FF',
+      cellPaddingBlockMD: 10,
+      cellPaddingInlineMD: 16,
+    },
   },
 };

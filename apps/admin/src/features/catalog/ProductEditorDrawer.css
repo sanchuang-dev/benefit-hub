@@ -1,3 +1,26 @@
 .product-drawer-alert {
-  margin-bottom: 16px;
+  margin-bottom: 12px;
+}
+
+.product-form-section {
+  font-size: 13px;
+  color: #475569;
+}
+
+.product-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 12px;
+}
+
+.product-drawer-meta {
+  display: block;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .product-form-grid {
+    grid-template-columns: 1fr;
+  }
 }

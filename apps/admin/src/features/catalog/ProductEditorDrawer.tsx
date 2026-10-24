@@ -2,6 +2,7 @@ import {
   Alert,
   App as AntdApp,
   Button,
+  Divider,
   Drawer,
   Flex,
   Form,
@@ -10,10 +11,13 @@ import {
   Popconfirm,
   Space,
   Spin,
+  Tag,
+  Typography,
 } from 'antd';
 import { useEffect, useState } from 'react';
 import './ProductEditorDrawer.css';
 import { ApiError } from '../../shared/lib/api-client';
+import { formatDateTime } from '../../shared/lib/format-date-time';
 import { centsToYuan, yuanToCents } from './money';
 import type { CatalogProduct, ProductStatus } from './api';
 import {
@@ -230,6 +234,15 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
       title={title}
       onClose={requestClose}
       destroyOnHidden
+      extra={
+        !isCreate && status ? (
+          status === 'active' ? (
+            <Tag color="green">已启用</Tag>
+          ) : (
+            <Tag>已停用</Tag>
+          )
+        ) : null
+      }
       footer={
         <Flex justify="space-between" align="center" gap={8}>
           <div>
@@ -352,6 +365,14 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           onValuesChange={() => setDirty(true)}
           onFinish={handleSubmit}
         >
+          <Divider
+            titlePlacement="start"
+            plain
+            className="product-form-section"
+            style={{ margin: '4px 0 16px' }}
+          >
+            基本信息
+          </Divider>
           <Form.Item
             label="商品编码"
             name="code"
@@ -378,38 +399,50 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
             name="shortDescription"
             rules={[{ max: 200, message: '商品描述最长 200 个字符' }]}
           >
-            <Input.TextArea rows={3} maxLength={200} showCount placeholder="可选，运营内部说明" />
+            <Input.TextArea rows={2} maxLength={200} showCount placeholder="可选，运营内部说明" />
           </Form.Item>
-          <Form.Item
-            label="展示价（元）"
-            name="displayPriceYuan"
-            rules={[{ type: 'number', min: 0, message: '展示价不能为负' }]}
+
+          <Divider
+            titlePlacement="start"
+            plain
+            className="product-form-section"
+            style={{ margin: '4px 0 16px' }}
           >
-            <InputNumber
-              style={{ width: '100%' }}
-              prefix="¥"
-              min={0}
-              precision={2}
-              placeholder="留空表示未配置"
-            />
-          </Form.Item>
-          <Form.Item
-            label="预估成本（元）"
-            name="estimatedCostYuan"
-            rules={[{ type: 'number', min: 0, message: '预估成本不能为负' }]}
-          >
-            <InputNumber
-              style={{ width: '100%' }}
-              prefix="¥"
-              min={0}
-              precision={2}
-              placeholder="留空表示未配置"
-            />
-          </Form.Item>
-          {!isCreate && detail.data ? (
-            <Form.Item label="版本">
-              <Input value={editingSnapshot ? `v${editingSnapshot.version}` : '加载中'} readOnly />
+            价格与成本
+          </Divider>
+          <div className="product-form-grid">
+            <Form.Item
+              label="展示价（元）"
+              name="displayPriceYuan"
+              rules={[{ type: 'number', min: 0, message: '展示价不能为负' }]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                prefix="¥"
+                min={0}
+                precision={2}
+                placeholder="留空表示未配置"
+              />
             </Form.Item>
+            <Form.Item
+              label="预估成本（元）"
+              name="estimatedCostYuan"
+              rules={[{ type: 'number', min: 0, message: '预估成本不能为负' }]}
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                prefix="¥"
+                min={0}
+                precision={2}
+                placeholder="留空表示未配置"
+              />
+            </Form.Item>
+          </div>
+
+          {!isCreate && detail.data ? (
+            <Typography.Text type="secondary" className="product-drawer-meta">
+              版本 v{detail.data.version} · 更新于 {formatDateTime(detail.data.updatedAt)}
+            </Typography.Text>
           ) : null}
         </Form>
       </Spin>

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { CatalogProduct } from '../features/catalog/api';
 import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
 
@@ -222,6 +222,23 @@ describe('internal product list', () => {
     fireEvent.click(findButtonText('重试'));
 
     expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it('tells a viewer that an empty catalogue is populated by an administrator', { timeout: 60_000 }, async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(VIEWER);
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([]);
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+
+    expect(
+      await screen.findByText('还没有内部商品，请联系管理员创建', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(screen.getByText('当前为只读身份')).toBeTruthy();
+    expect((findButtonText('新建商品') as HTMLButtonElement).disabled).toBe(true);
+    expect(writeCalls(fetchMock)).toEqual([]);
   });
 });
 
@@ -462,6 +479,42 @@ describe('product writes', () => {
     expect(screen.queryByText('停用商品')).toBeNull();
     expect(writeCalls(fetchMock)).toEqual([]);
   });
+
+  it('shows the current status and grouped fields in the editor drawer', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      status: 'disabled',
+      version: 3,
+    });
+
+    mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url === '/api/v1/catalog/products/p-2' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(200, { product: coffee });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([coffee]);
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(findButtonText('编辑'));
+
+    await screen.findByText('编辑内部商品', undefined, { timeout: 5000 });
+    const drawer = await screen.findByRole('dialog');
+
+    // The drawer header repeats the persisted status so an operator can read it
+    // without scanning the table behind the mask.
+    expect(within(drawer).getByText('已停用')).toBeTruthy();
+    expect(within(drawer).getByText('基本信息')).toBeTruthy();
+    expect(within(drawer).getByText('价格与成本')).toBeTruthy();
+    expect(within(drawer).getByText('版本 v3', { exact: false })).toBeTruthy();
+    expect((within(drawer).getByLabelText('商品名称') as HTMLInputElement).value).toBe('咖啡券');
+  });
+
   it('reloads a fresh product snapshot when the editor is reopened', { timeout: 60_000 }, async () => {
     let current = product({ id: 'p-2', code: 'COFFEE-1', name: '旧商品名称', version: 1 });
     const writes: Record<string, unknown>[] = [];
