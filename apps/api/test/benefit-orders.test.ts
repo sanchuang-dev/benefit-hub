@@ -740,10 +740,7 @@ describe('benefit order / mapping activation concurrency', () => {
 
           const mapping = db
             .prepare(
-              `SELECT id, product_id, provider, product_code, fulfillment_mode, deduction_unit,
-                      version, validated_version
-                 FROM supplier_product_mappings
-                WHERE product_id = ?`,
+              'SELECT id, product_id, provider, product_code, fulfillment_mode, deduction_unit, version, validated_version FROM supplier_product_mappings WHERE product_id = ?',
             )
             .get(workerData.productId);
           if (!mapping) throw new Error('mapping missing');
@@ -762,10 +759,7 @@ describe('benefit order / mapping activation concurrency', () => {
           const now = Date.now();
 
           db.prepare(
-            `INSERT INTO supplier_product_mapping_versions
-               (id, mapping_id, product_id, version_number, provider, product_code,
-                fulfillment_mode, deduction_unit, source_draft_version, activated_by, activated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'test-actor', ?)`,
+            "INSERT INTO supplier_product_mapping_versions (id, mapping_id, product_id, version_number, provider, product_code, fulfillment_mode, deduction_unit, source_draft_version, activated_by, activated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'test-actor', ?)",
           ).run(
             workerData.snapshotId,
             mapping.id,
@@ -780,10 +774,7 @@ describe('benefit order / mapping activation concurrency', () => {
           );
 
           const updated = db.prepare(
-            `UPDATE supplier_product_mappings
-                SET active_version_id = ?, version = ?, validated_version = NULL,
-                    validated_at = NULL, updated_at = ?
-              WHERE id = ? AND version = ?`,
+            'UPDATE supplier_product_mappings SET active_version_id = ?, version = ?, validated_version = NULL, validated_at = NULL, updated_at = ? WHERE id = ? AND version = ?',
           ).run(
             workerData.snapshotId,
             mapping.version + 1,
