@@ -6,9 +6,14 @@
  * Supplier protocols and signatures stay out of this slice entirely.
  */
 
+import {
+  FULFILLMENT_MODES,
+  type FulfillmentMode,
+} from '@sanchuang-dev/benefit-contracts';
+
 /** The four supplier fulfilment shapes (A/B/C/D) described in docs/product-scope.md. */
-export const FULFILLMENT_MODES = ['A', 'B', 'C', 'D'] as const;
-export type FulfillmentMode = (typeof FULFILLMENT_MODES)[number];
+export { FULFILLMENT_MODES };
+export type { FulfillmentMode };
 
 /**
  * Our own provider-agnostic order status. Supplier answer codes are never

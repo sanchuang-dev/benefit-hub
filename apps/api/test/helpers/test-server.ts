@@ -120,8 +120,12 @@ export class TestClient {
     return this.mutate('PATCH', path, body, csrfToken);
   }
 
+  async put(path: string, body?: unknown, csrfToken?: string): Promise<Response> {
+    return this.mutate('PUT', path, body, csrfToken);
+  }
+
   private async mutate(
-    method: 'POST' | 'PATCH',
+    method: 'POST' | 'PATCH' | 'PUT',
     path: string,
     body?: unknown,
     csrfToken?: string,

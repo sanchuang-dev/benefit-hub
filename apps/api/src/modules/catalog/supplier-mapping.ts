@@ -6,36 +6,37 @@
  * "validated" draft means exactly one thing: it passed *local* structural
  * checks. It must never be presented or named as upstream-verified success.
  *
- * The A/B/C/D fulfilment shapes are defined once by the order domain (BHB-006);
- * this module reuses that union rather than keeping a second copy.
+ * The A/B/C/D fulfilment shapes are owned by the shared contracts wire enum and
+ * re-exported by the order domain (BHB-006); this module reuses that union rather
+ * than keeping a second copy.
  */
 
+import {
+  DEDUCTION_UNITS,
+  MAPPING_PROVIDERS,
+  MAPPING_VALIDATION_ISSUES,
+  SUPPLIER_PRODUCT_CODE_PATTERN,
+  type DeductionUnit,
+  type MappingProvider,
+  type MappingValidationIssue,
+} from '@sanchuang-dev/benefit-contracts';
 import {
   FULFILLMENT_MODES,
   type FulfillmentMode,
 } from '../orders/benefit-orders.js';
 
 /**
- * Providers accepted in phase one. `yangmao` is the only real integration, so
- * the draft store cannot pretend a second provider already exists.
+ * Mapping wire values, the upstream product-code bound and local issue codes
+ * live in the shared contracts package; this module re-exports them so existing
+ * domain consumers keep one import path while the protocol has one owner.
  */
-export const MAPPING_PROVIDERS = ['yangmao'] as const;
-export type MappingProvider = (typeof MAPPING_PROVIDERS)[number];
-
-/**
- * Deduction semantics of a mapping. `pack` is a gift-pack / count quota and
- * `amount` is a monetary entitlement balance. The two ledgers never mix, and
- * A/B/C may only use `pack` while D may only use `amount`.
- */
-export const DEDUCTION_UNITS = ['pack', 'amount'] as const;
-export type DeductionUnit = (typeof DEDUCTION_UNITS)[number];
-
-/**
- * Upstream product codes are stable operator-supplied identifiers, not free
- * text and not raw supplier payloads. Case is preserved because it may matter
- * upstream; whitespace and punctuation beyond the bounded set are rejected.
- */
-export const SUPPLIER_PRODUCT_CODE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export {
+  DEDUCTION_UNITS,
+  MAPPING_PROVIDERS,
+  MAPPING_VALIDATION_ISSUES,
+  SUPPLIER_PRODUCT_CODE_PATTERN,
+};
+export type { DeductionUnit, MappingProvider, MappingValidationIssue };
 
 /** Activation actor references are bounded visible identifiers, never secrets. */
 const ACTOR_REFERENCE_PATTERN = /^[!-~]{1,64}$/;
@@ -87,15 +88,6 @@ export interface MappingVersion {
   activatedBy: string;
   activatedAt: number;
 }
-
-export const MAPPING_VALIDATION_ISSUES = [
-  'product_missing',
-  'provider_unsupported',
-  'product_code_invalid',
-  'fulfillment_mode_unsupported',
-  'deduction_unit_mismatch',
-] as const;
-export type MappingValidationIssue = (typeof MAPPING_VALIDATION_ISSUES)[number];
 
 const VALIDATION_ISSUE_LABELS: Record<MappingValidationIssue, string> = {
   product_missing: '内部商品不存在',
