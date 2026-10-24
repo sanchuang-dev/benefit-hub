@@ -15,7 +15,7 @@ body,
 body {
   margin: 0;
   font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
-  background: #f1f3f6;
+  background: #f5f6f8;
   color: #1f2937;
 }
 
@@ -26,7 +26,7 @@ body {
   justify-content: center;
 }
 
-/* Login: blue brand cover plus a white, restrained Ant Design form. */
+/* Login remains intentionally separate from the authenticated operations shell. */
 .login-page {
   min-height: 100vh;
   display: grid;
@@ -106,53 +106,121 @@ body {
   font-size: 12px;
 }
 
-/* App shell: all-light ant design layout, 48px header, 200px sider. */
+/*
+ * Authenticated console shell.
+ * The hierarchy follows the maintainer-approved operations-console reference:
+ * stable white sidebar -> light utility header -> route tabs -> page title -> gray work area.
+ */
 .app-shell {
   min-height: 100vh;
+  background: #f5f6f8;
+}
+
+.app-main {
+  min-width: 0;
+  min-height: 100vh;
+}
+
+.app-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  border-right: 1px solid #e3e6ea;
+}
+
+.app-brand {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid #eef0f2;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.app-brand-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background: #2563eb;
+  color: #fff;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app-brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-nav {
+  padding-top: 8px;
+  border-inline-end: 0 !important;
 }
 
 .app-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid #e8eaed;
 }
 
-.app-brand {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 600;
-}
-
-.app-brand-mark {
-  display: inline-flex;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  background: #2563eb;
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
+.app-section-name {
+  color: #374151;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .app-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
-.app-sider {
-  border-right: 1px solid #e5e7eb;
+.app-tabs-bar {
+  height: 38px;
+  padding: 0 12px;
+  overflow: hidden;
+  background: #fff;
+  border-bottom: 1px solid #e3e6ea;
+}
+
+.app-tabs {
+  height: 38px;
+}
+
+.app-tabs .ant-tabs-nav {
+  height: 38px;
+  margin: 0;
+}
+
+.app-tabs .ant-tabs-tab {
+  min-width: 88px;
+  justify-content: center;
+  font-size: 13px;
 }
 
 .app-content {
-  padding: 20px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+  background: #f5f6f8;
 }
 
 .page {
-  max-width: 1100px;
+  width: 100%;
+  max-width: none;
+  padding: 0 16px 16px;
 }
 
 .page-stack {
@@ -160,11 +228,22 @@ body {
 }
 
 .page-header {
-  margin-bottom: 16px;
+  min-height: 66px;
+  margin: 0 -16px 16px;
+  padding: 13px 16px 11px;
+  background: #fff;
+  border-bottom: 1px solid #e8eaed;
 }
 
 .page-header h2 {
-  margin-bottom: 4px !important;
+  margin: 0 0 2px !important;
+  font-size: 18px !important;
+  line-height: 1.4 !important;
+}
+
+.page-header p {
+  margin-bottom: 0 !important;
+  font-size: 13px;
 }
 
 .catalog-filters {
@@ -173,6 +252,17 @@ body {
 
 .product-drawer-alert {
   margin-bottom: 16px;
+}
+
+@media (max-width: 991px) {
+  .ant-layout-sider-collapsed .app-brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .ant-layout-sider-collapsed .app-brand-text {
+    display: none;
+  }
 }
 
 @media (max-width: 900px) {
@@ -192,7 +282,20 @@ body {
     padding: 24px 16px 40px;
   }
 
-  .app-content {
-    padding: 12px;
+  .app-header {
+    padding-inline: 12px !important;
+  }
+
+  .app-tabs-bar {
+    padding-inline: 8px;
+  }
+
+  .page {
+    padding: 0 12px 12px;
+  }
+
+  .page-header {
+    margin-inline: -12px;
+    padding-inline: 12px;
   }
 }
