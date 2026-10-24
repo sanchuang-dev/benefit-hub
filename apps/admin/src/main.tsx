@@ -1,38 +1,12 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { App as AntdApp, ConfigProvider, type ThemeConfig } from 'antd';
+import { App as AntdApp, ConfigProvider } from 'antd';
 import zhCN from 'antd/locale/zh_CN';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router';
 import { routes } from './app/routes';
+import { adminTheme } from './app/theme';
 import './style.css';
-
-const theme: ThemeConfig = {
-  token: {
-    colorPrimary: '#2563EB',
-    colorInfo: '#2563EB',
-    colorText: '#1F2937',
-    colorTextSecondary: '#64748B',
-    colorBgLayout: '#F1F3F6',
-    colorBorderSecondary: '#E5E7EB',
-    borderRadius: 6,
-    fontSize: 14,
-  },
-  components: {
-    Layout: {
-      headerBg: '#FFFFFF',
-      bodyBg: '#F1F3F6',
-      siderBg: '#FFFFFF',
-      headerHeight: 48,
-      headerPadding: '0 16px',
-    },
-    Menu: {
-      itemSelectedBg: '#E8F0FE',
-      itemSelectedColor: '#2563EB',
-      itemHeight: 40,
-    },
-  },
-};
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -42,7 +16,7 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <ConfigProvider locale={zhCN} theme={theme}>
+    <ConfigProvider locale={zhCN} theme={adminTheme}>
       <AntdApp>
         <QueryClientProvider client={queryClient}>
           <RouterProvider router={createBrowserRouter(routes)} />
