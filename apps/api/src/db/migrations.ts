@@ -150,4 +150,115 @@ export const migrations: readonly Migration[] = [
         ON fulfillment_attempts (order_id, occurred_at);
     `,
   },
+  {
+    id: '0004_supplier_product_mappings',
+    sql: `
+      -- One mapping aggregate per internal product. The draft lives on this row
+      -- so a product can never have two "current" drafts at the same time.
+      -- Draft semantic acceptance (A/B/C vs D deduction pairing) is a local
+      -- validation rule; accepted versions below are additionally constrained
+      -- so a mismatched pairing can never become an active snapshot.
+      CREATE TABLE IF NOT EXISTS supplier_product_mappings (
+        id TEXT PRIMARY KEY NOT NULL,
+        product_id TEXT NOT NULL REFERENCES catalog_products(id) ON DELETE RESTRICT,
+        provider TEXT NOT NULL CHECK (provider IN ('yangmao')),
+        product_code TEXT NOT NULL CHECK (length(product_code) BETWEEN 1 AND 64),
+        fulfillment_mode TEXT NOT NULL CHECK (fulfillment_mode IN ('A', 'B', 'C', 'D')),
+        deduction_unit TEXT NOT NULL CHECK (deduction_unit IN ('pack', 'amount')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        validated_version INTEGER CHECK (
+          validated_version IS NULL OR (validated_version >= 1 AND validated_version <= version)
+        ),
+        validated_at INTEGER,
+        active_version_id TEXT REFERENCES supplier_product_mapping_versions(id) ON DELETE RESTRICT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (
+          (validated_version IS NULL AND validated_at IS NULL)
+          OR (validated_version IS NOT NULL AND validated_at IS NOT NULL)
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_supplier_product_mappings_product
+        ON supplier_product_mappings (product_id);
+
+      -- Immutable activation snapshots. Version numbers are monotonic per
+      -- mapping; the complete mapping content is copied so later draft edits
+      -- can never rewrite history.
+      CREATE TABLE IF NOT EXISTS supplier_product_mapping_versions (
+        id TEXT PRIMARY KEY NOT NULL,
+        mapping_id TEXT NOT NULL REFERENCES supplier_product_mappings(id) ON DELETE RESTRICT,
+        product_id TEXT NOT NULL REFERENCES catalog_products(id) ON DELETE RESTRICT,
+        version_number INTEGER NOT NULL CHECK (version_number >= 1),
+        provider TEXT NOT NULL CHECK (provider IN ('yangmao')),
+        product_code TEXT NOT NULL CHECK (length(product_code) BETWEEN 1 AND 64),
+        fulfillment_mode TEXT NOT NULL CHECK (fulfillment_mode IN ('A', 'B', 'C', 'D')),
+        deduction_unit TEXT NOT NULL CHECK (deduction_unit IN ('pack', 'amount')),
+        source_draft_version INTEGER NOT NULL CHECK (source_draft_version >= 1),
+        activated_by TEXT NOT NULL CHECK (length(activated_by) BETWEEN 1 AND 64),
+        activated_at INTEGER NOT NULL,
+        CHECK (
+          (fulfillment_mode = 'D' AND deduction_unit = 'amount')
+          OR (fulfillment_mode IN ('A', 'B', 'C') AND deduction_unit = 'pack')
+        )
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_supplier_product_mapping_versions_number
+        ON supplier_product_mapping_versions (mapping_id, version_number);
+      CREATE INDEX IF NOT EXISTS idx_supplier_product_mapping_versions_mapping
+        ON supplier_product_mapping_versions (mapping_id, version_number);
+
+      -- A snapshot redundantly carries product_id for direct historical reads.
+      -- Keep that denormalized value tied to its mapping root at the DB
+      -- boundary so future order-version references cannot observe a
+      -- cross-product snapshot created by ad-hoc SQL or later code.
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_version_product_owner
+      BEFORE INSERT ON supplier_product_mapping_versions
+      BEGIN
+        SELECT RAISE(ABORT, 'mapping snapshot product must match mapping product')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mappings
+          WHERE id = NEW.mapping_id AND product_id = NEW.product_id
+        );
+      END;
+
+      -- Accepted history is append-only at the database boundary, not only in
+      -- repository code.
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_versions_no_update
+      BEFORE UPDATE ON supplier_product_mapping_versions
+      BEGIN
+        SELECT RAISE(ABORT, 'supplier_product_mapping_versions rows are immutable');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_versions_no_delete
+      BEFORE DELETE ON supplier_product_mapping_versions
+      BEGIN
+        SELECT RAISE(ABORT, 'supplier_product_mapping_versions rows are immutable');
+      END;
+
+      -- The active pointer must reference a version of the same mapping, so a
+      -- bug or manual statement cannot point one product at another's history.
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_active_pointer_insert
+      BEFORE INSERT ON supplier_product_mappings
+      WHEN NEW.active_version_id IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'active version must belong to the same mapping')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mapping_versions
+          WHERE id = NEW.active_version_id AND mapping_id = NEW.id
+        );
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_supplier_mapping_active_pointer_update
+      BEFORE UPDATE OF active_version_id ON supplier_product_mappings
+      WHEN NEW.active_version_id IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'active version must belong to the same mapping')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mapping_versions
+          WHERE id = NEW.active_version_id AND mapping_id = NEW.id
+        );
+      END;
+    `,
+  },
 ];

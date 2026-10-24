@@ -519,7 +519,10 @@ describe('benefit order migration upgrade', () => {
         )
         .run();
 
-      expect(runMigrations(handle.sqlite)).toEqual(['0003_benefit_orders']);
+      expect(runMigrations(handle.sqlite)).toEqual([
+        '0003_benefit_orders',
+        '0004_supplier_product_mappings',
+      ]);
 
       // Existing tables and rows survive the additive migration untouched.
       const account = handle.sqlite
@@ -571,11 +574,13 @@ describe('benefit order migration upgrade', () => {
         { id: '0001_admin_auth' },
         { id: '0002_catalog_products' },
         { id: '0003_benefit_orders' },
+        { id: '0004_supplier_product_mappings' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
         '0002_catalog_products',
         '0003_benefit_orders',
+        '0004_supplier_product_mappings',
       ]);
     } finally {
       handle.close();
