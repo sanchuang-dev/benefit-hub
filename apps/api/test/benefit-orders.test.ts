@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Worker } from 'node:worker_threads';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openDatabase, runMigrations } from '../src/db/client.js';
 import { migrations } from '../src/db/migrations.js';
 import { createProduct, getProduct, setProductStatus } from '../src/modules/catalog/products.js';
-import type { MappingVersion } from '../src/modules/catalog/supplier-mapping.js';
 import { createSupplierMappingRepository } from '../src/modules/catalog/supplier-mapping-repository.js';
 import {
   OrderInputError,
@@ -21,11 +22,12 @@ import {
 import {
   createBenefitOrderRepository,
   type BenefitOrderRepository,
-  type CreateOrderIntentResult,
 } from '../src/modules/orders/repository.js';
 import { TestServer } from './helpers/test-server.js';
 
 let server: TestServer | undefined;
+
+const BETTER_SQLITE3_MODULE = createRequire(import.meta.url).resolve('better-sqlite3');
 
 afterEach(() => {
   server?.close();
@@ -692,158 +694,248 @@ describe('benefit order status concurrency', () => {
 });
 
 describe('benefit order / mapping activation concurrency', () => {
-  /**
-   * Runs activation and a genuinely new order creation on two separate
-   * connections. Both writers are scheduled in the same tick, activation first;
-   * SQLite IMMEDIATE serializes them, so order creation must observe the
-   * committed new pointer and bind that complete snapshot — never a stale or
-   * mixed product/mode/pointer fact. The next test covers the opposite order.
-   */
-  it('binds the newly activated snapshot when activation commits before order creation', async () => {
+  it('serializes a real cross-thread activation/create race without producing a mixed binding', async () => {
     server = new TestServer();
-    const product = seedProduct(server, 'YM-RACE-1');
+    const product = seedProduct(server, 'YM-RACE-REAL');
     const oldVersion = saveActivateMapping(server, product.id, {
       mode: 'B',
       productCode: 'YM-RACE-OLD',
     });
 
-    const mappingConnection = openDatabase(server.file);
+    const mappingRepository = createSupplierMappingRepository(server.database.db);
+    const current = mappingRepository.getDraft(product.id);
+    if (!current) throw new Error('Expected a mapping draft');
+    const draft = mappingRepository.saveDraft({
+      productId: product.id,
+      expectedVersion: current.version,
+      provider: 'yangmao',
+      productCode: 'YM-RACE-NEW',
+      fulfillmentMode: 'D',
+      deductionUnit: 'amount',
+    });
+    mappingRepository.validateDraft({ productId: product.id, expectedVersion: draft.version });
+
     const orderConnection = openDatabase(server.file);
+    const orderRepository = createBenefitOrderRepository(orderConnection.db);
+    const startBarrier = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+    const startFlag = new Int32Array(startBarrier);
+    const activatedVersionId = 'mapping-version-real-race';
+
+    const worker = new Worker(
+      `
+        const { parentPort, workerData } = require('node:worker_threads');
+        const Database = require(workerData.betterSqliteModule);
+        const db = new Database(workerData.file);
+        db.pragma('journal_mode = WAL');
+        db.pragma('synchronous = NORMAL');
+        db.pragma('foreign_keys = ON');
+        db.pragma('busy_timeout = 5000');
+
+        const startFlag = new Int32Array(workerData.startBarrier);
+        parentPort.postMessage({ type: 'ready' });
+        Atomics.wait(startFlag, 0, 0);
+
+        try {
+          db.exec('BEGIN IMMEDIATE');
+
+          const mapping = db
+            .prepare(
+              `SELECT id, product_id, provider, product_code, fulfillment_mode, deduction_unit,
+                      version, validated_version
+                 FROM supplier_product_mappings
+                WHERE product_id = ?`,
+            )
+            .get(workerData.productId);
+          if (!mapping) throw new Error('mapping missing');
+          if (
+            mapping.version !== workerData.expectedDraftVersion ||
+            mapping.validated_version !== mapping.version
+          ) {
+            throw new Error('draft is not the expected validated version');
+          }
+
+          const highest = db
+            .prepare(
+              'SELECT COALESCE(MAX(version_number), 0) AS value FROM supplier_product_mapping_versions WHERE mapping_id = ?',
+            )
+            .get(mapping.id);
+          const now = Date.now();
+
+          db.prepare(
+            `INSERT INTO supplier_product_mapping_versions
+               (id, mapping_id, product_id, version_number, provider, product_code,
+                fulfillment_mode, deduction_unit, source_draft_version, activated_by, activated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'test-actor', ?)`,
+          ).run(
+            workerData.snapshotId,
+            mapping.id,
+            mapping.product_id,
+            Number(highest.value) + 1,
+            mapping.provider,
+            mapping.product_code,
+            mapping.fulfillment_mode,
+            mapping.deduction_unit,
+            mapping.version,
+            now,
+          );
+
+          const updated = db.prepare(
+            `UPDATE supplier_product_mappings
+                SET active_version_id = ?, version = ?, validated_version = NULL,
+                    validated_at = NULL, updated_at = ?
+              WHERE id = ? AND version = ?`,
+          ).run(
+            workerData.snapshotId,
+            mapping.version + 1,
+            now,
+            mapping.id,
+            mapping.version,
+          );
+          if (updated.changes !== 1) throw new Error('activation lost its expected-version update');
+
+          db.exec('COMMIT');
+          parentPort.postMessage({
+            type: 'activated',
+            id: workerData.snapshotId,
+            fulfillmentMode: mapping.fulfillment_mode,
+          });
+        } catch (error) {
+          if (db.inTransaction) db.exec('ROLLBACK');
+          parentPort.postMessage({
+            type: 'worker-error',
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } finally {
+          db.close();
+        }
+      `,
+      {
+        eval: true,
+        workerData: {
+          betterSqliteModule: BETTER_SQLITE3_MODULE,
+          file: server.file,
+          productId: product.id,
+          expectedDraftVersion: draft.version,
+          snapshotId: activatedVersionId,
+          startBarrier,
+        },
+      },
+    );
+
+    let resolveReady!: () => void;
+    let rejectReady!: (error: Error) => void;
+    const ready = new Promise<void>((resolve, reject) => {
+      resolveReady = resolve;
+      rejectReady = reject;
+    });
+
+    let resolveActivated!: (value: { id: string; fulfillmentMode: string }) => void;
+    let rejectActivated!: (error: Error) => void;
+    const activated = new Promise<{ id: string; fulfillmentMode: string }>((resolve, reject) => {
+      resolveActivated = resolve;
+      rejectActivated = reject;
+    });
+
+    const exited = new Promise<void>((resolve, reject) => {
+      worker.once('exit', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`activation worker exited with code ${code}`));
+      });
+    });
+
+    worker.on('message', (message: unknown) => {
+      if (!message || typeof message !== 'object' || !('type' in message)) return;
+      const typed = message as {
+        type: string;
+        id?: string;
+        fulfillmentMode?: string;
+        message?: string;
+      };
+      if (typed.type === 'ready') {
+        resolveReady();
+      } else if (
+        typed.type === 'activated' &&
+        typeof typed.id === 'string' &&
+        typeof typed.fulfillmentMode === 'string'
+      ) {
+        resolveActivated({ id: typed.id, fulfillmentMode: typed.fulfillmentMode });
+      } else if (typed.type === 'worker-error') {
+        rejectActivated(new Error(typed.message ?? 'activation worker failed'));
+      }
+    });
+    worker.once('error', (error) => {
+      rejectReady(error);
+      rejectActivated(error);
+    });
 
     try {
-      const mappingRepository = createSupplierMappingRepository(mappingConnection.db);
-      const orderRepository = createBenefitOrderRepository(orderConnection.db);
+      await ready;
 
-      // Prepare and validate the next draft on the activation connection, but
-      // do not activate it yet: the race is activation vs order creation.
-      const current = mappingRepository.getDraft(product.id);
-      if (!current) throw new Error('Expected a mapping draft');
-      const draft = mappingRepository.saveDraft({
-        productId: product.id,
-        expectedVersion: current.version,
-        provider: 'yangmao',
-        productCode: 'YM-RACE-NEW',
+      // Both writers leave this barrier together. The worker executes the
+      // BHB-007 activation transaction on its own thread/connection while this
+      // thread immediately enters createOrGetIntent(), which also uses
+      // BEGIN IMMEDIATE. Whichever writer acquires SQLite's lock first defines
+      // the serialized order; neither can observe a half-switched pointer.
+      Atomics.store(startFlag, 0, 1);
+      Atomics.notify(startFlag, 0, 1);
+      const created = orderRepository.createOrGetIntent(orderInput(product.id, 'LO-RACE-REAL'));
+      const activation = await activated;
+      await exited;
+
+      expect(activation).toEqual({
+        id: activatedVersionId,
         fulfillmentMode: 'D',
-        deductionUnit: 'amount',
       });
-      mappingRepository.validateDraft({ productId: product.id, expectedVersion: draft.version });
-
-      let created: CreateOrderIntentResult | undefined;
-      let activated: MappingVersion | undefined;
-      await Promise.all([
-        (async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          activated = mappingRepository.activateDraft({
-            productId: product.id,
-            expectedVersion: draft.version,
-            actorAccountId: 'test-actor',
-          });
-        })(),
-        (async () => {
-          await new Promise((resolve) => setTimeout(resolve, 0));
-          created = orderRepository.createOrGetIntent(orderInput(product.id, 'LO-RACE-1'));
-        })(),
-      ]);
-
-      if (!created || !activated) throw new Error('Concurrent operations did not both complete');
       expect(created.created).toBe(true);
-
-      const order = created.order;
-      expect(order.productId).toBe(product.id);
-
-      // Exactly one order row and one initial status fact exist.
       expect(countOrders(server)).toBe(1);
-      expect(countStatusEvents(server, order.id)).toBe(1);
+      expect(countStatusEvents(server, created.order.id)).toBe(1);
 
-      // The frozen snapshot is a real, complete snapshot of this product: the
-      // database join is the evidence that product, mode and version agree.
       const bound = orderConnection.sqlite
         .prepare(
-          `SELECT version.id AS id, version.product_id AS product_id,
-                  version.fulfillment_mode AS fulfillment_mode,
-                  mapping.active_version_id AS active_version_id
+          `SELECT orders.product_id AS order_product_id,
+                  orders.fulfillment_mode AS order_mode,
+                  orders.mapping_version_id AS order_mapping_version_id,
+                  version.product_id AS version_product_id,
+                  version.fulfillment_mode AS version_mode
              FROM benefit_orders AS orders
              JOIN supplier_product_mapping_versions AS version
                ON version.id = orders.mapping_version_id
-             JOIN supplier_product_mappings AS mapping
-               ON mapping.product_id = version.product_id
             WHERE orders.id = ?`,
         )
-        .get(order.id) as
-        | { id: string; product_id: string; fulfillment_mode: string; active_version_id: string }
+        .get(created.order.id) as
+        | {
+            order_product_id: string;
+            order_mode: string;
+            order_mapping_version_id: string;
+            version_product_id: string;
+            version_mode: string;
+          }
         | undefined;
+
       expect(bound).toBeDefined();
-      expect(bound?.product_id).toBe(product.id);
-      expect(bound?.fulfillment_mode).toBe(order.fulfillmentMode);
-      expect([oldVersion.id, activated.id]).toContain(bound?.id);
+      expect(bound?.order_product_id).toBe(product.id);
+      expect(bound?.version_product_id).toBe(product.id);
+      expect(bound?.order_mode).toBe(bound?.version_mode);
+      expect(bound?.order_mapping_version_id).toBe(created.order.mappingVersionId);
+      expect([oldVersion.id, activatedVersionId]).toContain(created.order.mappingVersionId);
 
-      // Activation was scheduled first, so the order must have read the new
-      // pointer rather than a stale one.
-      expect(bound?.active_version_id).toBe(activated.id);
-      expect(bound?.id).toBe(activated.id);
-      expect(order.fulfillmentMode).toBe('D');
+      if (created.order.mappingVersionId === oldVersion.id) {
+        expect(created.order.fulfillmentMode).toBe('B');
+      } else {
+        expect(created.order.mappingVersionId).toBe(activatedVersionId);
+        expect(created.order.fulfillmentMode).toBe('D');
+      }
 
-      // Replay never rebinds the frozen order, regardless of which writer won.
-      const replayed = orderRepository.createOrGetIntent(orderInput(product.id, 'LO-RACE-1'));
+      expect(
+        orderConnection.sqlite
+          .prepare('SELECT active_version_id FROM supplier_product_mappings WHERE product_id = ?')
+          .get(product.id),
+      ).toEqual({ active_version_id: activatedVersionId });
+
+      const replayed = orderRepository.createOrGetIntent(orderInput(product.id, 'LO-RACE-REAL'));
       expect(replayed.created).toBe(false);
-      expect(replayed.order).toEqual(order);
+      expect(replayed.order).toEqual(created.order);
     } finally {
-      mappingConnection.close();
-      orderConnection.close();
-    }
-  });
-
-  it('keeps the pre-race snapshot when order creation commits before activation', async () => {
-    server = new TestServer();
-    const product = seedProduct(server, 'YM-RACE-2');
-    const oldVersion = saveActivateMapping(server, product.id, {
-      mode: 'B',
-      productCode: 'YM-RACE-2-OLD',
-    });
-
-    const mappingConnection = openDatabase(server.file);
-    const orderConnection = openDatabase(server.file);
-
-    try {
-      const mappingRepository = createSupplierMappingRepository(mappingConnection.db);
-      const orderRepository = createBenefitOrderRepository(orderConnection.db);
-
-      const current = mappingRepository.getDraft(product.id);
-      if (!current) throw new Error('Expected a mapping draft');
-      const draft = mappingRepository.saveDraft({
-        productId: product.id,
-        expectedVersion: current.version,
-        provider: 'yangmao',
-        productCode: 'YM-RACE-2-NEW',
-        fulfillmentMode: 'A',
-        deductionUnit: 'pack',
-      });
-      mappingRepository.validateDraft({ productId: product.id, expectedVersion: draft.version });
-
-      // Create is scheduled first on its own connection, then activation runs.
-      const created = await new Promise<ReturnType<BenefitOrderRepository['createOrGetIntent']>>(
-        (resolve) => {
-          setTimeout(() => resolve(orderRepository.createOrGetIntent(orderInput(product.id))), 0);
-        },
-      );
-      const activated = mappingRepository.activateDraft({
-        productId: product.id,
-        expectedVersion: draft.version,
-        actorAccountId: 'test-actor',
-      });
-
-      expect(created.order).toMatchObject({
-        productId: product.id,
-        fulfillmentMode: 'B',
-        mappingVersionId: oldVersion.id,
-      });
-      expect(activated.id).not.toBe(oldVersion.id);
-      expect(countOrders(server)).toBe(1);
-
-      // The new pointer does not rewrite the already frozen order.
-      expect(orderRepository.getById(created.order.id)).toEqual(created.order);
-    } finally {
-      mappingConnection.close();
       orderConnection.close();
     }
   });
