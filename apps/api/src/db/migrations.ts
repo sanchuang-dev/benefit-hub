@@ -261,4 +261,53 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0005_benefit_order_mapping_version',
+    sql: `
+      -- Orders created from this slice onward freeze the supplier mapping
+      -- snapshot that was active for their product at creation time. The column
+      -- stays nullable only so pre-0005 orders remain readable: their value is
+      -- deliberately never guessed or backfilled.
+      ALTER TABLE benefit_orders
+        ADD COLUMN mapping_version_id TEXT
+          REFERENCES supplier_product_mapping_versions(id) ON DELETE RESTRICT;
+
+      -- A genuinely new order must carry a complete frozen binding. The
+      -- snapshot has to belong to the same internal product, carry the same
+      -- fulfillment mode, and still be that product's current active version
+      -- when the row is inserted. Legacy rows keep NULL and are exempt because
+      -- this guard is INSERT-only.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_orders_require_mapping_version
+      BEFORE INSERT ON benefit_orders
+      BEGIN
+        SELECT RAISE(ABORT, 'new benefit order requires a mapping version')
+        WHERE NEW.mapping_version_id IS NULL;
+
+        SELECT RAISE(ABORT, 'mapping version must match order product and mode')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mapping_versions
+          WHERE id = NEW.mapping_version_id
+            AND product_id = NEW.product_id
+            AND fulfillment_mode = NEW.fulfillment_mode
+        );
+
+        SELECT RAISE(ABORT, 'mapping version must be the current active version')
+        WHERE NOT EXISTS (
+          SELECT 1 FROM supplier_product_mappings
+          WHERE product_id = NEW.product_id
+            AND active_version_id = NEW.mapping_version_id
+        );
+      END;
+
+      -- The frozen binding is immutable after creation, including for legacy
+      -- rows: status, version and updated_at stay updateable, but no direct SQL
+      -- or later code path may rebind an order to another product, mode or
+      -- mapping snapshot. That keeps the order row and its snapshot consistent.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_orders_frozen_binding_update
+      BEFORE UPDATE OF product_id, fulfillment_mode, mapping_version_id ON benefit_orders
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order product, mode and mapping version are frozen');
+      END;
+    `,
+  },
 ];

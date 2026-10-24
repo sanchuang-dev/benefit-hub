@@ -40,6 +40,12 @@ export type AttemptResult = (typeof ATTEMPT_RESULTS)[number];
 /**
  * A persisted business grant intent. `businessSource + businessOrderNo` is the
  * caller-provided upstream identity; `id` is our stable internal order id.
+ *
+ * `mappingVersionId` is the immutable supplier mapping snapshot frozen when the
+ * order was created. It is `null` only for orders created before migration 0005,
+ * whose creation predates mapping versions; those historical facts are never
+ * backfilled with a guessed version. `fulfillmentMode` is always the mode that
+ * belongs to the bound snapshot.
  */
 export interface BenefitOrder {
   id: string;
@@ -51,6 +57,7 @@ export interface BenefitOrder {
   version: number;
   createdAt: number;
   updatedAt: number;
+  mappingVersionId: string | null;
 }
 
 /** Immutable status/version fact for reconstructing an order's local state history. */
@@ -86,6 +93,10 @@ export class OrderIntentConflictError extends Error {}
 export class OrderVersionConflictError extends Error {}
 export class OrderNotFoundError extends Error {}
 export class OrderProductNotFoundError extends Error {}
+/** The internal product exists but is disabled, so no new order may start. */
+export class OrderProductNotActiveError extends Error {}
+/** The product has no current active supplier mapping version to freeze. */
+export class OrderMappingUnavailableError extends Error {}
 
 /**
  * Our own source key (for example `local-life`). It is lower-cased so two
