@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
+import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * Admin accounts are intentionally minimal for the first slice: password login
@@ -79,3 +79,62 @@ export const catalogProductEvents = sqliteTable('catalog_product_events', {
   action: text('action').notNull(),
   createdAt: integer('created_at').notNull(),
 });
+
+/**
+ * One row per business grant intent. `id` is our internal order id and is never
+ * derived from a supplier order number. The unique
+ * `business_source + business_order_no` index is the idempotency guarantee, so a
+ * retry, restart, or concurrent caller cannot create a second order for the same
+ * upstream business identity. `status` is our provider-agnostic status and
+ * `version` is the optimistic concurrency token for status changes.
+ *
+ * Only the product reference is stored here: there is no supplier mapping or
+ * mapping-version entity yet, so no placeholder foreign key is invented.
+ */
+export const benefitOrders = sqliteTable(
+  'benefit_orders',
+  {
+    id: text('id').primaryKey(),
+    businessSource: text('business_source').notNull(),
+    businessOrderNo: text('business_order_no').notNull(),
+    productId: text('product_id')
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    fulfillmentMode: text('fulfillment_mode').notNull(),
+    status: text('status').notNull(),
+    version: integer('version').notNull(),
+    createdAt: integer('created_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_orders_business_identity').on(table.businessSource, table.businessOrderNo),
+    index('idx_benefit_orders_product_created').on(table.productId, table.createdAt),
+    index('idx_benefit_orders_status_created').on(table.status, table.createdAt),
+  ],
+);
+
+/**
+ * Facts about one upstream call/verification attempt. The model intentionally
+ * has no column for credentials, phone numbers, card keys, or raw supplier
+ * responses: `upstreamRequestNo` / `upstreamOrderNo` hold bounded supplier
+ * references, while `result` and `observedStatus` hold our own normalized
+ * observation. `result = accepted` means the supplier acknowledged the request,
+ * never that the user received the benefit.
+ */
+export const fulfillmentAttempts = sqliteTable(
+  'fulfillment_attempts',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id')
+      .notNull()
+      .references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    operation: text('operation').notNull(),
+    upstreamRequestNo: text('upstream_request_no'),
+    upstreamOrderNo: text('upstream_order_no'),
+    result: text('result').notNull(),
+    observedStatus: text('observed_status'),
+    occurredAt: integer('occurred_at').notNull(),
+    lastVerifiedAt: integer('last_verified_at'),
+  },
+  (table) => [index('idx_fulfillment_attempts_order').on(table.orderId, table.occurredAt)],
+);

@@ -195,6 +195,7 @@ compose.yaml
 - 管理员初始化/重置：只能通过 `node dist/cli/admin.js`（密码由标准输入提供），代码中不存在默认账号或默认密码。
 - 商品目录（BHB-003，仅后端）：`GET /api/v1/catalog/products`（分页/关键词/状态）与详情只要求有效会话；创建、编辑、启停要求 `admin`。编辑与启停必须携带当前版本号，条件更新失败返回 `PRODUCT_VERSION_CONFLICT`，不静默覆盖；写操作记录 `catalog_product_events`（操作者、动作、商品、时间）。业务编码由数据库唯一索引保证不重复。本切片没有供应商映射，API 对任何商品都返回 `vendorFulfillmentEnabled: false`；停用商品不得被后续发放逻辑使用。
 - 迁移：启动时按序应用未执行的增量迁移并记录在 `schema_migrations`，只允许向前变更；不做自动降级或删库。
+- 订单持久化底座（BHB-006，仅后端领域与 Repository）：`benefit_orders` 由数据库唯一索引保证 `business_source + business_order_no` 唯一，等价重复请求返回同一订单，关键参数冲突稳定失败，状态变更以版本号条件更新；`fulfillment_attempts` 只记录操作类别、受限长度的上游关联号、内部结果/观察状态与时间，不保存凭证、手机号、卡密或原始供应商响应。该切片不提供发放 HTTP API、真实供应商调用或前端页面，外部 HTTP 调用必须在本地事务之外进行。
 
 运营后台可展示供应商余额**最近快照**，但对接总览没有余额实时查询契约，不能暗示可随时查询准确余额。商品与价格属于我们的运营配置，除非供应商明确提供写接口，不反向修改上游商品。
 
@@ -213,4 +214,4 @@ compose.yaml
 - CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；BHB-003 分支已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004 分支已实现内部商品管理 UI（真实 API 列表/筛选/详情/新建/编辑/启停、后端错误反馈与只读态），并有 React Testing Library 测试；真实浏览器验证待完成；**合并后的线上登录与商品页面验收、供应商商品映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。
+**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；BHB-003 分支已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004 分支已实现内部商品管理 UI（真实 API 列表/筛选/详情/新建/编辑/启停、后端错误反馈与只读态），并有 React Testing Library 测试；真实浏览器验证待完成；**合并后的线上登录与商品页面验收、供应商商品映射、真实羊毛接口发放与履约仍未实现**。BHB-006 已实现订单与履约尝试的持久化、幂等唯一约束与版本保护，但仅有后端领域/DB/Repository 与测试，尚无发放 HTTP API、供应商调用或前端。基础应用上线不代表可提供真实权益服务。
