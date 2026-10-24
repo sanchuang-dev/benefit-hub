@@ -462,4 +462,73 @@ describe('product writes', () => {
     expect(screen.queryByText('停用商品')).toBeNull();
     expect(writeCalls(fetchMock)).toEqual([]);
   });
+  it('reloads a fresh product snapshot when the editor is reopened', { timeout: 60_000 }, async () => {
+    let current = product({ id: 'p-2', code: 'COFFEE-1', name: '旧商品名称', version: 1 });
+    const writes: Record<string, unknown>[] = [];
+    mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url === '/api/v1/auth/csrf') return jsonResponse(200, { csrfToken: 'csrf-token' });
+      if (url === '/api/v1/catalog/products/p-2' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(200, { product: current });
+      }
+      if (url === '/api/v1/catalog/products/p-2' && init?.method === 'PATCH') {
+        writes.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        return jsonResponse(200, { product: current });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([current]);
+      return undefined;
+    });
+    renderRoutes('/catalog');
+    expect(await screen.findByText('旧商品名称', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('编辑'));
+    expect(await screen.findByDisplayValue('旧商品名称')).toBeTruthy();
+    fireEvent.click(findButtonText('关闭'));
+    await waitFor(() => expect(screen.queryByText('编辑内部商品')).toBeNull());
+    current = { ...current, name: '服务器新名称', version: 2 };
+    fireEvent.click(findButtonText('编辑'));
+    expect(await screen.findByDisplayValue('服务器新名称')).toBeTruthy();
+    fireEvent.click(findButtonText('保存'));
+    await waitFor(() => expect(writes).toHaveLength(1));
+    expect(writes[0]).toMatchObject({ name: '服务器新名称', version: 2 });
+  });
+
+  it('locks a stale form after 409 until explicitly reloading fields and version', { timeout: 60_000 }, async () => {
+    let current = product({ id: 'p-2', code: 'COFFEE-1', name: '原始名称', version: 2 });
+    const writes: Record<string, unknown>[] = [];
+    mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url === '/api/v1/auth/csrf') return jsonResponse(200, { csrfToken: 'csrf-token' });
+      if (url === '/api/v1/catalog/products/p-2' && (init?.method ?? 'GET') === 'GET') {
+        return jsonResponse(200, { product: current });
+      }
+      if (url === '/api/v1/catalog/products/p-2' && init?.method === 'PATCH') {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+        writes.push(body);
+        if (body.version === 2) {
+          current = { ...current, name: '其他管理员修改', version: 3 };
+          return jsonResponse(409, { error: 'PRODUCT_VERSION_CONFLICT', message: '商品版本冲突' });
+        }
+        return jsonResponse(200, { product: current });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([current]);
+      return undefined;
+    });
+    renderRoutes('/catalog');
+    expect(await screen.findByText('原始名称', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('编辑'));
+    fireEvent.change(await screen.findByDisplayValue('原始名称'), { target: { value: '我的未保存修改' } });
+    fireEvent.click(findButtonText('保存'));
+    expect(await screen.findByText('商品已被他人修改')).toBeTruthy();
+    expect(writes).toHaveLength(1);
+    expect((findButtonText('保存') as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(findButtonText('保存'));
+    expect(writes).toHaveLength(1);
+    fireEvent.click(findButtonText('重新加载详情'));
+    expect(await screen.findByDisplayValue('其他管理员修改')).toBeTruthy();
+    await waitFor(() => expect((findButtonText('保存') as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(findButtonText('保存'));
+    await waitFor(() => expect(writes).toHaveLength(2));
+    expect(writes[1]).toMatchObject({ name: '其他管理员修改', version: 3 });
+  });
+
 });
