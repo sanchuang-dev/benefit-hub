@@ -113,9 +113,22 @@ export class TestClient {
   }
 
   async post(path: string, body?: unknown, csrfToken?: string): Promise<Response> {
+    return this.mutate('POST', path, body, csrfToken);
+  }
+
+  async patch(path: string, body?: unknown, csrfToken?: string): Promise<Response> {
+    return this.mutate('PATCH', path, body, csrfToken);
+  }
+
+  private async mutate(
+    method: 'POST' | 'PATCH',
+    path: string,
+    body?: unknown,
+    csrfToken?: string,
+  ): Promise<Response> {
     const token = csrfToken ?? this.cookies.get('bh_csrf') ?? (await this.csrfToken());
     return this.request(path, {
-      method: 'POST',
+      method,
       headers: { 'content-type': 'application/json', 'x-csrf-token': token },
       body: body === undefined ? undefined : JSON.stringify(body),
     });

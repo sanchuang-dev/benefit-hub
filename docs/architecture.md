@@ -1,6 +1,6 @@
 # Benefit Hub · 技术架构与工程决策
 
-> 状态：第一期技术路线（2026-10-23 更新）。**基础设施占位应用已部署；账号密码登录与最小权限管理已在代码中实现（BHB-002），尚待合并后线上验收；商品、订单与供应商履约仍未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
+> 状态：第一期技术路线（2026-10-24 更新）。**基础设施占位应用已部署；账号密码登录与最小权限管理已在代码中实现（BHB-002），尚待合并后线上验收；内部商品数据层与 REST API 已在代码中实现（BHB-003），运营页面尚未实现；订单与供应商履约仍未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
 >
 > 视觉、颜色、排版、页面组件的风格规范只属于根目录 `design.md`。产品功能范围见 [product-scope.md](./product-scope.md)，羊毛供应商契约见 [integrations/yangmao.md](./integrations/yangmao.md)，部署见 [operations.md](./operations.md)。
 
@@ -191,8 +191,9 @@ compose.yaml
 - CSRF：双重提交令牌（`bh_csrf` Cookie + `X-CSRF-Token` 头），非安全方法同时校验 `Origin` 与 `Host` 一致。
 - 登录限速：内存失败计数，同一账号 15 分钟 5 次、同一来源地址 15 分钟 20 次；超过后返回 429 与 `Retry-After`。单实例阶段不引入 Redis。
 - 审计：`auth_events` 仅记录事件类型、账号 ID 与稳定原因码，不含密码、令牌、Cookie、IP 或请求体。
-- 权限边界：本切片没有管理写 API；`GET /api/v1/admin/accounts` 是唯一管理员专属接口，只读身份由服务端返回 403。后续写接口必须复用 `requireSession` + `requireRole('admin')`，不能只靠前端隐藏。
+- 权限边界：BHB-002 切片没有管理写 API；`GET /api/v1/admin/accounts` 是当时唯一管理员专属接口，只读身份由服务端返回 403。后续写接口必须复用 `requireSession` + `requireRole('admin')`，不能只靠前端隐藏；BHB-003 商品写接口已按此实现。
 - 管理员初始化/重置：只能通过 `node dist/cli/admin.js`（密码由标准输入提供），代码中不存在默认账号或默认密码。
+- 商品目录（BHB-003，仅后端）：`GET /api/v1/catalog/products`（分页/关键词/状态）与详情只要求有效会话；创建、编辑、启停要求 `admin`。编辑与启停必须携带当前版本号，条件更新失败返回 `PRODUCT_VERSION_CONFLICT`，不静默覆盖；写操作记录 `catalog_product_events`（操作者、动作、商品、时间）。业务编码由数据库唯一索引保证不重复。本切片没有供应商映射，API 对任何商品都返回 `vendorFulfillmentEnabled: false`；停用商品不得被后续发放逻辑使用。
 - 迁移：启动时按序应用未执行的增量迁移并记录在 `schema_migrations`，只允许向前变更；不做自动降级或删库。
 
 运营后台可展示供应商余额**最近快照**，但对接总览没有余额实时查询契约，不能暗示可随时查询准确余额。商品与价格属于我们的运营配置，除非供应商明确提供写接口，不反向修改上游商品。
@@ -212,4 +213,4 @@ compose.yaml
 - CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态（2026-10-23 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；**合并后的线上登录验收、商品目录/映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。
+**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；BHB-003 分支已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；**合并后的线上登录验收、内部商品运营页面（BHB-004）、供应商商品映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。

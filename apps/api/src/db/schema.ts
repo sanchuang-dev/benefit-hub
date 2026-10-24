@@ -43,3 +43,39 @@ export const authEvents = sqliteTable('auth_events', {
   detail: text('detail'),
   createdAt: integer('created_at').notNull(),
 });
+
+/**
+ * Internal benefit products. `id` is our own stable identifier and is
+ * deliberately unrelated to any supplier product code; this slice has no
+ * supplier mapping at all, so a stored product can never be treated as
+ * fulfilable. `code` is the unique operator-facing business code (normalized to
+ * upper case). `version` is the optimistic concurrency token: every accepted
+ * write increments it so a stale edit is rejected instead of overwriting.
+ */
+export const catalogProducts = sqliteTable('catalog_products', {
+  id: text('id').primaryKey(),
+  code: text('code').notNull().unique(),
+  name: text('name').notNull(),
+  shortDescription: text('short_description').notNull(),
+  status: text('status').notNull(),
+  displayPriceCents: integer('display_price_cents'),
+  estimatedCostCents: integer('estimated_cost_cents'),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/**
+ * Minimal operator audit facts for catalogue writes. It records who changed
+ * which product and when, and nothing else: no request bodies, prices, or
+ * credentials. Authentication events stay in `auth_events`.
+ */
+export const catalogProductEvents = sqliteTable('catalog_product_events', {
+  id: text('id').primaryKey(),
+  productId: text('product_id')
+    .notNull()
+    .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+  actorAccountId: text('actor_account_id').notNull(),
+  action: text('action').notNull(),
+  createdAt: integer('created_at').notNull(),
+});

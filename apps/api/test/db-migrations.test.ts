@@ -60,5 +60,7 @@ describe('database migrations', () => {
     expect(names).toContain('admin_accounts');
     expect(names).toContain('admin_sessions');
     expect(names).toContain('auth_events');
+    expect(names).toContain('catalog_products');
+    expect(names).toContain('catalog_product_events');
   });
 });
