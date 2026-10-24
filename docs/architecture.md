@@ -213,4 +213,4 @@ compose.yaml
 - CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；BHB-003 分支已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004 分支已实现内部商品管理 UI（真实 API 列表/筛选/详情/新建/编辑/启停、后端错误反馈与只读态），并有 React Testing Library 测试与本地浏览器验证；**合并后的线上登录与商品页面验收、供应商商品映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。
+**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 基础服务、React/Ant Design 占位页和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 分支已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限，并有 HTTP 集成测试与 SQLite 迁移测试；BHB-003 分支已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004 分支已实现内部商品管理 UI（真实 API 列表/筛选/详情/新建/编辑/启停、后端错误反馈与只读态），并有 React Testing Library 测试；真实浏览器验证待完成；**合并后的线上登录与商品页面验收、供应商商品映射、订单持久化、真实羊毛接口发放与履约仍未实现**。基础应用上线不代表可提供真实权益服务。
