@@ -167,6 +167,14 @@ body {
   margin-bottom: 4px !important;
 }
 
+.catalog-filters {
+  margin-bottom: 16px;
+}
+
+.product-drawer-alert {
+  margin-bottom: 16px;
+}
+
 @media (max-width: 900px) {
   .login-page {
     grid-template-columns: 1fr;
