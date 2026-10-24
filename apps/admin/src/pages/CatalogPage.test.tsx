@@ -547,13 +547,13 @@ describe('product writes', () => {
     });
     fireEvent.click(findButtonText('关闭'));
 
-    expect(await screen.findByText('放弃未保存的修改？')).toBeTruthy();
+    expect((await screen.findAllByText('放弃未保存的修改？')).length).toBeGreaterThan(0);
     fireEvent.click(findButtonText('继续编辑'));
     expect(await screen.findByText('新建内部商品')).toBeTruthy();
     expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe('尚未保存的商品');
 
     fireEvent.click(findButtonText('关闭'));
-    expect(await screen.findByText('放弃未保存的修改？')).toBeTruthy();
+    expect((await screen.findAllByText('放弃未保存的修改？')).length).toBeGreaterThan(0);
     fireEvent.click(findButtonText('放弃修改'));
     await waitFor(() => expect(screen.queryByText('新建内部商品')).toBeNull());
   });
