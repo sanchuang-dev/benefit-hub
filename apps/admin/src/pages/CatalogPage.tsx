@@ -100,17 +100,20 @@ export function CatalogPage() {
         status === 'active' ? <Tag color="green">已启用</Tag> : <Tag>已停用</Tag>,
     },
     {
-      title: '供应商映射',
+      title: '真实发放',
       dataIndex: 'vendorFulfillmentEnabled',
-      key: 'vendorMapping',
+      key: 'vendorFulfillmentEnabled',
       width: 188,
+      // This field is the real fulfillment switch and is fixed false in this
+      // slice. It never means "no supplier mapping"; mapping is read per
+      // product in the detail drawer, so the list must not guess or N+1 fetch.
       render: (enabled: CatalogProduct['vendorFulfillmentEnabled']) =>
         enabled ? (
-          <Tag color="green">已映射供应商</Tag>
+          <Tag color="green">已启用</Tag>
         ) : (
           <Space size={6} wrap={false}>
-            <Tag>未映射供应商</Tag>
-            <Text type="secondary">不能发放</Text>
+            <Tag>未启用</Tag>
+            <Text type="secondary">映射见详情</Text>
           </Space>
         ),
     },
@@ -186,7 +189,7 @@ export function CatalogPage() {
         <div className="catalog-header-text">
           <Title level={2}>商品管理</Title>
           <Paragraph type="secondary">
-            内部商品由本平台维护名称、展示价与启停；供应商商品与履约映射尚未接入。
+            内部商品由本平台维护名称、展示价与启停；供应商映射可在商品详情中只读查看，真实发放尚未启用。
           </Paragraph>
         </div>
         <div className="catalog-header-actions">

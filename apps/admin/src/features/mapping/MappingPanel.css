@@ -1,0 +1,21 @@
+.mapping-upstream-alert {
+  margin-bottom: 12px;
+}
+
+.mapping-block {
+  display: block;
+}
+
+.mapping-descriptions {
+  margin-top: 8px;
+}
+
+.mapping-note {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.mapping-tab-body {
+  width: 100%;
+}

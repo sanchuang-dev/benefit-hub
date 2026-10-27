@@ -4,9 +4,10 @@ export const PRODUCT_STATUSES = ['active', 'disabled'] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
 /**
- * Mirrors the BHB-003 HTTP DTO. `vendorFulfillmentEnabled` is always false in
- * this slice because no supplier mapping exists yet; the UI must not present
- * such a product as fulfillable.
+ * Mirrors the BHB-003 HTTP DTO. `vendorFulfillmentEnabled` is the real
+ * fulfillment switch and is always false in this slice; it does not describe
+ * whether a supplier mapping exists. Mapping state is read per product through
+ * the BHB-009 overview and must never be inferred from this field.
  */
 export interface CatalogProduct {
   id: string;

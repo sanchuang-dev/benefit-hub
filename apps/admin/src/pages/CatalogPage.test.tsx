@@ -102,7 +102,7 @@ afterEach(() => {
 });
 
 describe('internal product list', () => {
-  it('lists real API products, marks them unmapped, and applies keyword and status filters', { timeout: 60_000 }, async () => {
+  it('lists real API products, marks real fulfillment disabled, and applies keyword and status filters', { timeout: 60_000 }, async () => {
     const travel = product({
       id: 'p-1',
       code: 'TRAVEL-1',
@@ -141,8 +141,8 @@ describe('internal product list', () => {
     expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText('COFFEE-1')).toBeTruthy();
     expect(screen.getByText('¥12.50')).toBeTruthy();
-    expect(screen.getAllByText('未映射供应商')).toHaveLength(2);
-    expect(screen.getAllByText('不能发放')).toHaveLength(2);
+    expect(screen.getAllByText('未启用')).toHaveLength(2);
+    expect(screen.getAllByText('映射见详情')).toHaveLength(2);
 
     // Keyword filter is sent to the API, not applied to a local fake array.
     fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '咖啡' } });

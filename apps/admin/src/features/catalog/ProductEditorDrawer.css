@@ -19,6 +19,10 @@
   font-size: 12px;
 }
 
+.product-mapping-section {
+  margin-top: 8px;
+}
+
 @media (max-width: 720px) {
   .product-form-grid {
     grid-template-columns: 1fr;

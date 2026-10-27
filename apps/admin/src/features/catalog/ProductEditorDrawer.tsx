@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import './ProductEditorDrawer.css';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
+import { MappingPanel } from '../mapping/MappingPanel';
 import { centsToYuan, yuanToCents } from './money';
 import type { CatalogProduct, ProductStatus } from './api';
 import {
@@ -252,7 +253,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
                 description={
                   status === 'active'
                     ? '停用后该内部商品不可再用于后续发放，历史数据不会被删除。'
-                    : '启用只代表内部配置可用；本商品尚未映射供应商，仍不能发放。'
+                    : '启用只代表内部配置可用；供应商映射与真实发放状态以下方映射面板为准。'
                 }
                 okText="确认"
                 cancelText="取消"
@@ -300,23 +301,15 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           type="info"
           showIcon
           title="新建商品不包含供应商映射"
-          description="创建成功后商品仍未映射供应商，不能发放；映射能力将在后续实施卡中提供。"
+          description="创建成功后仍需配置供应商映射；本版本只提供映射只读查看，不提供保存、校验或激活操作。"
         />
       ) : detail.data ? (
         <Alert
           className="product-drawer-alert"
-          type={detail.data.vendorFulfillmentEnabled ? 'success' : 'warning'}
+          type="info"
           showIcon
-          title={
-            detail.data.vendorFulfillmentEnabled
-              ? '供应商映射已生效'
-              : '未映射供应商，当前不能发放'
-          }
-          description={
-            detail.data.vendorFulfillmentEnabled
-              ? undefined
-              : '本版本的内部商品没有供应商映射；启用或停用只影响内部配置，不代表可以履约。'
-          }
+          title="真实权益发放仍禁用"
+          description="内部商品的供应商映射状态以下方只读面板为准；即使映射已激活，本版本也不会请求羊毛上游或发放真实权益。"
         />
       ) : null}
 
@@ -446,6 +439,20 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           ) : null}
         </Form>
       </Spin>
+
+      {!isCreate && productId && detail.data ? (
+        <section aria-label="供应商映射面板" className="product-mapping-section">
+          <Divider
+            titlePlacement="start"
+            plain
+            className="product-form-section"
+            style={{ margin: '20px 0 16px' }}
+          >
+            供应商映射（只读）
+          </Divider>
+          <MappingPanel key={productId} productId={productId} />
+        </section>
+      ) : null}
     </Drawer>
   );
 }
