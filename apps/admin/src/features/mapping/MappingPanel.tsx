@@ -19,6 +19,7 @@ import type {
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
 import { MappingContractError } from './api';
+import { MappingDraftEditor } from './MappingDraftEditor';
 import './MappingPanel.css';
 import { useMappingOverviewQuery } from './use-mapping';
 
@@ -115,7 +116,7 @@ function mappingVersionFields(version: MappingVersionDto) {
   ];
 }
 
-function ActiveVersion({ overview }: { overview: MappingOverviewDto }) {
+function ActiveVersion({ overview, canWrite }: { overview: MappingOverviewDto; canWrite: boolean }) {
   const active = overview.activeVersion;
   if (!active) {
     return (
@@ -123,7 +124,11 @@ function ActiveVersion({ overview }: { overview: MappingOverviewDto }) {
         type="info"
         showIcon
         title="当前没有生效映射"
-        description="草稿保存后还需要本地校验与显式激活，才会生成生效版本；本面板不提供激活写操作。"
+        description={
+          canWrite
+            ? '草稿保存后还需要本地校验与显式激活，才能生成生效版本；请使用下方草稿编辑操作。'
+            : '草稿保存后还需要本地校验与显式激活，才能生成生效版本；当前身份只读，请联系管理员操作。'
+        }
       />
     );
   }
@@ -198,7 +203,19 @@ function CurrentDraft({ draft }: { draft: MappingDraftDto | null }) {
   );
 }
 
-function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
+function MappingOverview({
+  productId,
+  overview,
+  canWrite,
+  onReload,
+  onDirtyChange,
+}: {
+  productId: string;
+  overview: MappingOverviewDto;
+  canWrite: boolean;
+  onReload: () => Promise<MappingOverviewDto | null>;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   return (
     <>
       <Alert
@@ -218,8 +235,16 @@ function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
             label: '当前映射',
             children: (
               <Space orientation="vertical" size={16} className="mapping-tab-body">
-                <ActiveVersion overview={overview} />
+                <ActiveVersion overview={overview} canWrite={canWrite} />
                 <CurrentDraft draft={overview.draft} />
+                {canWrite ? (
+                  <MappingDraftEditor
+                    productId={productId}
+                    overview={overview}
+                    onReload={onReload}
+                    onDirtyChange={onDirtyChange}
+                  />
+                ) : null}
               </Space>
             ),
           },
@@ -232,7 +257,11 @@ function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
                   type="info"
                   showIcon
                   title="历史版本只读"
-                  description="历史激活版本不可直接修改；如需恢复旧配置，应在后续写操作能力中以旧版本新建草稿，再重新校验并显式激活。"
+                  description={
+                    canWrite
+                      ? '历史激活版本不可直接修改；如需恢复旧配置，可参考历史内容填写新草稿，完成本地校验后显式激活。'
+                      : '历史激活版本不可直接修改；如需恢复旧配置，请联系管理员参考历史内容重新保存草稿、校验并激活。'
+                  }
                 />
                 {overview.versions.length === 0 ? (
                   <Empty
@@ -268,18 +297,43 @@ function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
   );
 }
 
+const ignoreDirtyChange = () => undefined;
+
+interface MappingPanelProps {
+  productId: string;
+  /** Only an admin in the editable drawer may see draft/validate/activate controls. */
+  canWrite: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
 /**
- * Read-only supplier mapping panel. Every fact is derived from the server
- * overview; the panel has no draft, validate, or activate controls of its own.
+ * Supplier mapping panel. It always renders server facts from the overview;
+ * write controls exist only for an admin in edit mode, and every successful
+ * write replaces the cached overview with the API's authoritative response.
  */
-export function MappingPanel({ productId }: { productId: string }) {
+export function MappingPanel({
+  productId,
+  canWrite,
+  onDirtyChange = ignoreDirtyChange,
+}: MappingPanelProps) {
   const query = useMappingOverviewQuery(productId);
+  const reload = async (): Promise<MappingOverviewDto | null> => {
+    try {
+      const result = await query.refetch();
+      // A failed refetch can still carry the previous successful data; never
+      // treat that as proof of the latest server state.
+      if (result.isError || !result.data) return null;
+      return result.data;
+    } catch {
+      return null;
+    }
+  };
 
   if (query.isPending) {
     return <Skeleton active title={{ width: '40%' }} paragraph={{ rows: 5 }} />;
   }
 
-  if (query.isError) {
+  if (query.isError && !query.data) {
     const copy = loadErrorCopy(query.error);
     return (
       <Alert
@@ -302,16 +356,36 @@ export function MappingPanel({ productId }: { productId: string }) {
 
   if (isEmpty) {
     return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="尚未配置供应商映射"
-      >
-        <Text type="secondary">
-          该内部商品还没有保存过映射草稿，也没有生效版本；本面板仅提供只读查看。
-        </Text>
-      </Empty>
+      <Space orientation="vertical" size={12} className="mapping-tab-body">
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="尚未配置供应商映射"
+        >
+          <Text type="secondary">
+            {canWrite
+              ? '保存草稿后还需要本地校验与显式激活，才会生成生效版本；本地校验不代表上游验证。'
+              : '该内部商品还没有保存过映射草稿，也没有生效版本；当前身份仅可查看。'}
+          </Text>
+        </Empty>
+        {canWrite ? (
+          <MappingDraftEditor
+            productId={productId}
+            overview={overview}
+            onReload={reload}
+            onDirtyChange={onDirtyChange}
+          />
+        ) : null}
+      </Space>
     );
   }
 
-  return <MappingOverview overview={overview} />;
+  return (
+    <MappingOverview
+      productId={productId}
+      overview={overview}
+      canWrite={canWrite}
+      onReload={reload}
+      onDirtyChange={onDirtyChange}
+    />
+  );
 }
