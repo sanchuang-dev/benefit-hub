@@ -1,6 +1,6 @@
 # Benefit Hub · 技术架构与工程决策
 
-> 状态：第一期技术路线（2026-10-24 更新）。**基础设施、账号密码登录、内部商品 CRUD 与运营后台商品管理已部署，BHB-004-A/B/C 已完成维护者真人线上验收；BHB-006 订单持久化/幂等底座已合入 dev；BHB-007 供应商映射草稿/本地校验/版本激活底座已合入 dev；BHB-008 订单创建冻结生效映射版本底座已合入 dev；BHB-009 供应商映射管理协议与 HTTP API（含最小共享 contracts package）已实现并处于合并验收中。供应商商品目录、订单 HTTP API、映射前端与真实供应商履约仍未实现。** 本文区分已运行的基础能力、选定技术与尚未落地的业务模块。
+> **工程状态（2026-10-27；以 dev 代码、Issue 和 CI 为准）：** 管理后台登录与内部商品 CRUD 已完成；BHB-006 订单持久化/幂等 Repository、BHB-007/008 草稿/激活与订单映射版本冻结、BHB-009 共享 mapping contract + 管理 HTTP、BHB-010-A/B 管理端映射只读与操作均已合入 `dev`。**仍未**实现真实供应商 HTTP Adapter、下游业务订单 HTTP、供应商商品目录后台及 A/B/C/D 真实履约；`vendorFulfillmentEnabled=false` 仍成立。2026-10-27 仅在授权开发环境验证 D 商品列表有签名只读请求成功（21 个测试商品），不代表发券验收。原始接口总览见 [open-api-2026-10-22.md](./integrations/open-api-2026-10-22.md)，未来排卡约束见 [remaining-work-2026-10-27.md](./integrations/remaining-work-2026-10-27.md)。文内未逐段更新的 2026-10-24 实施状态文字视为历史记录，**不得**据其再次派重复实现。
 >
 > 视觉、颜色、排版、页面组件的风格规范只属于根目录 `design.md`。产品功能范围见 [product-scope.md](./product-scope.md)，羊毛供应商契约见 [integrations/yangmao.md](./integrations/yangmao.md)，部署见 [operations.md](./operations.md)。
 
