@@ -1337,6 +1337,10 @@ describe('supplier mapping draft editor', () => {
     fireEvent.change(nameField, { target: { value: '第一版商品名称' } });
     fireEvent.click(findButtonText('保存'));
     await waitFor(() => expect(submittedVersions).toEqual([1]));
+    // Wait until the first mutation settles before testing the next save.
+    expect(
+      await screen.findByText('商品已保存；供应商映射仍有未保存修改，请继续处理'),
+    ).toBeTruthy();
     expect(productCodeInput(panel).value).toBe('YM-UNSAVED');
     expect(screen.getByText('编辑内部商品')).toBeTruthy();
 
