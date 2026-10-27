@@ -22,7 +22,7 @@
 | C | `GET /open/v1/gift-vouchers/{code}` | `POST /open/v1/gift-vouchers`，签发**立刻预扣 packCount（1–12）** | 返回兑换链接/码不等于已兑换；期限/未领取额度返还未确认 |
 | D | `GET /api/open/inrice/v1/products`、`GET .../products/query`、`GET .../orders/query` | `POST .../dispatch`，扣权益**金额（元）** | `code=0` 仅受理；以查单 `dispatchStatus` 的已证实终态及 `fulfillmentSummary` 为准 |
 
-统一 envelope `{code,message,data}`，HTTP 200 **不等于**业务成功，更不等于履约成功。A/B/C 的 `X-Sign` 为排序非空字段 + appSecret 计算 SHA-256 大写 hex，毫秒时间戳及 nonce；D 的 `X-Signature` 为 HMAC-SHA256(timestamp + "\\n" + compact JSON, secret) 的 Base64，**二者不得公用签名实现**。
+统一 envelope `{code,message,data}`，HTTP 200 **不等于**业务成功，更不等于履约成功。A/B/C 的 `X-Sign` 为排序非空字段 + appSecret 计算 SHA-256 大写 hex，毫秒时间戳及 nonce；D 的 `X-Signature` 为 HMAC-SHA256(timestamp + "\n" + compact JSON, secret) 的 Base64，**二者不得公用签名实现**。
 
 ## 3. 后续实施切片（名称作为稳定排序依据）
 
