@@ -184,11 +184,17 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           setFormError({ message: '商品详情尚未加载完成，请稍后重试', code: 'DETAIL_NOT_LOADED' });
           return;
         }
-        await updateMutation.mutateAsync({
+        const updated = await updateMutation.mutateAsync({
           id: editingSnapshot.id,
           version: editingSnapshot.version,
           input,
         });
+        // The mapping editor can keep this drawer open after a product save.
+        // Carry forward the authoritative version so a second PATCH cannot
+        // accidentally reuse the version that was just consumed.
+        setEditingSnapshot({ id: updated.id, version: updated.version });
+        form.setFieldsValue(toFormValues(updated));
+        setDirty(false);
       }
       message.success('商品已保存');
       if (mappingDirty) {
