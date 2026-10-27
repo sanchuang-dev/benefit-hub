@@ -31,5 +31,6 @@ export {
   type YangmaoInriceCatalogClientOptions,
   type YangmaoInriceCatalogReader,
   type YangmaoInriceReadOptions,
+  type YangmaoInriceListOptions,
   type YangmaoInriceTransport,
 } from './inrice-catalog-client.js';
