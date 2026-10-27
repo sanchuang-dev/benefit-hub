@@ -64,10 +64,29 @@ const SUCCESS_BODY = {
     {
       productCode: 'INRICE_VIP_30',
       sellPrice: 30.0,
-      productName: '上游名称（字段未在契约中确认，不得解析）',
+      // The actual dev list used "name"; it is not exposed in this narrow adapter.
+      name: '上游名称（已观察，但本卡不输出展示文案）',
       status: 'ON_SALE',
     },
     { productCode: 'INRICE_CARD_10', sellPrice: '10.50' },
+  ],
+};
+
+/**
+ * Sanitized contract-regression fixture based on the authorized 2026-10-27
+ * read-only probe: the HTTP 200 / code=0 response had `data` as an ARRAY with
+ * 21 entries; the sampled items had `productCode`, `name`, `sellPrice`.
+ * This is a deliberately synthetic 4-item subset, NOT the raw supplier body,
+ * and must not be presented as a new live integration test.
+ */
+const OBSERVED_LIST_SHAPE_FIXTURE = {
+  code: 0,
+  message: 'success',
+  data: [
+    { productCode: 'TEST-1813', name: '测试商品一', sellPrice: 2.22 },
+    { productCode: 'TEST-2423', name: '测试商品二', sellPrice: 2.2 },
+    { productCode: 'TEST-2418', name: '测试商品三', sellPrice: 2.2 },
+    { productCode: 'TEST-4243', name: '测试商品四', sellPrice: 2.2 },
   ],
 };
 
@@ -107,6 +126,20 @@ describe('D-mode product list client', () => {
     // A read-only catalogue snapshot carries no dispatch/fulfilment claim.
     expect(catalog).not.toHaveProperty('dispatchStatus');
     expect(catalog).not.toHaveProperty('fulfillmentSummary');
+  });
+
+  it('accepts the observed D list envelope and sampled item fields without inventing display data', async () => {
+    const client = createClient(async () => jsonResponse(OBSERVED_LIST_SHAPE_FIXTURE));
+
+    const catalog = await client.listProducts();
+
+    expect(catalog.products).toEqual([
+      { productCode: 'TEST-1813', sellPriceCents: 222 },
+      { productCode: 'TEST-2423', sellPriceCents: 220 },
+      { productCode: 'TEST-2418', sellPriceCents: 220 },
+      { productCode: 'TEST-4243', sellPriceCents: 220 },
+    ]);
+    expect(catalog.products.every((product) => !('name' in product))).toBe(true);
   });
 
   it.each([
