@@ -116,7 +116,7 @@ function mappingVersionFields(version: MappingVersionDto) {
   ];
 }
 
-function ActiveVersion({ overview }: { overview: MappingOverviewDto }) {
+function ActiveVersion({ overview, canWrite }: { overview: MappingOverviewDto; canWrite: boolean }) {
   const active = overview.activeVersion;
   if (!active) {
     return (
@@ -124,7 +124,11 @@ function ActiveVersion({ overview }: { overview: MappingOverviewDto }) {
         type="info"
         showIcon
         title="当前没有生效映射"
-        description="草稿保存后还需要本地校验与显式激活，才会生成生效版本；本面板不提供激活写操作。"
+        description={
+          canWrite
+            ? '草稿保存后还需要本地校验与显式激活，才能生成生效版本；请使用下方草稿编辑操作。'
+            : '草稿保存后还需要本地校验与显式激活，才能生成生效版本；当前身份只读，请联系管理员操作。'
+        }
       />
     );
   }
@@ -231,7 +235,7 @@ function MappingOverview({
             label: '当前映射',
             children: (
               <Space orientation="vertical" size={16} className="mapping-tab-body">
-                <ActiveVersion overview={overview} />
+                <ActiveVersion overview={overview} canWrite={canWrite} />
                 <CurrentDraft draft={overview.draft} />
                 {canWrite ? (
                   <MappingDraftEditor
@@ -253,7 +257,11 @@ function MappingOverview({
                   type="info"
                   showIcon
                   title="历史版本只读"
-                  description="历史激活版本不可直接修改；如需恢复旧配置，应在后续写操作能力中以旧版本新建草稿，再重新校验并显式激活。"
+                  description={
+                    canWrite
+                      ? '历史激活版本不可直接修改；如需恢复旧配置，可参考历史内容填写新草稿，完成本地校验后显式激活。'
+                      : '历史激活版本不可直接修改；如需恢复旧配置，请联系管理员参考历史内容重新保存草稿、校验并激活。'
+                  }
                 />
                 {overview.versions.length === 0 ? (
                   <Empty
