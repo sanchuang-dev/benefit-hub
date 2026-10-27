@@ -2,12 +2,19 @@ import { z } from 'zod';
 import { YangmaoInriceError } from './inrice-errors.js';
 import {
   parseInriceProducts,
+  productCodeSchema,
   type YangmaoInriceCatalog,
 } from './inrice-products.js';
 import {
+  parseInriceProductDetail,
+  type YangmaoInriceProductDetail,
+} from './inrice-product-detail.js';
+import {
+  buildInriceProductDetailSignedBody,
   createInriceSignature,
   INRICE_LIST_SIGNED_BODY,
   INRICE_PRODUCTS_PATH,
+  INRICE_PRODUCT_DETAIL_PATH,
 } from './inrice-signature.js';
 import { hasControlCharacters } from './text-safety.js';
 
@@ -33,14 +40,23 @@ export interface YangmaoInriceCatalogClientOptions {
   clock?: () => number;
 }
 
-export interface YangmaoInriceListOptions {
+export interface YangmaoInriceReadOptions {
   /** Caller cancellation, distinguished from a timeout in the error code. */
   signal?: AbortSignal;
 }
 
 export interface YangmaoInriceCatalogReader {
   /** Read-only snapshot. Never implies supplier dispatch or fulfilment success. */
-  listProducts(options?: YangmaoInriceListOptions): Promise<YangmaoInriceCatalog>;
+  listProducts(options?: YangmaoInriceReadOptions): Promise<YangmaoInriceCatalog>;
+  /**
+   * Read-only detail for one vendor product code. A code the vendor does not
+   * know surfaces as a business failure carrying the vendor's numeric code,
+   * never as an empty success and never as a dispatch/fulfilment signal.
+   */
+  getProductDetail(
+    productCode: string,
+    options?: YangmaoInriceReadOptions,
+  ): Promise<YangmaoInriceProductDetail>;
 }
 
 export const DEFAULT_INRICE_TIMEOUT_MS = 10_000;
@@ -114,14 +130,76 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
     this.clock = options.clock ?? Date.now;
   }
 
-  async listProducts(options: YangmaoInriceListOptions = {}): Promise<YangmaoInriceCatalog> {
+  async listProducts(options: YangmaoInriceReadOptions = {}): Promise<YangmaoInriceCatalog> {
+    const data = await this.readSignedData(
+      INRICE_PRODUCTS_PATH,
+      INRICE_LIST_SIGNED_BODY,
+      options.signal,
+    );
+
+    const products = parseInriceProducts(data);
+    if (products === null) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_RESPONSE_INVALID');
+    }
+
+    return {
+      provider: 'yangmao',
+      currency: 'CNY',
+      observedAt: new Date(this.clock()).toISOString(),
+      products,
+    };
+  }
+
+  async getProductDetail(
+    productCode: string,
+    options: YangmaoInriceReadOptions = {},
+  ): Promise<YangmaoInriceProductDetail> {
+    // The code is embedded in both the signed JSON and the URL query; a blank
+    // or control-character code must fail locally before anything is signed.
+    if (!productCodeSchema.safeParse(productCode).success) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_PRODUCT_CODE_INVALID');
+    }
+
+    // The raw code is signed; URLSearchParams percent-encodes the identical
+    // raw value into the query so the vendor decodes exactly what was signed.
+    const pathWithQuery = `${INRICE_PRODUCT_DETAIL_PATH}?${new URLSearchParams({ productCode })}`;
+    const data = await this.readSignedData(
+      pathWithQuery,
+      buildInriceProductDetailSignedBody(productCode),
+      options.signal,
+    );
+
+    const detail = parseInriceProductDetail(data, productCode);
+    if (detail === null) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_RESPONSE_INVALID');
+    }
+
+    return {
+      provider: 'yangmao',
+      currency: 'CNY',
+      observedAt: new Date(this.clock()).toISOString(),
+      ...detail,
+    };
+  }
+
+  /**
+   * Shared signed-GET pipeline for every D read: D headers only, no redirect
+   * following, then four independent gates in order — HTTP status, JSON
+   * parsing, envelope shape, and body `code`. The caller receives the raw
+   * `data` value for endpoint-specific validation; nothing here is ever
+   * interpreted as dispatch or fulfilment success.
+   */
+  private async readSignedData(
+    pathWithQuery: string,
+    signedBody: string,
+    callerSignal: AbortSignal | undefined,
+  ): Promise<unknown> {
     const timestamp = String(Math.trunc(this.clock()));
-    const signature = createInriceSignature(this.appSecret, timestamp, INRICE_LIST_SIGNED_BODY);
-    const callerSignal = options.signal;
+    const signature = createInriceSignature(this.appSecret, timestamp, signedBody);
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
-    const request = new Request(`${this.baseUrl}${INRICE_PRODUCTS_PATH}`, {
+    const request = new Request(`${this.baseUrl}${pathWithQuery}`, {
       method: 'GET',
       headers: {
         'X-App-Key': this.appKey,
@@ -183,17 +261,7 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
       });
     }
 
-    const products = parseInriceProducts(envelope.data.data);
-    if (products === null) {
-      throw new YangmaoInriceError('YANGMAO_INRICE_RESPONSE_INVALID');
-    }
-
-    return {
-      provider: 'yangmao',
-      currency: 'CNY',
-      observedAt: new Date(this.clock()).toISOString(),
-      products,
-    };
+    return envelope.data.data;
   }
 
   private classifyAbortOrTransportFailure(

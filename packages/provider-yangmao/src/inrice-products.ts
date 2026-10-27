@@ -27,7 +27,8 @@ export interface YangmaoInriceCatalog {
 
 const MAX_PRODUCT_CODE_LENGTH = 128;
 
-const productCodeSchema = z
+/** Shared vendor identifier rule for list items, detail reads and call inputs. */
+export const productCodeSchema = z
   .string()
   .min(1)
   .max(MAX_PRODUCT_CODE_LENGTH)

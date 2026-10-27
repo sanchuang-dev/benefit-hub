@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildInriceProductDetailSignedBody,
   buildInriceStringToSign,
   createInriceSignature,
   INRICE_LIST_SIGNED_BODY,
@@ -39,6 +40,20 @@ describe('D-mode (X-Signature) signing', () => {
     expect(createInriceSignature(FIXTURE_SECRET, FIXED_TIMESTAMP, compactJson)).toBe(
       NON_EMPTY_BODY_VECTOR,
     );
+  });
+
+  it('builds the detail signed body as compact JSON and signs it with the same vector', () => {
+    const compactJson = buildInriceProductDetailSignedBody('SKU-1');
+    expect(compactJson).toBe('{"productCode":"SKU-1"}');
+    expect(createInriceSignature(FIXTURE_SECRET, FIXED_TIMESTAMP, compactJson)).toBe(
+      NON_EMPTY_BODY_VECTOR,
+    );
+  });
+
+  it('keeps the signed product code raw with JSON escaping, independent of URL encoding', () => {
+    // The URL query percent-encodes these characters; the signed payload must
+    // instead carry the raw code as compact JSON, escaping only JSON syntax.
+    expect(buildInriceProductDetailSignedBody('a"b c')).toBe('{"productCode":"a\\"b c"}');
   });
 
   it('produces Base64 HMAC output rather than the A/B/C uppercase hex X-Sign', () => {
