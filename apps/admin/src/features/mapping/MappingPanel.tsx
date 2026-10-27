@@ -19,6 +19,7 @@ import type {
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
 import { MappingContractError } from './api';
+import { MappingDraftEditor } from './MappingDraftEditor';
 import './MappingPanel.css';
 import { useMappingOverviewQuery } from './use-mapping';
 
@@ -198,7 +199,19 @@ function CurrentDraft({ draft }: { draft: MappingDraftDto | null }) {
   );
 }
 
-function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
+function MappingOverview({
+  productId,
+  overview,
+  canWrite,
+  onReload,
+  onDirtyChange,
+}: {
+  productId: string;
+  overview: MappingOverviewDto;
+  canWrite: boolean;
+  onReload: () => Promise<MappingOverviewDto | null>;
+  onDirtyChange: (dirty: boolean) => void;
+}) {
   return (
     <>
       <Alert
@@ -220,6 +233,14 @@ function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
               <Space orientation="vertical" size={16} className="mapping-tab-body">
                 <ActiveVersion overview={overview} />
                 <CurrentDraft draft={overview.draft} />
+                {canWrite ? (
+                  <MappingDraftEditor
+                    productId={productId}
+                    overview={overview}
+                    onReload={onReload}
+                    onDirtyChange={onDirtyChange}
+                  />
+                ) : null}
               </Space>
             ),
           },
@@ -268,18 +289,43 @@ function MappingOverview({ overview }: { overview: MappingOverviewDto }) {
   );
 }
 
+const ignoreDirtyChange = () => undefined;
+
+interface MappingPanelProps {
+  productId: string;
+  /** Only an admin in the editable drawer may see draft/validate/activate controls. */
+  canWrite: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+}
+
 /**
- * Read-only supplier mapping panel. Every fact is derived from the server
- * overview; the panel has no draft, validate, or activate controls of its own.
+ * Supplier mapping panel. It always renders server facts from the overview;
+ * write controls exist only for an admin in edit mode, and every successful
+ * write replaces the cached overview with the API's authoritative response.
  */
-export function MappingPanel({ productId }: { productId: string }) {
+export function MappingPanel({
+  productId,
+  canWrite,
+  onDirtyChange = ignoreDirtyChange,
+}: MappingPanelProps) {
   const query = useMappingOverviewQuery(productId);
+  const reload = async (): Promise<MappingOverviewDto | null> => {
+    try {
+      const result = await query.refetch();
+      // A failed refetch can still carry the previous successful data; never
+      // treat that as proof of the latest server state.
+      if (result.isError || !result.data) return null;
+      return result.data;
+    } catch {
+      return null;
+    }
+  };
 
   if (query.isPending) {
     return <Skeleton active title={{ width: '40%' }} paragraph={{ rows: 5 }} />;
   }
 
-  if (query.isError) {
+  if (query.isError && !query.data) {
     const copy = loadErrorCopy(query.error);
     return (
       <Alert
@@ -302,16 +348,36 @@ export function MappingPanel({ productId }: { productId: string }) {
 
   if (isEmpty) {
     return (
-      <Empty
-        image={Empty.PRESENTED_IMAGE_SIMPLE}
-        description="尚未配置供应商映射"
-      >
-        <Text type="secondary">
-          该内部商品还没有保存过映射草稿，也没有生效版本；本面板仅提供只读查看。
-        </Text>
-      </Empty>
+      <Space orientation="vertical" size={12} className="mapping-tab-body">
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="尚未配置供应商映射"
+        >
+          <Text type="secondary">
+            {canWrite
+              ? '保存草稿后还需要本地校验与显式激活，才会生成生效版本；本地校验不代表上游验证。'
+              : '该内部商品还没有保存过映射草稿，也没有生效版本；当前身份仅可查看。'}
+          </Text>
+        </Empty>
+        {canWrite ? (
+          <MappingDraftEditor
+            productId={productId}
+            overview={overview}
+            onReload={reload}
+            onDirtyChange={onDirtyChange}
+          />
+        ) : null}
+      </Space>
     );
   }
 
-  return <MappingOverview overview={overview} />;
+  return (
+    <MappingOverview
+      productId={productId}
+      overview={overview}
+      canWrite={canWrite}
+      onReload={reload}
+      onDirtyChange={onDirtyChange}
+    />
+  );
 }

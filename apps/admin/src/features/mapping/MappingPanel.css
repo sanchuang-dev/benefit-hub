@@ -19,3 +19,48 @@
 .mapping-tab-body {
   width: 100%;
 }
+
+.mapping-editor {
+  width: 100%;
+  padding-top: 4px;
+  border-top: 1px solid rgba(5, 5, 5, 0.06);
+}
+
+.mapping-editor-heading {
+  margin: 12px 0 4px;
+}
+
+.mapping-editor-alert {
+  margin: 12px 0;
+}
+
+.mapping-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 16px;
+  margin-top: 12px;
+}
+
+.mapping-editor-actions {
+  margin-top: 4px;
+}
+
+.mapping-validation-issues {
+  margin: 4px 0 0;
+  padding-left: 20px;
+}
+
+.mapping-modal-descriptions {
+  margin: 12px 0;
+}
+
+.mapping-modal-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+@media (max-width: 720px) {
+  .mapping-editor-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

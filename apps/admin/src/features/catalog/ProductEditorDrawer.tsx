@@ -89,6 +89,9 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
   const [editingSnapshot, setEditingSnapshot] = useState<{ id: string; version: number } | null>(null);
   const [conflicted, setConflicted] = useState(false);
   const [dirty, setDirty] = useState(false);
+  // Mapping draft edits are owned by MappingPanel; the drawer only needs to
+  // know whether closing would discard them.
+  const [mappingDirty, setMappingDirty] = useState(false);
 
   const open = state !== null;
   const mode = state?.mode ?? 'create';
@@ -108,12 +111,14 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
       setEditingSnapshot(null);
       setConflicted(false);
       setDirty(false);
+      setMappingDirty(false);
       return;
     }
     setFormError(null);
     setEditingSnapshot(null);
     setConflicted(false);
     setDirty(false);
+    setMappingDirty(false);
     form.resetFields();
     if (isCreate || !productId) return;
 
@@ -186,6 +191,12 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
         });
       }
       message.success('商品已保存');
+      if (mappingDirty) {
+        // Closing now would discard mapping draft edits without the discard
+        // confirmation; keep the drawer open after an unrelated product save.
+        message.info('商品已保存；供应商映射仍有未保存修改，请继续处理');
+        return;
+      }
       onClose();
     } catch (error) {
       applyApiError(error);
@@ -210,10 +221,11 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
 
   const requestClose = () => {
     if (saving) return;
-    if (!readOnly && dirty) {
+    if (!readOnly && (dirty || mappingDirty)) {
       modal.confirm({
         title: '放弃未保存的修改？',
-        content: '当前表单有未保存的修改，关闭后将丢失。',
+        content:
+          '当前商品或供应商映射有未保存的修改，关闭后将丢失。已保存的映射草稿与生效版本不受影响。',
         okText: '放弃修改',
         cancelText: '继续编辑',
         okButtonProps: { danger: true },
@@ -301,7 +313,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           type="info"
           showIcon
           title="新建商品不包含供应商映射"
-          description="创建成功后仍需配置供应商映射；本版本只提供映射只读查看，不提供保存、校验或激活操作。"
+          description="创建成功后可在商品编辑抽屉中保存映射草稿、执行本地校验并显式激活；激活只影响此后新建订单，真实发放仍禁用。"
         />
       ) : detail.data ? (
         <Alert
@@ -309,7 +321,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           type="info"
           showIcon
           title="真实权益发放仍禁用"
-          description="内部商品的供应商映射状态以下方只读面板为准；即使映射已激活，本版本也不会请求羊毛上游或发放真实权益。"
+          description="供应商映射以下方面板为准；保存、本地校验与显式激活只改变此后新建订单的映射绑定，本版本不会请求羊毛上游或发放真实权益。"
         />
       ) : null}
 
@@ -448,9 +460,14 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
             className="product-form-section"
             style={{ margin: '20px 0 16px' }}
           >
-            供应商映射（只读）
+            供应商映射
           </Divider>
-          <MappingPanel key={productId} productId={productId} />
+          <MappingPanel
+            key={productId}
+            productId={productId}
+            canWrite={canWrite && mode === 'edit'}
+            onDirtyChange={setMappingDirty}
+          />
         </section>
       ) : null}
     </Drawer>

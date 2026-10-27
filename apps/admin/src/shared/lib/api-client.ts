@@ -5,6 +5,8 @@ export class ApiError extends Error {
     message: string,
     /** Field paths reported by the API for validation failures; never values. */
     readonly fields?: readonly string[],
+    /** Stable failure codes from the API (for example mapping validation issues). */
+    readonly issues?: readonly string[],
   ) {
     super(message);
     this.name = 'ApiError';
@@ -42,7 +44,7 @@ async function csrfToken(): Promise<string> {
   return readBrowserCookie(CSRF_COOKIE_NAME) ?? (await fetchCsrfToken());
 }
 
-export type ApiMethod = 'GET' | 'POST' | 'PATCH';
+export type ApiMethod = 'GET' | 'POST' | 'PUT' | 'PATCH';
 
 export interface ApiRequestOptions {
   method?: ApiMethod;
@@ -53,6 +55,7 @@ export interface ApiErrorBody {
   error: string;
   message: string;
   fields?: string[];
+  issues?: string[];
 }
 
 /**
@@ -94,6 +97,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       error?.error ?? 'REQUEST_FAILED',
       error?.message ?? '请求失败，请稍后重试',
       Array.isArray(error?.fields) ? error.fields : undefined,
+      Array.isArray(error?.issues) ? error.issues : undefined,
     );
   }
 
