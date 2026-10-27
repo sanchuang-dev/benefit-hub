@@ -45,6 +45,9 @@ export interface YangmaoInriceReadOptions {
   signal?: AbortSignal;
 }
 
+/** Backwards-compatible name for the existing list reader options. */
+export type YangmaoInriceListOptions = YangmaoInriceReadOptions;
+
 export interface YangmaoInriceCatalogReader {
   /** Read-only snapshot. Never implies supplier dispatch or fulfilment success. */
   listProducts(options?: YangmaoInriceReadOptions): Promise<YangmaoInriceCatalog>;
