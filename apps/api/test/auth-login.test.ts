@@ -130,6 +130,8 @@ describe('admin login', () => {
     expect(statuses.filter((status) => status === 429)).toHaveLength(7);
   });
 
+  // This probe intentionally performs 20 sequential password checks (scrypt); CI CPU contention
+  // must not abort the assertions before the address-wide limiter is exercised.
   it('does not clear address-wide failures after another account logs in successfully', async () => {
     await seedAccount(server, { username: 'ops.admin' });
     const client = new TestClient(server);
@@ -142,7 +144,7 @@ describe('admin login', () => {
     const limited = await client.login('another-user', 'wrong-password');
     expect(limited.status).toBe(429);
     expect((await limited.json()).error).toBe('TOO_MANY_ATTEMPTS');
-  });
+  }, 20_000);
 
   it('does not authenticate an account with invalid input lengths', async () => {
     await seedAccount(server, { username: 'ops.admin' });
