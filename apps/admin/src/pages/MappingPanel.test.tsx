@@ -1301,6 +1301,57 @@ describe('supplier mapping draft editor', () => {
     expect(writeCalls(fetchMock)).toEqual(['PATCH /api/v1/catalog/products/p-1']);
   });
 
+  it('uses the new product version for a second save while mapping edits remain unsaved', {
+    timeout: 60_000,
+  }, async () => {
+    const travel = product({ id: 'p-1', code: 'TRAVEL-1', name: '腾讯出行券 10 元' });
+    const submittedVersions: number[] = [];
+    const base = standardHandler({
+      products: [travel],
+      mapping: (id) => jsonResponse(200, { ...emptyOverview(id), draft: draft(id) }),
+    });
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/v1/catalog/products/p-1' && init?.method === 'PATCH') {
+        const body = requestBody(init);
+        const version = Number(body.version);
+        submittedVersions.push(version);
+        // Mimic the real optimistic-lock guard, not an always-successful mock.
+        if (version !== submittedVersions.length) {
+          return jsonResponse(409, {
+            error: 'PRODUCT_VERSION_CONFLICT',
+            message: '商品版本已变化，请重新加载',
+          });
+        }
+        return jsonResponse(200, {
+          product: { ...travel, name: String(body.name), version: version + 1 },
+        });
+      }
+      return base(url, init);
+    });
+
+    const panel = await openMappingEditor();
+    await waitFor(() => expect(productCodeInput(panel).value).toBe('YM-1001'));
+    fireEvent.change(productCodeInput(panel), { target: { value: 'YM-UNSAVED' } });
+
+    const nameField = screen.getByRole('textbox', { name: '商品名称' }) as HTMLInputElement;
+    fireEvent.change(nameField, { target: { value: '第一版商品名称' } });
+    fireEvent.click(findButtonText('保存'));
+    await waitFor(() => expect(submittedVersions).toEqual([1]));
+    expect(productCodeInput(panel).value).toBe('YM-UNSAVED');
+    expect(screen.getByText('编辑内部商品')).toBeTruthy();
+
+    fireEvent.change(nameField, { target: { value: '第二版商品名称' } });
+    fireEvent.click(findButtonText('保存'));
+    await waitFor(() => expect(submittedVersions).toEqual([1, 2]));
+    expect(nameField.value).toBe('第二版商品名称');
+    expect(productCodeInput(panel).value).toBe('YM-UNSAVED');
+    expect(screen.queryByText('商品已被他人修改')).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([
+      'PATCH /api/v1/catalog/products/p-1',
+      'PATCH /api/v1/catalog/products/p-1',
+    ]);
+  });
+
   it('confirms before closing the drawer with unsaved mapping edits', { timeout: 60_000 }, async () => {
     const travel = product({ id: 'p-1', code: 'TRAVEL-1', name: '腾讯出行券 10 元' });
     const fetchMock = mockFetch(
