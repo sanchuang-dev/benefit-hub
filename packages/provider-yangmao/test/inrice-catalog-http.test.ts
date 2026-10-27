@@ -10,6 +10,8 @@ const FIXED_NOW = 1793059200000;
 const APP_KEY = 'fixture-app-key';
 const APP_SECRET = 'test-secret-do-not-use';
 const LIST_SIGNATURE = 'WGOyr6kPjYGHpUQA7bSFkUA3oOMmxjKlWwxbj5SxsW4=';
+/** OpenSSL vector for timestamp `1793059200000` + `\n` + `{"productCode":"TEST-1813"}`. */
+const DETAIL_SIGNATURE = 'r8ipv2R56uiczVxxOhEQkwjOFLiUI3oGVhgussoeMpo=';
 
 interface RecordedRequest {
   method: string;
@@ -152,6 +154,83 @@ describe('D-mode product list over a controlled loopback HTTP server', () => {
     expect(error.code).toBe('YANGMAO_INRICE_HTTP_ERROR');
     expect(error.httpStatus).toBe(302);
     expect(followed).toBe(0);
+    expect(server.requests).toHaveLength(1);
+  });
+});
+
+describe('D-mode product detail over a controlled loopback HTTP server', () => {
+  it('performs the signed GET with the productCode query end to end', async () => {
+    const server = await startVendorServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(
+        JSON.stringify({
+          code: 0,
+          message: 'success',
+          data: { productCode: 'TEST-1813', name: '测试商品一', sellPrice: 2.22 },
+        }),
+      );
+    });
+    openServers.push(server);
+
+    const detail = await createClient(server.origin).getProductDetail('TEST-1813');
+
+    expect(detail).toEqual({
+      provider: 'yangmao',
+      currency: 'CNY',
+      observedAt: new Date(FIXED_NOW).toISOString(),
+      productCode: 'TEST-1813',
+      name: '测试商品一',
+      sellPriceCents: 222,
+    });
+
+    expect(server.requests).toHaveLength(1);
+    const [request] = server.requests;
+    if (!request) throw new Error('Server did not receive the request');
+    expect(request.method).toBe('GET');
+    expect(request.url).toBe('/api/open/inrice/v1/products/query?productCode=TEST-1813');
+    // The vendor decodes the query back to the exact value that was signed.
+    expect(new URL(request.url ?? '/', 'http://127.0.0.1').searchParams.get('productCode')).toBe(
+      'TEST-1813',
+    );
+    expect(request.headers['x-app-key']).toBe(APP_KEY);
+    expect(request.headers['x-timestamp']).toBe(String(FIXED_NOW));
+    expect(request.headers['x-signature']).toBe(DETAIL_SIGNATURE);
+    expect(request.headers['x-sign']).toBeUndefined();
+    expect(request.body).toBe('');
+  });
+
+  it('does not follow redirects that would replay credentials elsewhere', async () => {
+    let followed = 0;
+    const server = await startVendorServer((request, response) => {
+      if (request.url === '/api/open/inrice/v1/products/query?productCode=TEST-1813') {
+        response.writeHead(302, { location: '/must-not-be-followed' });
+        response.end();
+        return;
+      }
+      followed += 1;
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ code: 0, data: null }));
+    });
+    openServers.push(server);
+
+    const error = await captureError(createClient(server.origin).getProductDetail('TEST-1813'));
+
+    expect(error.code).toBe('YANGMAO_INRICE_HTTP_ERROR');
+    expect(error.httpStatus).toBe(302);
+    expect(followed).toBe(0);
+    expect(server.requests).toHaveLength(1);
+  });
+
+  it('aborts a non-responsive detail request with a timeout error', async () => {
+    // The handler intentionally never writes a response.
+    const server = await startVendorServer(() => undefined);
+    openServers.push(server);
+
+    const error = await captureError(
+      createClient(server.origin, 100).getProductDetail('TEST-1813'),
+    );
+
+    expect(error.code).toBe('YANGMAO_INRICE_TIMEOUT');
     expect(server.requests).toHaveLength(1);
   });
 });

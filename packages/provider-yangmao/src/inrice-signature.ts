@@ -10,6 +10,19 @@ export const INRICE_PRODUCTS_PATH = '/api/open/inrice/v1/products';
  */
 export const INRICE_LIST_SIGNED_BODY = '{}';
 
+/** D-mode read-only product detail path; it always carries a query string. */
+export const INRICE_PRODUCT_DETAIL_PATH = '/api/open/inrice/v1/products/query';
+
+/**
+ * The detail endpoint takes `productCode` both as the URL query parameter and
+ * inside the signed compact JSON object. The signed value is the raw code; the
+ * client percent-encodes the same raw value into the URL query, so the value
+ * the vendor decodes is exactly the value that was signed.
+ */
+export function buildInriceProductDetailSignedBody(productCode: string): string {
+  return JSON.stringify({ productCode });
+}
+
 /**
  * D-mode string to sign: `<timestamp>\n<compact JSON>`.
  *
