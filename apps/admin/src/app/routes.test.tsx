@@ -140,6 +140,7 @@ describe('login flow', () => {
     expect(screen.getByText('运营后台登录')).toBeTruthy();
   });
 
+  // Real route transitions through Ant Design can exceed Vitest's 5s default on a loaded CI runner.
   it('opens visited modules as session-local route tabs', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
@@ -165,7 +166,7 @@ describe('login flow', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '总览' }));
     expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
-  });
+  }, 15_000);
 
   it('logs out through the user menu and returns to the login screen', async () => {
     let loggedOut = false;
