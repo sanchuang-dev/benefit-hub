@@ -30,6 +30,7 @@ export class TestServer {
       cookieSecure: true,
       trustProxy: false,
       sessionTtlMs: 8 * 60 * 60 * 1000,
+      yangmaoInrice: null,
       ...overrides,
     };
     this.database = openDatabase(this.file);

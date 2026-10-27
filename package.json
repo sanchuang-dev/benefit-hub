@@ -9,7 +9,7 @@
   },
   "scripts": {
     "lint": "oxlint apps/admin/src apps/api/src apps/api/test apps/admin/vite.config.ts packages/contracts/src packages/contracts/test packages/provider-yangmao/src packages/provider-yangmao/test",
-    "typecheck": "pnpm --filter @sanchuang-dev/benefit-contracts build && pnpm -r --if-present typecheck",
+    "typecheck": "pnpm --filter @sanchuang-dev/benefit-contracts build && pnpm --filter @sanchuang-dev/provider-yangmao build && pnpm -r --if-present typecheck",
     "test": "pnpm build && pnpm -r --workspace-concurrency=1 --if-present test",
     "build": "pnpm -r --if-present build",
     "check": "pnpm lint && pnpm typecheck && pnpm test"

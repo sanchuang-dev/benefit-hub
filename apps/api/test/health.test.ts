@@ -10,6 +10,7 @@ const config: AppConfig = {
   cookieSecure: false,
   trustProxy: false,
   sessionTtlMs: 60_000,
+  yangmaoInrice: null,
 };
 
 function createBootstrapApp() {
