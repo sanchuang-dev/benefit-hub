@@ -88,4 +88,16 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - [ ] 供应商是否提供可靠的余额查询、退款或撤销接口；当前总览**没有**对此作出承诺。
 - [ ] 隐私与手机号处理责任边界、发券重试频率/限流和上游事故联络机制。
 
-**文档状态（2026-10-27）**：已根据 2026-10-22 总览整理并入库原始副本。维护者授权的 Mac 终端曾对 D 模式 `GET /api/open/inrice/v1/products` 做真实、带签名的只读开发环境请求：HTTP 200、业务 `code=0`、`message=success`、返回 21 个测试商品。这**只证明 D 列表只读鉴权与读接口在该时刻可用**，不证明 D 详情/派发/查单、A/B/C、余额、测试额度或实际到账成功。详情查询参数、D 完整终态、各模式错误码仍需细文档或受控实测。联调证据不得包含签名、手机号或 Secret。 
+**文档状态（2026-10-27）**：已根据 2026-10-22 总览整理并入库原始副本。维护者授权的 Mac 终端曾对 D 模式 `GET /api/open/inrice/v1/products` 做真实、带签名的只读开发环境请求：HTTP 200、业务 `code=0`、`message=success`、返回 21 个测试商品。这**只证明 D 列表只读鉴权与读接口在该时刻可用**，不证明 D 详情/派发/查单、A/B/C、余额、测试额度或实际到账成功。详情查询参数、D 完整终态、各模式错误码仍需细文档或受控实测。联调证据不得包含签名、手机号或 Secret。
+
+## 9. D 商品列表只读客户端（BHB-011-A）
+
+- **代码归属**：`packages/provider-yangmao`，server-only；导出 `createYangmaoInriceCatalogClient`、D 签名函数与稳定错误码。没有新增 API 路由、后台页面、数据库表或派发能力。
+- **签名**：唯一 D 实现为 `X-Signature = Base64(HMAC-SHA256(appSecret, timestamp + "\n" + 紧凑 JSON))`，列表签名体为 `{}`；请求头只有 `X-App-Key`、`X-Timestamp`、`X-Signature`，不含 `X-Sign`/`X-Nonce`，也不复用 A/B/C 实现。
+- **传输边界**：`baseUrl`、`appKey`、`appSecret`、超时、clock 与 transport 均由服务端调用方注入；默认 Node `fetch` 保留系统 TLS 验证，不跟随重定向；远程地址必须 HTTPS（仅 loopback 测试允许 HTTP）；超时默认 10s，限制 100ms–60s。
+- **响应判断**：先判 HTTP 2xx，再要求 JSON envelope 的整数 `code`；HTTP 401/403、其它非 2xx、`code != 0`、非法 JSON、形状不符、超时、调用方取消各有稳定错误码，HTTP 200 或 `code=0` 都不会被解释成派发/履约成功。错误信息固定，不复制供应商 `message`、AppSecret 或签名。
+- **字段边界**：只解析契约有依据的 `productCode` 与 `sellPrice`。`sellPrice` 是供应商“元”报价，按十进制定点精确转换为整数分；负数、超两位小数、科学计数法、超出安全整数或任何一项字段不符都会使整次读取失败，不做四舍五入或部分成功。展示名称等未确认字段不解析、不补假数据，未知字段丢弃。返回快照带 `provider: "yangmao"`、`currency: "CNY"` 与 `observedAt`。
+- **待复测的契约假设**：商品列表位于 `data` 数组这一容器形状来自总览的 `{code,message,data}` envelope 与列表语义；仓库没有 2026-10-27 的完整响应样本，因此这是本卡显式冻结的假设而非已采样事实。首次授权只读复测若发现容器不同，应按合同变更修正并补测试，不能静默兼容多种形状。
+- **测试证据**：`packages/provider-yangmao/test/inrice-signature.test.ts` 的固定向量由 OpenSSL 独立计算（命令记录在测试注释中）；成功、鉴权失败、业务失败、HTTP 200 + body `code=500`、非法 JSON、超时、取消、重定向与形状不符分别由注入 transport 和本地 loopback HTTP server 覆盖。**这些是隔离网络的契约测试，不是供应商环境实测**。
+- **与 2026-10-27 实测的区别**：当时授权 Mac 的只读请求是一次真实环境先验观察（HTTP 200、`code=0`、21 个商品），仓库没有保存其字段结构、签名或凭证。本卡不重放真实请求、不在 CI 使用真实凭证，也不证明商品详情、查单、派发、A/B/C 或生产地址可用。
+- **未接线**：当前没有 Hono 路由、环境变量读取、缓存/落库或后台页面；真实接入需后续卡片单独授权并在服务器侧注入凭证。`vendorFulfillmentEnabled` 仍为 `false`。
