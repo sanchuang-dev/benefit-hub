@@ -401,9 +401,11 @@ export function CatalogPage() {
     <div className="page">
       <header className="page-header catalog-header">
         <div className="catalog-header-text">
-          <Title level={2}>商品管理</Title>
+          <Title level={2}>{activeTab === 'internal' ? '权益商品' : '供货目录'}</Title>
           <Paragraph type="secondary">
-            内部商品由本平台维护名称、展示价与状态，供应商商品来自上力供货目录。映射配置请在内部商品详情中查看。
+            {activeTab === 'internal'
+              ? '管理三创自有权益商品、运营价格与供应商映射。'
+              : '查看供应商提供的商品、来源报价及已获得的商品详情。'}
           </Paragraph>
         </div>
         {activeTab === 'internal' ? (
