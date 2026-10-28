@@ -28,7 +28,7 @@ jobs:
         run: pnpm check
       - name: Build production Docker image
         run: docker build --tag benefit-hub:ci .
-      - name: Verify runtime health and disabled fulfillment
+      - name: Verify runtime health and system status
         shell: bash
         run: |
           set -euo pipefail
