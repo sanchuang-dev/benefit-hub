@@ -2,6 +2,8 @@ import { App as AntdApp, Button, Dropdown, Layout, Menu, Tabs, Tag, Typography }
 import {
   LayoutDashboard,
   LogOut,
+  PanelLeftClose,
+  PanelLeftOpen,
   Package,
   Building2,
   AppWindow,
@@ -102,6 +104,7 @@ export function AppShell({ admin }: AppShellProps) {
   const { message } = AntdApp.useApp();
   const activeKey = activeMenuKey(location.pathname, location.search);
   const [openTabKeys, setOpenTabKeys] = useState<string[]>(() => [activeKey]);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
     NAV_GROUPS.map((group) => group.key),
   );
@@ -163,24 +166,44 @@ export function AppShell({ admin }: AppShellProps) {
       <Sider
         className="app-sider"
         theme="light"
-        width={216}
-        collapsedWidth={56}
+        width={248}
+        collapsedWidth={68}
         breakpoint="lg"
+        collapsible
+        trigger={null}
+        collapsed={sidebarCollapsed}
+        onCollapse={setSidebarCollapsed}
       >
-        <div className="app-brand">
+        <div className={`app-brand${sidebarCollapsed ? ' app-brand-collapsed' : ''}`}>
           <span className="app-brand-mark" aria-hidden="true">
             BH
           </span>
           <span className="app-brand-text">Benefit Hub</span>
+          <Button
+            className="app-sidebar-toggle"
+            type="text"
+            size="small"
+            icon={sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-controls="benefit-hub-navigation"
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            onClick={() => setSidebarCollapsed((value) => !value)}
+          />
         </div>
         <Menu
+          key={sidebarCollapsed ? 'compact-navigation' : 'full-navigation'}
+          id="benefit-hub-navigation"
           className="app-nav"
           mode="inline"
           theme="light"
+          inlineCollapsed={sidebarCollapsed}
           selectedKeys={[activeKey]}
           items={NAV_ITEMS}
-          openKeys={expandedGroups}
-          onOpenChange={setExpandedGroups}
+          openKeys={sidebarCollapsed ? undefined : expandedGroups}
+          onOpenChange={(keys) => {
+            if (!sidebarCollapsed) setExpandedGroups(keys);
+          }}
           onClick={({ key }) => navigate(key)}
         />
       </Sider>
