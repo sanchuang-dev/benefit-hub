@@ -41,7 +41,6 @@ function product(overrides: Partial<CatalogProduct> & Pick<CatalogProduct, 'id' 
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
-    vendorFulfillmentEnabled: false,
     ...overrides,
   };
 }
