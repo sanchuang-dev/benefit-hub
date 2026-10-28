@@ -24,12 +24,12 @@ function mockRequests(canSave: boolean) {
       return response(200, { admin, session: { expiresAt: Date.now() + 60 * 60 * 1000 } });
     }
     if (path === '/api/v1/system/status') return response(200, {
-      service: 'benefit-hub', phase: 'auth-enabled', vendorFulfillmentEnabled: false,
+      service: 'benefit-hub', phase: 'auth-enabled',
       adminEnabled: true, authenticationRequired: true,
     });
     if (path === '/api/v1/suppliers/yangmao') {
       return response(200, { supplier: {
-        key: 'yangmao', name: '上力', fulfillmentEnabled: false,
+        key: 'yangmao', name: '上力',
         catalogRead: { supported: true, configured: false, source: 'none', locked: false, canEdit: canSave },
       } });
     }
