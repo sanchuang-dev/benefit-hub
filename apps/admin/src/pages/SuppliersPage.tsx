@@ -16,6 +16,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useSessionQuery } from '../features/auth/use-auth';
 import { SupplierConnectionDrawer } from '../features/suppliers/SupplierConnectionDrawer';
+import { SupplierReadTools } from '../features/suppliers/SupplierReadTools';
 import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel';
 import { useSupplierProductsQuery } from '../features/catalog/use-catalog';
 import { useSupplierQuery, useSuppliersQuery, type SupplierSummary } from '../features/suppliers/use-suppliers';
@@ -278,6 +279,7 @@ export function SupplierDetailPage() {
             { key: 'overview', label: '供应商概览', children: overview },
             { key: 'catalog', label: '供货商品', children: <SupplierProductsPanel /> },
             { key: 'connection', label: '接入与规则', children: connection },
+            ...(session.data?.admin.role === 'admin' ? [{ key: 'read-tools', label: '只读联调', children: <SupplierReadTools /> }] : []),
           ]}
         />
       </Space>
