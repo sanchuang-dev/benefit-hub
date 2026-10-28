@@ -108,7 +108,7 @@ describe('encrypted supplier connection management', () => {
       baseUrl: 'https://dev-api.isunpow.com', appKey: APP_KEY, appSecret: APP_SECRET, version: 0,
     });
     expect(response.status).toBe(503);
-    expect((await response.text()).not.toContain(APP_SECRET)).toBe(true);
+    expect(await response.text()).not.toContain(APP_SECRET);
 
     s.config.supplierMasterKey = key;
     expect((await client.put(connectionPath, {
