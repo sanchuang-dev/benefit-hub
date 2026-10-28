@@ -7,8 +7,12 @@
  */
 
 import {
+  BUSINESS_ORDER_NO_PATTERN,
+  BUSINESS_SOURCE_PATTERN,
   FULFILLMENT_MODES,
+  ORDER_STATUSES,
   type FulfillmentMode,
+  type OrderStatus,
 } from '@sanchuang-dev/benefit-contracts';
 
 /** The four supplier fulfilment shapes (A/B/C/D) described in docs/product-scope.md. */
@@ -19,17 +23,12 @@ export type { FulfillmentMode };
  * Our own provider-agnostic order status. Supplier answer codes are never
  * stored here. `unknown` means the upstream outcome has not been verified yet
  * and must not be treated as failure or as permission to grant again.
+ *
+ * The value set is owned by the shared wire contract so the HTTP DTO and the
+ * persisted domain cannot drift apart.
  */
-export const ORDER_STATUSES = [
-  'pending',
-  'processing',
-  'awaiting_claim',
-  'partially_completed',
-  'completed',
-  'failed',
-  'unknown',
-] as const;
-export type OrderStatus = (typeof ORDER_STATUSES)[number];
+export { ORDER_STATUSES };
+export type { OrderStatus };
 
 /** Operations we may record against an order; no supplier-specific action names. */
 export const ATTEMPT_OPERATIONS = ['grant', 'query', 'reissue'] as const;
@@ -104,17 +103,10 @@ export class OrderProductNotActiveError extends Error {}
 export class OrderMappingUnavailableError extends Error {}
 
 /**
- * Our own source key (for example `local-life`). It is lower-cased so two
- * callers cannot create parallel identities that differ only by case.
+ * `BUSINESS_SOURCE_PATTERN` and `BUSINESS_ORDER_NO_PATTERN` are owned by the
+ * shared wire contract; the domain normalizers below enforce them again because
+ * repository callers are not necessarily HTTP requests.
  */
-const BUSINESS_SOURCE_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-
-/**
- * Business order numbers come from another system. Case is preserved because it
- * may be significant upstream, so `ORDER-1` and `order-1` stay distinct intents
- * rather than being merged silently.
- */
-const BUSINESS_ORDER_NO_PATTERN = /^[!-~]{1,128}$/;
 
 /** Upstream request/order references are bounded printable ASCII identifiers. */
 const UPSTREAM_REF_PATTERN = /^[!-~]{1,128}$/;

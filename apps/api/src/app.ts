@@ -7,11 +7,15 @@ import { logEvent } from './log.js';
 import type { AppEnv } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { createAdminAccountRoutes } from './modules/auth/admin-routes.js';
-import { apiError } from './modules/auth/http.js';
+import { apiError, NO_STORE_HEADERS } from './modules/auth/http.js';
 import { createAuthRoutes } from './modules/auth/routes.js';
 import { createCatalogMappingRoutes } from './modules/catalog/mapping-routes.js';
 import { createCatalogRoutes } from './modules/catalog/routes.js';
 import { createSupplierCatalogRoutes } from './modules/catalog/supplier-catalog-routes.js';
+import {
+  BUSINESS_ORDER_COLLECTION_PATH,
+  createBusinessOrderRoutes,
+} from './modules/orders/business-order-routes.js';
 
 export interface AppDependencies {
   db: AppDatabase;
@@ -28,7 +32,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.onError((error, c) => {
     // Do not return stack traces or SQL to the client; keep details server-side.
     logEvent('request.error', { path: c.req.path, name: error.name });
-    return c.json(apiError('INTERNAL_ERROR', '服务器内部错误'), 500);
+    return c.json(apiError('INTERNAL_ERROR', '服务器内部错误'), 500, NO_STORE_HEADERS);
   });
 
   app.use(
@@ -39,7 +43,17 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
       referrerPolicy: 'no-referrer',
     }),
   );
-  app.use('/api/v1/*', csrfProtection());
+  app.use(
+    '/api/v1/*',
+    csrfProtection({
+      // Only the machine-to-machine order collection POST is exempt: it is
+      // authenticated by a server-side Bearer service credential on every
+      // request and has no browser cookie flow to protect. Every other API
+      // write, including all admin/cookie mutations, keeps the CSRF gate.
+      isExempt: (c) =>
+        c.req.method === 'POST' && c.req.path === BUSINESS_ORDER_COLLECTION_PATH,
+    }),
+  );
 
   app.get('/healthz', (c) => {
     try {
@@ -67,6 +81,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.route('/api/v1/catalog', createCatalogRoutes(deps));
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
   app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));
+  app.route('/api/v1/business/orders', createBusinessOrderRoutes(deps));
 
   app.all('/api/*', (c) => c.json(apiError('NOT_FOUND', '接口不存在'), 404));
 

@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+import { BUSINESS_SOURCE_PATTERN } from '@sanchuang-dev/benefit-contracts';
 import { z } from 'zod';
 
 const environmentSchema = z.object({
@@ -14,12 +16,38 @@ const environmentSchema = z.object({
   YANGMAO_INRICE_BASE_URL: z.string().optional(),
   YANGMAO_INRICE_APP_KEY: z.string().optional(),
   YANGMAO_INRICE_APP_SECRET: z.string().optional(),
+  // Optional, server-only machine-to-machine order intake credentials. Absent
+  // means the downstream order API is explicitly unavailable (503); a present
+  // but malformed value is a startup error so a broken auth boundary can never
+  // silently fall back to "anybody may write orders".
+  BENEFIT_ORDER_CLIENTS_JSON: z.string().optional(),
 });
 
 export interface YangmaoInriceConfig {
   baseUrl: string;
   appKey: string;
   appSecret: string;
+}
+
+/**
+ * Minimum length of a configured downstream service bearer token. Anything
+ * shorter is rejected as configuration rather than accepted as a weak secret.
+ */
+export const BUSINESS_ORDER_CLIENT_TOKEN_MIN_LENGTH = 32;
+const BUSINESS_ORDER_CLIENT_TOKEN_PATTERN = /^[!-~]{32,512}$/;
+
+export interface BusinessOrderClient {
+  /** Normalized `businessSource`; the only identity this token may act as. */
+  businessSource: string;
+  /**
+   * SHA-256 digest of the bearer token. The raw token stays in the environment
+   * only, so it cannot leak through an accidental config/DTO serialization.
+   */
+  tokenSha256: Buffer;
+}
+
+export interface BusinessOrderClientsConfig {
+  clients: readonly BusinessOrderClient[];
 }
 
 export interface AppConfig {
@@ -44,6 +72,11 @@ export interface AppConfig {
    * unavailability instead of attempting a signed request with a gap.
    */
   yangmaoInrice: YangmaoInriceConfig | null;
+  /**
+   * Present only when at least one downstream business client is configured.
+   * A malformed configuration never reaches this state; `loadConfig` throws.
+   */
+  businessOrderClients: BusinessOrderClientsConfig | null;
 }
 
 /**
@@ -60,6 +93,73 @@ function readYangmaoInriceConfig(env: NodeJS.ProcessEnv): YangmaoInriceConfig | 
   if (baseUrl.trim() === '' || appKey.trim() === '' || appSecret.trim() === '') return null;
 
   return { baseUrl, appKey, appSecret };
+}
+
+/** Configuration errors never include a token value or the raw JSON blob. */
+function businessOrderConfigError(detail: string): Error {
+  return new Error(`Invalid environment configuration (BENEFIT_ORDER_CLIENTS_JSON: ${detail})`);
+}
+
+/**
+ * Parses the optional `BENEFIT_ORDER_CLIENTS_JSON` map of
+ * `businessSource -> bearer token`. The format is documented in
+ * `docs/integrations/business-order-api.md`; tokens only ever exist server-side.
+ *
+ * Every malformed shape is rejected instead of partially accepted: invalid
+ * JSON, a non-object, an empty map, invalid/duplicate source keys, weak or
+ * non-string tokens, and the same token bound to two clients.
+ */
+function readBusinessOrderClientsConfig(
+  env: NodeJS.ProcessEnv,
+): BusinessOrderClientsConfig | null {
+  const raw = env.BENEFIT_ORDER_CLIENTS_JSON ?? '';
+  if (raw.trim() === '') return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw businessOrderConfigError('不是合法的 JSON 对象');
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw businessOrderConfigError('必须是 {"businessSource":"token"} 形式的 JSON 对象');
+  }
+
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length === 0) {
+    throw businessOrderConfigError('至少需要配置一个业务来源');
+  }
+
+  const bySource = new Map<string, BusinessOrderClient>();
+  const usedTokens = new Set<string>();
+
+  for (const [rawSource, rawToken] of entries) {
+    const businessSource = rawSource.trim().toLowerCase();
+    if (!BUSINESS_SOURCE_PATTERN.test(businessSource)) {
+      throw businessOrderConfigError(
+        '业务来源键不合法（需 1-64 位字母、数字或 . _ -，统一转为小写）',
+      );
+    }
+    if (bySource.has(businessSource)) {
+      throw businessOrderConfigError(`业务来源 ${businessSource} 重复（大小写不同也不行）`);
+    }
+    if (typeof rawToken !== 'string' || !BUSINESS_ORDER_CLIENT_TOKEN_PATTERN.test(rawToken)) {
+      throw businessOrderConfigError(
+        `业务来源 ${businessSource} 的令牌需为 ${BUSINESS_ORDER_CLIENT_TOKEN_MIN_LENGTH}-512 位可见 ASCII 字符且不含空格`,
+      );
+    }
+    if (usedTokens.has(rawToken)) {
+      throw businessOrderConfigError(`业务来源 ${businessSource} 的令牌与另一个业务来源重复`);
+    }
+    usedTokens.add(rawToken);
+    bySource.set(businessSource, {
+      businessSource,
+      tokenSha256: createHash('sha256').update(rawToken, 'utf8').digest(),
+    });
+  }
+
+  return { clients: [...bySource.values()] };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -82,5 +182,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trustProxy: value.TRUST_PROXY === 'true',
     sessionTtlMs: value.SESSION_TTL_HOURS * 60 * 60 * 1000,
     yangmaoInrice: readYangmaoInriceConfig(env),
+    businessOrderClients: readBusinessOrderClientsConfig(env),
   };
 }

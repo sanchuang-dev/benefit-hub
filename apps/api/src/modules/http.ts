@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 import type { z } from 'zod';
-import type { AppEnv } from '../../middleware/auth.js';
-import { apiError } from '../auth/http.js';
+import type { AppEnv } from '../middleware/auth.js';
+import { apiError } from './auth/http.js';
 
 /** Field paths only: submitted values are never echoed back. */
 export function invalidRequest(message: string, fields?: string[]) {

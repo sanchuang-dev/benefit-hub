@@ -5,7 +5,7 @@ import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import { requireRole, requireSession, type AppEnv } from '../../middleware/auth.js';
 import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
-import { invalidRequest, issueFields, readJson } from './http.js';
+import { invalidRequest, issueFields, readJson } from '../http.js';
 import {
   createProduct,
   getProduct,

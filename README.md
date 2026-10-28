@@ -1,6 +1,6 @@
 # Benefit Hub · 三创权益服务与轻量运营平台
 
-**阶段（2026-10-27 以 `dev` 代码与真实 CI 为准）：** 管理员登录、内部商品管理、订单持久化/幂等、供应商映射草稿/激活/版本冻结、mapping 管理 HTTP API、商品映射运营界面已进入 `dev`；真实供应商 Adapter、对下游业务的订单 HTTP API、供应商商品目录运营页及真实发放尚未实现。`vendorFulfillmentEnabled` 仍为 `false`。 本仓库公开；严禁提交供应商密钥、用户记录、卡密、数据库或运行时日志。
+**阶段（2026-10-28 以 `dev` 代码与真实 CI 为准）：** 管理员登录、内部商品管理、订单持久化/幂等、供应商映射草稿/激活/版本冻结、mapping 管理 HTTP API、商品映射运营界面已进入 `dev`；BHB-012-A 已提供受服务凭证保护、仅本地 `pending` 的下游业务订单意图 HTTP 入站。真实供应商 Adapter（派发/查单）、供应商商品目录运营页及真实发放尚未实现。`vendorFulfillmentEnabled` 仍为 `false`。 本仓库公开；严禁提交供应商密钥、用户记录、卡密、数据库或运行时日志。
 
 Benefit Hub 是三创拥有规则主权的权益服务平台，负责内部商品、订单、幂等、统一状态与运营审计；**上力是目前唯一的供应商 Provider，不是平台本身**。A/B/C/D 是首家供应商的履约模式和限制，不是要求所有未来 Provider 照搬的通用协议；不替业务项目实现支付、抽奖、积分清算。
 
@@ -21,6 +21,7 @@ Benefit Hub 是三创拥有规则主权的权益服务平台，负责内部商�
 | [产品一期范围](docs/product-scope.md) | 服务适配层、四页运营后台、首期不做的事项、验收目标 |
 | [技术架构](docs/architecture.md) | Hono、React/Ant Design、pnpm、SQLite/Drizzle、代码架构和数据边界 |
 | [羊毛接口契约摘要](docs/integrations/yangmao.md) | A/B/C/D 供应商流程、签名、限领、履约、待联调问题 |
+| [下游业务订单入站 API](docs/integrations/business-order-api.md) | 服务凭证、创建/重放/查询、稳定错误码与安全边界 |
 | [部署运维方案](docs/operations.md) | 公司新阿里云 2C2G、Docker、Caddy、SQLite 挂载、dev 发布策略 |
 | [AGENTS.md](AGENTS.md) | 项目工程约束、权限、安全红线与两级分支例外 |
 | [UI 设计规范 v0.1](design.md) | 蓝白色 Ant Design 后台、登录封面、商品双视图、映射版本与订单详情、交互状态 |
