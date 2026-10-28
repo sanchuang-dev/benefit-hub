@@ -3,6 +3,10 @@ import {
   LayoutDashboard,
   LogOut,
   Package,
+  Building2,
+  AppWindow,
+  ArrowLeftRight,
+  Code2,
   ReceiptText,
   Settings,
   UserRound,
@@ -18,6 +22,10 @@ const { Header, Sider, Content } = Layout;
 const NAV_ITEMS = [
   { key: '/', icon: <LayoutDashboard size={16} />, label: '总览' },
   { key: '/catalog', icon: <Package size={16} />, label: '商品管理' },
+  { key: '/suppliers', icon: <Building2 size={16} />, label: '供应商管理' },
+  { key: '/applications', icon: <AppWindow size={16} />, label: '下游应用' },
+  { key: '/value-rules', icon: <ArrowLeftRight size={16} />, label: '价值换算' },
+  { key: '/interfaces', icon: <Code2 size={16} />, label: '接口管理' },
   { key: '/fulfillment', icon: <ReceiptText size={16} />, label: '发放记录' },
   { key: '/settings', icon: <Settings size={16} />, label: '系统设置' },
 ];
