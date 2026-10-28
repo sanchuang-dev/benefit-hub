@@ -31,6 +31,7 @@ export class TestServer {
       trustProxy: false,
       sessionTtlMs: 8 * 60 * 60 * 1000,
       yangmaoInrice: null,
+      supplierMasterKey: null,
       businessOrderClients: null,
       ...overrides,
     };

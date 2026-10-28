@@ -43,7 +43,7 @@ describe('read-only supplier management API', () => {
       suppliers: [{
         key: 'yangmao',
         name: '上力',
-        catalogRead: { supported: true, configured: false },
+        catalogRead: { supported: true, configured: false, source: 'none', locked: false, canEdit: false },
         fulfillmentEnabled: false,
       }],
     });

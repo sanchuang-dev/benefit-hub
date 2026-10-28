@@ -310,4 +310,28 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+
+  {
+    id: '0006_supplier_connections',
+    sql: `
+      CREATE TABLE IF NOT EXISTS supplier_connections (
+        provider TEXT PRIMARY KEY NOT NULL CHECK (provider IN ('yangmao')),
+        base_url TEXT NOT NULL,
+        encrypted_credentials TEXT NOT NULL,
+        version INTEGER NOT NULL CHECK (version >= 1),
+        updated_by TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS supplier_connection_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        provider TEXT NOT NULL CHECK (provider IN ('yangmao')),
+        actor_account_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('saved')),
+        version INTEGER NOT NULL CHECK (version >= 1),
+        created_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_supplier_connection_events_provider_time
+        ON supplier_connection_events (provider, created_at);
+    `,
+  },
 ];
