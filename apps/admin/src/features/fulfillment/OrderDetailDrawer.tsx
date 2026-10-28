@@ -193,8 +193,8 @@ export function OrderDetailDrawer({
           <Alert
             type="info"
             showIcon
-            title="平台本地事实，只读"
-            description="本页只展示本平台保存的订单、状态记录与调用事实；不会发起供应商请求、派发、查单或补发。平台状态不等于供应商受理、扣额或到账。"
+            title="订单记录说明"
+            description="订单状态来自本平台持久化记录；供应商受理、扣额或到账应以对应的上游核实结果为准。"
           />
 
           <Descriptions
