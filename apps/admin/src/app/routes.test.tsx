@@ -190,7 +190,7 @@ describe('login flow', () => {
 
     await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
     expect(screen.getByRole('tab', { name: '供货目录' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: '供应商商品' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: '供应商商品' }).getAttribute('aria-selected')).toBe('true');
 
     fireEvent.click(screen.getByRole('menuitem', { name: '权益商品' }));
     await waitFor(() => expect(router.state.location.search).toBe(''));
