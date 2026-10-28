@@ -100,7 +100,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 - 开发测试只读 API 来源是 `https://dev-api.isunpow.com`；`https://dev-admin.isunpow.com` 的网页登录会话并不等于 D Open API 的 AppKey/AppSecret。
 - 若使用 Docker Compose 主机私有 `.env`（部署目录 `/srv/benefit-hub`），只允许在授权的服务器终端录入三项凭证；文件只授权部署用户读取（`0600`）。不在仓库、Issue、PR、示例文件或日志中保存真实值。
 - 可使用 `docker compose config -q` 静态检查；不要把打印插值配置的 `docker compose config`、`docker inspect` 输出到公开日志。缺失凭证时，供应商商品读取仍返回 `SUPPLIER_NOT_CONFIGURED`，页面绝不呈现假空目录。
-- 这只允许已鉴权的 D 商品列表/详情 **GET**。保持 `vendorFulfillmentEnabled=false`，不授权任何派发或扣额。真实联调应在已登录管理端看到带时间的商品数和详情，不能仅凭环境变量存在就声称验证通过。
+- 现有目录接口是经过鉴权的 D 商品列表/详情 **GET**。实际供应商派发与扣额须由对应已实现的业务接口负责；联通验收在后台确认商品数据与时间戳，不以凭证存在冒充连接成功。
 
 
 ### 数据库存储供应商接入信息（2026-10-28）
