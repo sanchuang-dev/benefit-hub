@@ -254,7 +254,7 @@ export function FulfillmentPage() {
     <div className="page">
       <header className="page-header fulfillment-header">
         <div>
-          <Title level={2}>发放记录</Title>
+          <Title level={2}>业务订单</Title>
           <Paragraph type="secondary">
             查看平台订单、冻结履约来源和状态记录。
           </Paragraph>

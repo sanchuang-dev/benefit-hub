@@ -102,7 +102,7 @@ describe('login flow', () => {
 
     expect(await screen.findByRole('heading', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
     expect(screen.queryByText('供应商履约保持禁用')).toBeNull();
-    for (const label of ['总览', '商品管理', '供应商管理', '下游应用', '价值换算', '接口管理', '发放记录', '系统设置']) {
+    for (const label of ['总览', '权益中心', '权益商品', '价值换算', '供给中心', '供应商管理', '供货目录', '开放平台', '下游应用', '接口管理', '订单履约', '业务订单', '平台治理', '系统设置']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(screen.getAllByText('运维管理员').length).toBeGreaterThan(0);
@@ -160,17 +160,47 @@ describe('login flow', () => {
     renderRoutes('/');
 
     expect(await screen.findByRole('tab', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
-    fireEvent.click(screen.getByRole('menuitem', { name: '发放记录' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: '业务订单' }));
 
-    expect(await screen.findByRole('heading', { name: '发放记录' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: /发放记录/ })).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: '业务订单' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /业务订单/ })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: '总览' }));
     expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
   }, 15_000);
 
 
-  it('opens each platform domain from the first-level sidebar with its real capability state', async () => {
+  it('keeps owned products and the supplier catalog in separate navigation workspaces', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      if (url.startsWith('/api/v1/catalog/supplier-products')) {
+        return jsonResponse(200, {
+          provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [],
+        });
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog');
+    expect(await screen.findByRole('menuitem', { name: '权益商品' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: '供货目录' }));
+
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+    expect(screen.getByRole('tab', { name: '供货目录' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '供应商商品' }).getAttribute('aria-selected')).toBe('true');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '权益商品' }));
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(screen.getByRole('tab', { name: '权益商品' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '供货目录' }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+  }, 20_000);
+
+  it('opens each platform destination from grouped navigation with its real capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
       if (url === '/api/v1/suppliers') return jsonResponse(200, {
