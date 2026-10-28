@@ -1,19 +1,36 @@
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   applicationDetailResponseSchema,
   applicationListResponseSchema,
+  businessOrderErrorResponseSchema,
+  createBusinessOrderResponseSchema,
+  issueApplicationCredentialResponseSchema,
+  revokeApplicationCredentialResponseSchema,
   type ApplicationProductDto,
   type BusinessApplicationDto,
+  type BusinessOrderErrorResponse,
+  type IssueApplicationCredentialResponse,
 } from '@sanchuang-dev/benefit-contracts';
 import { loadConfig, type AppConfig } from '../src/config.js';
 import { createProduct, setProductStatus } from '../src/modules/catalog/products.js';
 import { createSupplierMappingRepository } from '../src/modules/catalog/supplier-mapping-repository.js';
+import { MAX_ACTIVE_CREDENTIALS_PER_APPLICATION } from '../src/modules/applications/credentials.js';
 import { seedAccount, TEST_PASSWORD, TestClient, TestServer } from './helpers/test-server.js';
 
 const BASE = '/api/v1/applications';
+const BUSINESS_ORDERS = '/api/v1/business/orders';
 
 /** Explicitly fictional downstream token; it exists only inside this test file. */
 const FICTIONAL_ORDER_TOKEN = 'fictional-local-life-order-token-00000001';
+const FICTIONAL_DOCTOR_TOKEN = 'fictional-card-doctor-order-token-000002';
+
+function clientsConfig(entries: Record<string, string>) {
+  return loadConfig({
+    DATABASE_FILE: ':memory:',
+    BENEFIT_ORDER_CLIENTS_JSON: JSON.stringify(entries),
+  }).businessOrderClients;
+}
 
 const servers: TestServer[] = [];
 afterEach(() => {
@@ -82,19 +99,36 @@ describe('application registry API authorization', () => {
       businessSource: 'local-life',
       name: '本地生活',
     });
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${created.id}/credentials`)).json(),
+    );
+
+    // Anonymous credential reads/writes are rejected before any handler runs.
+    for (const path of [
+      `${BASE}/${created.id}/credentials`,
+      `${BASE}/${created.id}/credentials/${issued.credential.id}/revoke`,
+    ]) {
+      const anonymousClient = new TestClient(server);
+      const csrf = await anonymousClient.csrfToken();
+      const response = await anonymousClient.post(path, undefined, csrf);
+      expect(response.status, path).toBe(401);
+    }
 
     for (const [path, method, body] of [
       [BASE, 'POST', { businessSource: 'card-doctor', name: '卡博士' }],
       [`${BASE}/${created.id}`, 'PATCH', { version: created.version, name: '越权重命名' }],
       [`${BASE}/${created.id}/disable`, 'POST', { version: created.version }],
       [`${BASE}/${created.id}/products`, 'PUT', { version: created.version, productIds: [] }],
+      [`${BASE}/${created.id}/credentials`, 'POST', undefined],
+      [`${BASE}/${created.id}/credentials/${issued.credential.id}/revoke`, 'POST', undefined],
     ] as const) {
-      const response = await viewer.request(path, {
-        method,
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      expect(response.status).toBe(403);
+      const response =
+        method === 'PATCH'
+          ? await viewer.patch(path, body)
+          : method === 'PUT'
+            ? await viewer.put(path, body)
+            : await viewer.post(path, body);
+      expect(response.status, path).toBe(403);
       expect(response.headers.get('cache-control')).toBe('no-store');
     }
 
@@ -105,6 +139,25 @@ describe('application registry API authorization', () => {
       body: JSON.stringify({ businessSource: 'no-csrf', name: '无令牌' }),
     });
     expect(withoutCsrf.status).toBe(403);
+    expect((await withoutCsrf.json()).error).toBe('CSRF_TOKEN_INVALID');
+
+    for (const path of [
+      `${BASE}/${created.id}/credentials`,
+      `${BASE}/${created.id}/credentials/${issued.credential.id}/revoke`,
+    ]) {
+      const response = await admin.request(path, { method: 'POST' });
+      expect(response.status, path).toBe(403);
+      expect((await response.json()).error).toBe('CSRF_TOKEN_INVALID');
+    }
+
+    // Viewer can read the non-sensitive credential state but never the secret.
+    const viewerDetail = await viewer.request(`${BASE}/${created.id}`);
+    expect(viewerDetail.status).toBe(200);
+    const viewerDetailText = await viewerDetail.text();
+    expect(viewerDetailText).not.toContain(issued.secret);
+    expect(applicationDetailResponseSchema.parse(JSON.parse(viewerDetailText)).credentials).toEqual([
+      issued.credential,
+    ]);
 
     const list = await viewer.request(BASE);
     expect(list.status).toBe(200);
@@ -136,7 +189,7 @@ describe('application registration and edits', () => {
       status: 'enabled',
       version: 1,
       configuredProductCount: 0,
-      runtimeAuthorizationEnforced: false,
+      activeCredentialCount: 0,
     });
 
     // The registered source is immutable at the database boundary, not only in
@@ -443,34 +496,478 @@ describe('application product configuration', () => {
   });
 });
 
-describe('configuration plane stays separate from machine authorization', () => {
-  it('does not mint credentials, grant the legacy order API, or enforce the allowlist', async () => {
-    const clients = loadConfig({
-      DATABASE_FILE: ':memory:',
-      BENEFIT_ORDER_CLIENTS_JSON: JSON.stringify({ 'local-life': FICTIONAL_ORDER_TOKEN }),
-    }).businessOrderClients;
-    const server = startServer({ businessOrderClients: clients });
+describe('application machine credentials', () => {
+  it('issues a one-time secret and persists only its SHA-256 digest', async () => {
+    const server = startServer();
     const admin = await login(server, 'app.admin', 'admin');
+    const product = seedProduct(server, 'CRED-P-1');
+    activateMapping(server, product.id);
 
-    const configuredProduct = seedProduct(server, 'MACHINE-P-1');
-    const unlistedProduct = seedProduct(server, 'MACHINE-P-2');
-    const mappingRepository = createSupplierMappingRepository(server.database.db);
-    for (const product of [configuredProduct, unlistedProduct]) {
-      const draft = mappingRepository.saveDraft({
-        productId: product.id,
-        expectedVersion: null,
-        provider: 'yangmao',
-        productCode: `YM-${product.code}`,
-        fulfillmentMode: 'D',
-        deductionUnit: 'amount',
-      });
-      mappingRepository.validateDraft({ productId: product.id, expectedVersion: draft.version });
-      mappingRepository.activateDraft({
-        productId: product.id,
-        expectedVersion: draft.version,
-        actorAccountId: 'test-actor',
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+
+    const issuedResponse = await admin.post(`${BASE}/${application.id}/credentials`);
+    expect(issuedResponse.status).toBe(201);
+    expect(issuedResponse.headers.get('cache-control')).toBe('no-store');
+    const issued = issueApplicationCredentialResponseSchema.parse(await issuedResponse.json());
+    expect(issued.credential).toMatchObject({ status: 'active', revokedAt: null });
+    expect(issued.secret.length).toBeGreaterThanOrEqual(32);
+    expect(issued.secret.startsWith('bhk_')).toBe(true);
+
+    const stored = server.database.sqlite
+      .prepare(
+        'SELECT token_sha256, revoked_at FROM business_application_credentials WHERE application_id = ?',
+      )
+      .all(application.id) as { token_sha256: string; revoked_at: number | null }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0]!.token_sha256).toBe(createHash('sha256').update(issued.secret).digest('hex'));
+    expect(stored[0]!.token_sha256).not.toContain(issued.secret);
+    expect(stored[0]!.revoked_at).toBeNull();
+
+    const actor = server.database.sqlite
+      .prepare('SELECT id FROM admin_accounts WHERE username = ?')
+      .get('app.admin') as { id: string };
+    const events = server.database.sqlite
+      .prepare(
+        'SELECT action, actor_account_id FROM business_application_credential_events WHERE application_id = ? ORDER BY created_at, rowid',
+      )
+      .all(application.id) as { action: string; actor_account_id: string }[];
+    expect(events).toEqual([{ action: 'issued', actor_account_id: actor.id }]);
+
+    // A credential alone is not permission: the product must also be allowlisted.
+    expect(
+      (
+        await admin.put(`${BASE}/${application.id}/products`, {
+          version: 1,
+          productIds: [product.id],
+        })
+      ).status,
+    ).toBe(200);
+
+    // The secret appears exactly once: no list, detail or restart read exposes it.
+    const listed = applicationListResponseSchema.parse(
+      await (await admin.request(BASE)).json(),
+    );
+    expect(listed.runtimeAuthorizationEnforced).toBe(true);
+    expect(listed.applications[0]!.activeCredentialCount).toBe(1);
+    const listedRaw = JSON.stringify(listed);
+    expect(listedRaw).not.toContain(issued.secret);
+    expect(listedRaw).not.toContain(stored[0]!.token_sha256);
+
+    const detailBody = await detail(admin, application.id);
+    expect(detailBody.runtimeAuthorizationEnforced).toBe(true);
+    expect(detailBody.credentials).toEqual([issued.credential]);
+    const detailRaw = JSON.stringify(detailBody);
+    expect(detailRaw).not.toContain(issued.secret);
+    expect(detailRaw).not.toContain(stored[0]!.token_sha256);
+
+    server.restart();
+    const afterRestart = await detail(admin, application.id);
+    expect(afterRestart.credentials).toEqual([issued.credential]);
+    expect(JSON.stringify(afterRestart)).not.toContain(issued.secret);
+
+    // The issued secret keeps working after a restart; it is a persisted digest.
+    const replayAfterRestart = await fetchOrder(server, issued.secret, {
+      businessOrderNo: 'CRED-ORDER-1',
+      productId: product.id,
+    });
+    expect(replayAfterRestart.status).toBe(201);
+  });
+
+  it('authenticates the existing machine order API and rejects products outside the allowlist', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const allowed = seedProduct(server, 'CRED-ALLOWED');
+    const unlisted = seedProduct(server, 'CRED-UNLISTED');
+    const allowedMapping = activateMapping(server, allowed.id);
+    activateMapping(server, unlisted.id);
+
+    const localLife = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    const doctor = await createApplication(admin, {
+      businessSource: 'card-doctor',
+      name: '卡博士',
+    });
+    expect(
+      (
+        await admin.put(`${BASE}/${localLife.id}/products`, {
+          version: 1,
+          productIds: [allowed.id],
+        })
+      ).status,
+    ).toBe(200);
+    // card-doctor gets its own allowlist so its credential can also create orders.
+    await admin.put(`${BASE}/${doctor.id}/products`, {
+      version: 1,
+      productIds: [allowed.id],
+    });
+
+    const localSecret = (
+      await (
+        await admin.post(`${BASE}/${localLife.id}/credentials`)
+      ).json()
+    ) as IssueApplicationCredentialResponse;
+    const doctorSecret = (
+      await (
+        await admin.post(`${BASE}/${doctor.id}/credentials`)
+      ).json()
+    ) as IssueApplicationCredentialResponse;
+
+    const createdResponse = await fetchOrder(server, localSecret.secret, {
+      businessOrderNo: 'CRED-ORDER-1',
+      productId: allowed.id,
+    });
+    expect(createdResponse.status).toBe(201);
+    expect(createdResponse.headers.get('cache-control')).toBe('no-store');
+    const created = createBusinessOrderResponseSchema.parse(await createdResponse.json());
+    expect(created.order).toMatchObject({
+      businessSource: 'local-life',
+      businessOrderNo: 'CRED-ORDER-1',
+      productId: allowed.id,
+      status: 'pending',
+      fulfillmentMode: 'D',
+      mappingVersionId: allowedMapping.id,
+    });
+
+    // Exact replay stays idempotent and keeps the frozen snapshot.
+    const replayResponse = await fetchOrder(server, localSecret.secret, {
+      businessOrderNo: 'CRED-ORDER-1',
+      productId: allowed.id,
+    });
+    expect(replayResponse.status).toBe(200);
+    expect(createBusinessOrderResponseSchema.parse(await replayResponse.json()).order).toEqual(
+      created.order,
+    );
+
+    // A product that exists but is not on this application's allowlist.
+    const unlistedResponse = await fetchOrder(server, localSecret.secret, {
+      businessOrderNo: 'CRED-ORDER-2',
+      productId: unlisted.id,
+    });
+    expect(unlistedResponse.status).toBe(403);
+    expect(
+      businessOrderErrorResponseSchema.parse(await unlistedResponse.json()).error,
+    ).toBe('PRODUCT_NOT_AUTHORIZED');
+
+    // An unknown product is not distinguished from an unauthorized one.
+    const unknownResponse = await fetchOrder(server, localSecret.secret, {
+      businessOrderNo: 'CRED-ORDER-3',
+      productId: 'missing-product',
+    });
+    expect(unknownResponse.status).toBe(403);
+    expect(
+      businessOrderErrorResponseSchema.parse(await unknownResponse.json()).error,
+    ).toBe('PRODUCT_NOT_AUTHORIZED');
+
+    expect(orderCount(server)).toBe(1);
+    expect(statusEventCount(server)).toBe(1);
+    expect(attemptCount(server)).toBe(0);
+
+    // Own order is readable; the same internal id is not probeable by another app.
+    const ownRead = await getOrderWithToken(
+      server,
+      localSecret.secret,
+      `${BUSINESS_ORDERS}/${created.order.id}`,
+    );
+    expect(ownRead.status).toBe(200);
+    const foreignRead = await getOrderWithToken(
+      server,
+      doctorSecret.secret,
+      `${BUSINESS_ORDERS}/${created.order.id}`,
+    );
+    expect(foreignRead.status).toBe(404);
+    expect(JSON.stringify(await foreignRead.json())).not.toContain(created.order.id);
+
+    // A human admin session still cannot act as a machine identity.
+    const cookieOnly = await admin.post(BUSINESS_ORDERS, {
+      businessOrderNo: 'CRED-ORDER-4',
+      productId: allowed.id,
+    });
+    expect(cookieOnly.status).toBe(401);
+    expect(orderCount(server)).toBe(1);
+  });
+
+  it('rejects allowlisted products that are disabled or have no active mapping', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const disabledProduct = seedProduct(server, 'CRED-DISABLED');
+    const unmappedProduct = seedProduct(server, 'CRED-UNMAPPED');
+    activateMapping(server, disabledProduct.id);
+
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    // Configured while active, then disabled afterwards: the allowlist keeps the
+    // pair (product disable does not silently rewrite configuration), but no new
+    // order may start from it.
+    expect(
+      (
+        await admin.put(`${BASE}/${application.id}/products`, {
+          version: 1,
+          productIds: [disabledProduct.id, unmappedProduct.id],
+        })
+      ).status,
+    ).toBe(200);
+    setProductStatus(server.database.db, disabledProduct.id, 'disabled', 1, 'test-actor');
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${application.id}/credentials`)).json(),
+    );
+
+    const disabled = await fetchOrder(server, issued.secret, {
+      businessOrderNo: 'CRED-DISABLED-1',
+      productId: disabledProduct.id,
+    });
+    expect(disabled.status).toBe(409);
+    expect(businessOrderErrorResponseSchema.parse(await disabled.json()).error).toBe(
+      'PRODUCT_NOT_ACTIVE',
+    );
+
+    const unmapped = await fetchOrder(server, issued.secret, {
+      businessOrderNo: 'CRED-UNMAPPED-1',
+      productId: unmappedProduct.id,
+    });
+    expect(unmapped.status).toBe(409);
+    expect(businessOrderErrorSchema(await unmapped.json())).toBe('ORDER_MAPPING_UNAVAILABLE');
+    expect(orderCount(server)).toBe(0);
+  });
+
+  it('refuses a new order when the credential is revoked after authentication while its body is pending', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const product = seedProduct(server, 'CRED-REVOKE-RACE');
+    activateMapping(server, product.id);
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    expect(
+      (
+        await admin.put(`${BASE}/${application.id}/products`, {
+          version: application.version,
+          productIds: [product.id],
+        })
+      ).status,
+    ).toBe(200);
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${application.id}/credentials`)).json(),
+    );
+
+    // The real HTTP order route authenticates the Bearer before readJson waits
+    // for the request stream. Pause body delivery at that boundary, then revoke.
+    let notifyBodyRead!: () => void;
+    let releaseBody!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      notifyBodyRead = resolve;
+    });
+    const bodyReleased = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        notifyBodyRead();
+        await bodyReleased;
+        controller.enqueue(
+          new TextEncoder().encode(
+            JSON.stringify({ businessOrderNo: 'CRED-RACE-1', productId: product.id }),
+          ),
+        );
+        controller.close();
+      },
+    }, { highWaterMark: 0 });
+
+    const pendingOrder = server.app.request(BUSINESS_ORDERS, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${issued.secret}`,
+        'content-type': 'application/json',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    try {
+      await bodyReadStarted;
+      const revoked = await admin.post(
+        `${BASE}/${application.id}/credentials/${issued.credential.id}/revoke`,
+      );
+      expect(revoked.status).toBe(200);
+    } finally {
+      releaseBody();
+    }
+
+    const result = await pendingOrder;
+    expect(result.status).toBe(401);
+    expect(businessOrderErrorSchema(await result.json())).toBe('UNAUTHORIZED');
+    expect(orderCount(server)).toBe(0);
+    expect(statusEventCount(server)).toBe(0);
+    expect(attemptCount(server)).toBe(0);
+  });
+
+  it('revokes immediately, idempotently and without cross-application access', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const product = seedProduct(server, 'CRED-REVOKE');
+    activateMapping(server, product.id);
+
+    const primary = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    const other = await createApplication(admin, {
+      businessSource: 'card-doctor',
+      name: '卡博士',
+    });
+    for (const application of [primary, other]) {
+      await admin.put(`${BASE}/${application.id}/products`, {
+        version: 1,
+        productIds: [product.id],
       });
     }
+
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${primary.id}/credentials`)).json(),
+    );
+    const otherIssued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${other.id}/credentials`)).json(),
+    );
+
+    // Another application cannot revoke this credential, and the id is not probeable.
+    const crossRevoke = await admin.post(
+      `${BASE}/${other.id}/credentials/${issued.credential.id}/revoke`,
+    );
+    expect(crossRevoke.status).toBe(404);
+    expect((await crossRevoke.json()).error).toBe('APPLICATION_CREDENTIAL_NOT_FOUND');
+
+    const firstRevoke = await admin.post(
+      `${BASE}/${primary.id}/credentials/${issued.credential.id}/revoke`,
+    );
+    expect(firstRevoke.status).toBe(200);
+    const revoked = revokeApplicationCredentialResponseSchema.parse(await firstRevoke.json());
+    expect(revoked.credential.status).toBe('revoked');
+    expect(revoked.credential.revokedAt).toEqual(expect.any(Number));
+
+    const denied = await fetchOrder(server, issued.secret, {
+      businessOrderNo: 'CRED-REVOKED-1',
+      productId: product.id,
+    });
+    expect(denied.status).toBe(401);
+    expect(businessOrderErrorResponseSchema.parse(await denied.json()).error).toBe(
+      'UNAUTHORIZED',
+    );
+    const deniedRead = await getOrderWithToken(server, issued.secret, BUSINESS_ORDERS);
+    expect(deniedRead.status).toBe(401);
+
+    // Repeated revocation is a no-op: same terminal state, single audit fact.
+    const secondRevoke = await admin.post(
+      `${BASE}/${primary.id}/credentials/${issued.credential.id}/revoke`,
+    );
+    expect(secondRevoke.status).toBe(200);
+    expect(
+      revokeApplicationCredentialResponseSchema.parse(await secondRevoke.json()).credential,
+    ).toEqual(revoked.credential);
+    const revokeEvents = server.database.sqlite
+      .prepare(
+        "SELECT COUNT(*) AS value FROM business_application_credential_events WHERE credential_id = ? AND action = 'revoked'",
+      )
+      .get(issued.credential.id) as { value: number };
+    expect(revokeEvents.value).toBe(1);
+
+    // The other application's credential is untouched.
+    const otherStillWorks = await fetchOrder(server, otherIssued.secret, {
+      businessOrderNo: 'CRED-OTHER-1',
+      productId: product.id,
+    });
+    expect(otherStillWorks.status).toBe(201);
+
+    const detailBody = await detail(admin, primary.id);
+    expect(detailBody.application.activeCredentialCount).toBe(0);
+    expect(detailBody.credentials).toHaveLength(1);
+    expect(detailBody.credentials[0]!.status).toBe('revoked');
+
+    // Revoking the last remaining credential must not degrade into a misleading
+    // 503 "not configured" response: it stays a generic authentication failure.
+    await admin.post(`${BASE}/${other.id}/credentials/${otherIssued.credential.id}/revoke`);
+    const lastRevoked = await fetchOrder(server, otherIssued.secret, {
+      businessOrderNo: 'CRED-OTHER-2',
+      productId: product.id,
+    });
+    expect(lastRevoked.status).toBe(401);
+    expect(businessOrderErrorSchema(await lastRevoked.json())).toBe('UNAUTHORIZED');
+  });
+
+  it('serializes duplicate revocations into one terminal transition', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${application.id}/credentials`)).json(),
+    );
+
+    const responses = await Promise.all(
+      Array.from({ length: 3 }, () =>
+        admin.post(`${BASE}/${application.id}/credentials/${issued.credential.id}/revoke`),
+      ),
+    );
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+    const revokedAt = new Set(
+      await Promise.all(
+        responses.map(async (response) =>
+          revokeApplicationCredentialResponseSchema.parse(await response.json()).credential
+            .revokedAt,
+        ),
+      ),
+    );
+    expect(revokedAt.size).toBe(1);
+    expect(
+      (
+        server.database.sqlite
+          .prepare(
+            "SELECT COUNT(*) AS value FROM business_application_credential_events WHERE action = 'revoked'",
+          )
+          .get() as { value: number }
+      ).value,
+    ).toBe(1);
+  });
+
+  it('bounds the number of simultaneously active credentials', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+
+    for (let index = 0; index < MAX_ACTIVE_CREDENTIALS_PER_APPLICATION; index += 1) {
+      expect((await admin.post(`${BASE}/${application.id}/credentials`)).status).toBe(201);
+    }
+    const overflow = await admin.post(`${BASE}/${application.id}/credentials`);
+    expect(overflow.status).toBe(409);
+    expect((await overflow.json()).error).toBe('APPLICATION_CREDENTIAL_LIMIT_REACHED');
+  });
+});
+
+describe('registered application governs legacy environment credentials', () => {
+  it('keeps unregistered sources working while constraining a registered source', async () => {
+    const server = startServer({
+      businessOrderClients: clientsConfig({
+        'local-life': FICTIONAL_ORDER_TOKEN,
+        'card-doctor': FICTIONAL_DOCTOR_TOKEN,
+      }),
+    });
+    const admin = await login(server, 'app.admin', 'admin');
+
+    const allowed = seedProduct(server, 'LEGACY-ALLOWED');
+    const unlisted = seedProduct(server, 'LEGACY-UNLISTED');
+    activateMapping(server, allowed.id);
+    activateMapping(server, unlisted.id);
 
     const application = await createApplication(admin, {
       businessSource: 'local-life',
@@ -478,60 +975,81 @@ describe('configuration plane stays separate from machine authorization', () => 
     });
     await admin.put(`${BASE}/${application.id}/products`, {
       version: 1,
-      productIds: [configuredProduct.id],
+      productIds: [allowed.id],
     });
 
-    const order = (productId: string) =>
-      fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
-        businessOrderNo: `ORDER-${productId.slice(0, 8)}`,
-        productId,
-      });
+    // The environment credential is accepted, but only for the allowlisted product.
+    const allowedOrder = await fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
+      businessOrderNo: 'LEGACY-1',
+      productId: allowed.id,
+    });
+    expect(allowedOrder.status).toBe(201);
 
-    // The legacy machine route keeps working exactly as before, including for a
-    // product that is not in the configured allowlist.
-    const baseline = await order(unlistedProduct.id);
-    expect(baseline.status).toBe(201);
+    const blocked = await fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
+      businessOrderNo: 'LEGACY-2',
+      productId: unlisted.id,
+    });
+    expect(blocked.status).toBe(403);
+    expect(businessOrderErrorSchema(await blocked.json())).toBe('PRODUCT_NOT_AUTHORIZED');
 
-    // Disabling the registered application and clearing its allowlist does not
-    // revoke the separately configured legacy Bearer credential.
+    // An unregistered source keeps the legacy compatibility path unchanged.
+    const doctorOrder = await fetchOrder(server, FICTIONAL_DOCTOR_TOKEN, {
+      businessOrderNo: 'LEGACY-3',
+      productId: unlisted.id,
+    });
+    expect(doctorOrder.status).toBe(201);
+
+    // Disabling the registered application suspends even its environment credential.
     await admin.post(`${BASE}/${application.id}/disable`, { version: 2 });
+    const disabled = await fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
+      businessOrderNo: 'LEGACY-4',
+      productId: allowed.id,
+    });
+    expect(disabled.status).toBe(403);
+    expect(businessOrderErrorSchema(await disabled.json())).toBe('APPLICATION_DISABLED');
+    const disabledRead = await getOrderWithToken(server, FICTIONAL_ORDER_TOKEN, BUSINESS_ORDERS);
+    expect(disabledRead.status).toBe(403);
+
+    // Re-enable with an empty allowlist: the existing order replays unchanged,
+    // while a new order for the removed product is rejected.
+    await admin.post(`${BASE}/${application.id}/enable`, { version: 3 });
     await admin.put(`${BASE}/${application.id}/products`, {
-      version: 3,
+      version: 4,
       productIds: [],
     });
-    const afterConfigurationChange = await order(configuredProduct.id);
-    expect(afterConfigurationChange.status).toBe(201);
 
-    // Conversely, an existing registered and enabled application never becomes a
-    // machine credential: no Bearer, a wrong Bearer, and an admin cookie all fail.
-    await admin.post(`${BASE}/${application.id}/enable`, { version: 4 });
-    const deniedHeaders: Record<string, string>[] = [
-      { 'content-type': 'application/json' },
-      {
-        'content-type': 'application/json',
-        authorization: 'Bearer fictional-wrong-token-0000000000000001',
-      },
-    ];
-    for (const headers of deniedHeaders) {
-      const denied = await server.app.request('/api/v1/business/orders', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ businessOrderNo: 'ORDER-NO-AUTH', productId: configuredProduct.id }),
-      });
-      expect(denied.status).toBe(401);
-      expect(denied.headers.get('cache-control')).toBe('no-store');
-    }
-    const cookieOnly = await admin.post('/api/v1/business/orders', {
-      businessOrderNo: 'ORDER-COOKIE-ONLY',
-      productId: configuredProduct.id,
+    const replay = await fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
+      businessOrderNo: 'LEGACY-1',
+      productId: allowed.id,
     });
-    expect(cookieOnly.status).toBe(401);
+    expect(replay.status).toBe(200);
+    const replayedOrder = createBusinessOrderResponseSchema.parse(await replay.json());
+    expect(replayedOrder.created).toBe(false);
+    expect(replayedOrder.order.productId).toBe(allowed.id);
+    expect(replayedOrder.order.mappingVersionId).not.toBeNull();
 
-    // The configuration response never carries the server-side token.
+    const removed = await fetchOrder(server, FICTIONAL_ORDER_TOKEN, {
+      businessOrderNo: 'LEGACY-5',
+      productId: allowed.id,
+    });
+    expect(removed.status).toBe(403);
+    expect(businessOrderErrorSchema(await removed.json())).toBe('PRODUCT_NOT_AUTHORIZED');
+  });
+
+  it('never exposes the environment token in application read models', async () => {
+    const server = startServer({
+      businessOrderClients: clientsConfig({ 'local-life': FICTIONAL_ORDER_TOKEN }),
+    });
+    const admin = await login(server, 'app.admin', 'admin');
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+
     const raw = await (await admin.request(`${BASE}/${application.id}`)).text();
     expect(raw).not.toContain(FICTIONAL_ORDER_TOKEN);
-    expect(raw).not.toContain('"token"');
-    expect(raw).toContain('"runtimeAuthorizationEnforced":false');
+    expect(raw).toContain('"runtimeAuthorizationEnforced":true');
+    expect(raw).not.toContain('token_sha256');
   });
 });
 
@@ -548,7 +1066,7 @@ async function fetchOrder(
   token: string,
   body: { businessOrderNo: string; productId: string },
 ) {
-  return server.app.request('/api/v1/business/orders', {
+  return server.app.request(BUSINESS_ORDERS, {
     method: 'POST',
     headers: {
       authorization: `Bearer ${token}`,
@@ -556,4 +1074,59 @@ async function fetchOrder(
     },
     body: JSON.stringify(body),
   });
+}
+
+/** Saves, validates and activates a D-mode mapping, returning the frozen version. */
+function activateMapping(server: TestServer, productId: string) {
+  const repository = createSupplierMappingRepository(server.database.db);
+  const current = repository.getDraft(productId);
+  const draft = repository.saveDraft({
+    productId,
+    expectedVersion: current?.version ?? null,
+    provider: 'yangmao',
+    productCode: `YM-${productId.slice(0, 8)}`,
+    fulfillmentMode: 'D',
+    deductionUnit: 'amount',
+  });
+  repository.validateDraft({ productId, expectedVersion: draft.version });
+  return repository.activateDraft({
+    productId,
+    expectedVersion: draft.version,
+    actorAccountId: 'test-actor',
+  });
+}
+
+async function getOrderWithToken(
+  server: TestServer,
+  token: string,
+  path: string,
+): Promise<Response> {
+  return server.app.request(path, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+}
+
+function businessOrderErrorSchema(body: unknown): BusinessOrderErrorResponse['error'] {
+  const parsed = businessOrderErrorResponseSchema.safeParse(body);
+  if (!parsed.success) throw new Error('Error body does not match the shared contract');
+  return parsed.data.error;
+}
+
+function countRows(server: TestServer, table: string): number {
+  const row = server.database.sqlite
+    .prepare(`SELECT COUNT(*) AS value FROM ${table}`)
+    .get() as { value: number };
+  return row.value;
+}
+
+function orderCount(server: TestServer): number {
+  return countRows(server, 'benefit_orders');
+}
+
+function statusEventCount(server: TestServer): number {
+  return countRows(server, 'benefit_order_status_events');
+}
+
+function attemptCount(server: TestServer): number {
+  return countRows(server, 'fulfillment_attempts');
 }

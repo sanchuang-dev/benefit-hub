@@ -7,6 +7,7 @@ import {
   createApplicationRequestSchema,
   setApplicationProductsRequestSchema,
   updateApplicationRequestSchema,
+  type ApplicationCredentialDto,
   type ApplicationProductDto,
   type BusinessApplicationDto,
 } from '@sanchuang-dev/benefit-contracts';
@@ -32,6 +33,15 @@ import {
   type BusinessApplication,
   type ConfiguredApplicationProduct,
 } from './applications.js';
+import {
+  ApplicationCredentialLimitError,
+  ApplicationCredentialNotFoundError,
+  countActiveApplicationCredentials,
+  issueApplicationCredential,
+  listApplicationCredentials,
+  revokeApplicationCredential,
+  type ApplicationCredential,
+} from './credentials.js';
 
 const MAX_PAGE_SIZE = 100;
 
@@ -47,13 +57,12 @@ const identifierSchema = z.string().trim().min(1).max(128);
 function toApplicationDto(
   application: BusinessApplication,
   configuredProductCount: number,
+  activeCredentialCount: number,
 ): BusinessApplicationDto {
   return {
     ...application,
     configuredProductCount,
-    // Configuration is not runtime authorization in this slice. Fixed false so
-    // no client can render a stored allowlist as effective machine permission.
-    runtimeAuthorizationEnforced: false,
+    activeCredentialCount,
   };
 }
 
@@ -64,6 +73,16 @@ function toProductDto(product: ConfiguredApplicationProduct): ApplicationProduct
     name: product.name,
     status: product.status,
     configuredAt: product.configuredAt,
+  };
+}
+
+/** Allowlisted credential facts: status and timestamps, never a digest or secret. */
+function toCredentialDto(credential: ApplicationCredential): ApplicationCredentialDto {
+  return {
+    id: credential.id,
+    status: credential.status,
+    issuedAt: credential.issuedAt,
+    revokedAt: credential.revokedAt,
   };
 }
 
@@ -107,18 +126,34 @@ function handleApplicationError(c: Context<AppEnv>, error: unknown) {
   if (error instanceof ApplicationInputError) {
     return c.json(apiError('INVALID_REQUEST', error.message), 400, NO_STORE_HEADERS);
   }
+  if (error instanceof ApplicationCredentialNotFoundError) {
+    return c.json(
+      apiError('APPLICATION_CREDENTIAL_NOT_FOUND', '服务凭证不存在'),
+      404,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof ApplicationCredentialLimitError) {
+    return c.json(
+      apiError('APPLICATION_CREDENTIAL_LIMIT_REACHED', error.message),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
   throw error;
 }
 
 /**
- * Downstream application registration and product-entitlement configuration
- * (BHB-014-A).
+ * Downstream application registry, product entitlement and machine credentials
+ * (BHB-014-A/B).
  *
  * Reads accept any valid admin session; every write additionally requires the
  * `admin` role and the global CSRF gate. Responses are `no-store` and expose
- * only allowlisted configuration DTOs. This router never reads or writes
- * `BENEFIT_ORDER_CLIENTS_JSON`, never issues a token, and never enforces a
- * stored allowlist on the machine order API; runtime binding is BHB-014-B.
+ * only allowlisted configuration DTOs. Issued secrets appear once in the issue
+ * response and are never persisted, logged or readable again.
+ *
+ * Registered applications are enforced by the machine order API: a disabled
+ * application or a product outside the allowlist cannot create a new order.
  */
 export function createApplicationRoutes(deps: {
   db: AppDatabase;
@@ -151,12 +186,16 @@ export function createApplicationRoutes(deps: {
     return c.json(
       {
         applications: result.applications.map((row) =>
-          toApplicationDto(row.application, row.configuredProductCount),
+          toApplicationDto(
+            row.application,
+            row.configuredProductCount,
+            row.activeCredentialCount,
+          ),
         ),
         page: parsed.data.page,
         pageSize: parsed.data.pageSize,
         total: result.total,
-        runtimeAuthorizationEnforced: false,
+        runtimeAuthorizationEnforced: true,
       },
       200,
       NO_STORE_HEADERS,
@@ -174,11 +213,13 @@ export function createApplicationRoutes(deps: {
       return c.json(apiError('APPLICATION_NOT_FOUND', '应用不存在'), 404, NO_STORE_HEADERS);
     }
     const products = listApplicationProducts(db, application.id);
+    const credentials = listApplicationCredentials(db, application.id);
     return c.json(
       {
-        application: toApplicationDto(application, products.length),
+        application: toApplicationDto(application, products.length, activeCount(credentials)),
         products: products.map(toProductDto),
-        runtimeAuthorizationEnforced: false,
+        credentials: credentials.map(toCredentialDto),
+        runtimeAuthorizationEnforced: true,
       },
       200,
       NO_STORE_HEADERS,
@@ -205,7 +246,7 @@ export function createApplicationRoutes(deps: {
         actorAccountId: c.get('admin').id,
       });
       return c.json(
-        { application: toApplicationDto(application, 0) },
+        { application: toApplicationDto(application, 0, 0) },
         201,
         NO_STORE_HEADERS,
       );
@@ -236,7 +277,13 @@ export function createApplicationRoutes(deps: {
     try {
       const application = updateApplication(db, id.data, version, changes, c.get('admin').id);
       return c.json(
-        { application: toApplicationDto(application, countProducts(db, application.id)) },
+        {
+          application: toApplicationDto(
+            application,
+            countProducts(db, application.id),
+            countActiveApplicationCredentials(db, application.id),
+          ),
+        },
         200,
         NO_STORE_HEADERS,
       );
@@ -272,7 +319,13 @@ export function createApplicationRoutes(deps: {
         c.get('admin').id,
       );
       return c.json(
-        { application: toApplicationDto(application, countProducts(db, application.id)) },
+        {
+          application: toApplicationDto(
+            application,
+            countProducts(db, application.id),
+            countActiveApplicationCredentials(db, application.id),
+          ),
+        },
         200,
         NO_STORE_HEADERS,
       );
@@ -313,13 +366,62 @@ export function createApplicationRoutes(deps: {
       const products = listApplicationProducts(db, application.id);
       return c.json(
         {
-          application: toApplicationDto(application, products.length),
+          application: toApplicationDto(
+            application,
+            products.length,
+            countActiveApplicationCredentials(db, application.id),
+          ),
           products: products.map(toProductDto),
-          runtimeAuthorizationEnforced: false,
+          credentials: listApplicationCredentials(db, application.id).map(toCredentialDto),
+          runtimeAuthorizationEnforced: true,
         },
         200,
         NO_STORE_HEADERS,
       );
+    } catch (error) {
+      return handleApplicationError(c, error);
+    }
+  });
+
+  /**
+   * Issues one additional machine credential. The response is the only place the
+   * raw Bearer token ever appears; the database keeps its SHA-256 digest only.
+   * Rotation is deliberately two operator steps (issue, then revoke the old one)
+   * so the caller can switch over without an outage.
+   */
+  router.post('/:id/credentials', requireAdmin, (c) => {
+    const id = identifierSchema.safeParse(c.req.param('id'));
+    if (!id.success) {
+      return c.json(invalidRequest('应用 ID 不正确', ['id']), 400, NO_STORE_HEADERS);
+    }
+
+    try {
+      const issued = issueApplicationCredential(db, id.data, c.get('admin').id);
+      return c.json(
+        { credential: toCredentialDto(issued.credential), secret: issued.secret },
+        201,
+        NO_STORE_HEADERS,
+      );
+    } catch (error) {
+      return handleApplicationError(c, error);
+    }
+  });
+
+  router.post('/:id/credentials/:credentialId/revoke', requireAdmin, (c) => {
+    const id = identifierSchema.safeParse(c.req.param('id'));
+    const credentialId = identifierSchema.safeParse(c.req.param('credentialId'));
+    if (!id.success || !credentialId.success) {
+      return c.json(invalidRequest('服务凭证 ID 不正确', ['credentialId']), 400, NO_STORE_HEADERS);
+    }
+
+    try {
+      const credential = revokeApplicationCredential(
+        db,
+        id.data,
+        credentialId.data,
+        c.get('admin').id,
+      );
+      return c.json({ credential: toCredentialDto(credential) }, 200, NO_STORE_HEADERS);
     } catch (error) {
       return handleApplicationError(c, error);
     }
@@ -330,4 +432,9 @@ export function createApplicationRoutes(deps: {
 
 function countProducts(db: AppDatabase, applicationId: string): number {
   return listApplicationProducts(db, applicationId).length;
+}
+
+
+function activeCount(credentials: readonly ApplicationCredential[]): number {
+  return credentials.filter((credential) => credential.status === 'active').length;
 }

@@ -70,6 +70,8 @@ describe('database migrations', () => {
     expect(names).toContain('business_applications');
     expect(names).toContain('business_application_products');
     expect(names).toContain('business_application_events');
+    expect(names).toContain('business_application_credentials');
+    expect(names).toContain('business_application_credential_events');
   });
 
   it('upgrades a pre-0007 database additively and keeps existing rows', () => {
@@ -99,5 +101,38 @@ describe('database migrations', () => {
         .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'business_applications'")
         .get(),
     ).toEqual({ name: 'business_applications' });
+  });
+
+  it('upgrades a pre-0008 database additively and keeps registered applications', () => {
+    server = new TestServer();
+    server.database.sqlite.exec(`
+      INSERT INTO business_applications
+        (id, business_source, name, note, status, version, created_at, updated_at)
+      VALUES ('legacy-app', 'local-life', '本地生活', '', 'enabled', 1, 1, 1);
+      DROP TRIGGER IF EXISTS trg_business_application_credentials_binding_immutable;
+      DROP TRIGGER IF EXISTS trg_business_application_credentials_revoked_immutable;
+      DROP TRIGGER IF EXISTS trg_business_application_credentials_no_delete;
+      DROP TABLE IF EXISTS business_application_credential_events;
+      DROP TABLE IF EXISTS business_application_credentials;
+      DELETE FROM schema_migrations WHERE id = '0008_business_application_credentials';
+    `);
+
+    expect(runMigrations(server.database.sqlite)).toEqual([
+      '0008_business_application_credentials',
+    ]);
+    expect(runMigrations(server.database.sqlite)).toEqual([]);
+
+    expect(
+      server.database.sqlite
+        .prepare('SELECT business_source FROM business_applications WHERE id = ?')
+        .get('legacy-app'),
+    ).toEqual({ business_source: 'local-life' });
+    expect(
+      server.database.sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'business_application_credentials'",
+        )
+        .get(),
+    ).toEqual({ name: 'business_application_credentials' });
   });
 });

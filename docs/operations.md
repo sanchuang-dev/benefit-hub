@@ -89,9 +89,17 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 | `COOKIE_SECURE` | `NODE_ENV=production` 时为 true | 生产必须保持 true；本地 http 联调才可关闭 |
 | `TRUST_PROXY` | `false`（compose 为 `true`） | 仅当宿主机 Caddy 在容器前时才信任 `X-Forwarded-For` |
 | `YANGMAO_INRICE_BASE_URL` / `YANGMAO_INRICE_APP_KEY` / `YANGMAO_INRICE_APP_SECRET` | 未设置 | 可选的上力 D 商品只读凭证，三项必须同时由服务器侧安全注入；缺失时只读入口明确返回 503，不回退默认值或假数据 |
-| `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 可选的下游业务订单服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。缺失时订单接口返回 503 且零写入；格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
+| `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 兼容用的旧版下游服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。已登记应用的 `businessSource` 即使仍用环境凭证，也必须服从该应用的启停与商品授权；未登记来源保持兼容。格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
 
 登录限速（同一账号 15 分钟 5 次失败、同一来源 15 分钟 20 次）保存在进程内存，重启只会解除锁定，不会放行凭据。
+
+### 下游应用机器凭证（2026-10-28）
+
+- 凭证由管理员在 **下游应用 → 详情 → 机器凭证** 中签发，服务端随机生成并在响应中**只显示一次**；SQLite（migration `0008_business_application_credentials`）只保存 SHA-256 摘要、应用绑定、签发/撤销人与时间，以及最小审计。数据库、日志和任何读取接口都不能还原原文。
+- 同一应用最多保留 5 个有效凭证，便于轮换：**先签发新凭证并更新调用方服务器配置 → 验证可用 → 再撤销旧凭证**。撤销立即生效且不可恢复；重复撤销是幂等的。
+- 材料丢失（未保存原始密钥）时无法找回，只能签发新凭证并撤销旧凭证；不要尝试从数据库或备份中"恢复"明文。
+- 应用被停用后，该 `businessSource` 的所有机器调用返回 403 `APPLICATION_DISABLED`（包括旧环境凭证）；数据库中已有订单保留，管理员仍可在后台查看。重新启用并保持凭证/商品授权有效后可继续调用。
+- 应用页签发的凭证与 `BENEFIT_ORDER_CLIENTS_JSON` 环境凭证是两种来源；已登记来源受同一套启停/商品授权约束，环境变量不会成为绕过数据库配置的后门。
 
 ### 上力 D 商品只读凭证注入（2026-10-28）
 

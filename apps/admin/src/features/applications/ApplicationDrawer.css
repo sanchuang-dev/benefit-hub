@@ -16,6 +16,15 @@
   margin-top: 20px;
 }
 
+.application-credentials-section {
+  margin-top: 20px;
+}
+
+.application-secret-value {
+  margin-bottom: 0;
+  word-break: break-all;
+}
+
 .application-selected-summary {
   display: flex;
   flex-direction: column;

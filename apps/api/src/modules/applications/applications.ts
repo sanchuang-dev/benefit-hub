@@ -3,6 +3,7 @@ import { and, asc, count, desc, eq, inArray, notInArray, or, sql } from 'drizzle
 import type { ApplicationStatus } from '@sanchuang-dev/benefit-contracts';
 import type { AppDatabase } from '../../db/client.js';
 import {
+  businessApplicationCredentials,
   businessApplicationEvents,
   businessApplicationProducts,
   businessApplications,
@@ -108,8 +109,9 @@ export interface CreateApplicationInput {
 
 /**
  * Registers one application. The normalized source is the unique identity; the
- * insert and its audit fact share a transaction. No token is minted and no
- * machine caller becomes authorized by this row.
+ * insert and its audit fact share a transaction. Creation mints no credential:
+ * a machine caller becomes authorized only when an admin issues a credential and
+ * the application stays enabled with the product on its allowlist.
  */
 export function createApplication(
   db: AppDatabase,
@@ -254,7 +256,8 @@ export function setApplicationStatus(
  * target. A product that is currently disabled may stay configured (it remains
  * inspectable and can be re-enabled), but it cannot be newly added. The whole
  * update shares one local transaction with its audit fact; no external call is
- * made and the configured set is not enforced on any machine caller yet.
+ * made. The stored set is the runtime allowlist for new machine orders of this
+ * `businessSource`; already created orders keep their frozen product/mapping.
  */
 export function replaceApplicationProducts(
   db: AppDatabase,
@@ -368,6 +371,25 @@ export function getApplication(db: AppDatabase, id: string): BusinessApplication
   return row ? toApplication(row) : null;
 }
 
+/**
+ * Looks up the registered application that owns a normalized business source.
+ * The machine order path uses this to decide whether a source is governed by
+ * operator configuration (including legacy environment credentials bound to the
+ * same source), so it deliberately returns the stored status unchanged.
+ */
+export function findApplicationBySource(
+  db: AppDatabase,
+  businessSource: string,
+): BusinessApplication | null {
+  const row = db
+    .select()
+    .from(businessApplications)
+    .where(eq(businessApplications.businessSource, normalizeBusinessSource(businessSource)))
+    .limit(1)
+    .get();
+  return row ? toApplication(row) : null;
+}
+
 export function listApplicationProducts(
   db: AppDatabase,
   applicationId: string,
@@ -405,6 +427,7 @@ export interface ApplicationListQuery {
 export interface ApplicationListRow {
   application: BusinessApplication;
   configuredProductCount: number;
+  activeCredentialCount: number;
 }
 
 export interface ApplicationListResult {
@@ -436,9 +459,19 @@ export function listApplications(
   const total =
     db.select({ value: count() }).from(businessApplications).where(where).get()?.value ?? 0;
 
+  // Correlated subqueries must qualify the outer id explicitly: an unqualified
+  // `id` would bind to the subquery's own table, and
+  // `business_application_credentials` has an `id` column.
+  const outerApplicationId = sql.raw('business_applications.id');
   const configuredProductCount = sql<number>`(
     SELECT COUNT(*) FROM ${businessApplicationProducts}
-    WHERE ${businessApplicationProducts.applicationId} = ${businessApplications.id}
+    WHERE ${businessApplicationProducts.applicationId} = ${outerApplicationId}
+  )`;
+
+  const activeCredentialCount = sql<number>`(
+    SELECT COUNT(*) FROM ${businessApplicationCredentials}
+    WHERE ${businessApplicationCredentials.applicationId} = ${outerApplicationId}
+      AND ${businessApplicationCredentials.revokedAt} IS NULL
   )`;
 
   const rows = db
@@ -452,6 +485,7 @@ export function listApplications(
       createdAt: businessApplications.createdAt,
       updatedAt: businessApplications.updatedAt,
       configuredProductCount,
+      activeCredentialCount,
     })
     .from(businessApplications)
     .where(where)
@@ -464,6 +498,7 @@ export function listApplications(
     applications: rows.map((row) => ({
       application: toApplication(row),
       configuredProductCount: Number(row.configuredProductCount),
+      activeCredentialCount: Number(row.activeCredentialCount),
     })),
     total,
   };

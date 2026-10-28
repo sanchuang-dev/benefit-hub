@@ -217,7 +217,7 @@ describe('login flow', () => {
           page: 1,
           pageSize: 20,
           total: 0,
-          runtimeAuthorizationEnforced: false,
+          runtimeAuthorizationEnforced: true,
         });
       }
       if (url === '/api/v1/system/status') {
@@ -241,7 +241,7 @@ describe('login flow', () => {
     expect(await screen.findByRole('heading', { name: '下游应用' })).toBeTruthy();
     expect(
       await screen.findByText(
-        '此处为应用登记与商品授权配置，尚未接入运行时鉴权；已登记/启用 ≠ 已取得可调用凭证。',
+        '运行时授权已生效：应用启停、凭证状态与商品授权都会约束真实机器调用。',
       ),
     ).toBeTruthy();
     expect(screen.getByRole('tab', { name: /下游应用/ })).toBeTruthy();

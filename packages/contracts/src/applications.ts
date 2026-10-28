@@ -1,12 +1,13 @@
 /**
- * Wire contract for the downstream application registry (BHB-014-A).
+ * Wire contract for the downstream application registry (BHB-014-A) and its
+ * machine credentials / runtime authorization (BHB-014-B).
  *
- * This surface is the *configuration plane* only: an operator registers a
- * business application identity and records which internal products it is
- * intended to be allowed to use. It deliberately contains no credential,
- * token, secret or runtime authorization fact. A registered and enabled
- * application with a configured product allowlist is still not a callable
- * machine identity; runtime binding and enforcement are BHB-014-B.
+ * Operators register a business application identity, configure the internal
+ * products it may order, and issue its machine Bearer credential. The stored
+ * allowlist and enabled state are enforced on every `POST /api/v1/business/orders`
+ * for that `businessSource`; a registered application is no longer merely
+ * configuration. No read model or list ever contains a raw credential: the full
+ * bearer token is returned by the issue operation exactly once.
  */
 
 import { z } from 'zod';
@@ -28,9 +29,12 @@ const timestampSchema = z.number().int().nonnegative();
 /**
  * Read model of one registered application. `businessSource` is the stable
  * normalized identity; it matches the existing downstream order source grammar
- * because a future runtime binding must not need a second identity namespace.
- * `runtimeAuthorizationEnforced` is fixed `false` for this slice so a client
- * cannot present stored configuration as effective machine permission.
+ * so machine authentication and registration share one identity namespace.
+ *
+ * `activeCredentialCount` counts credentials that have been issued and not
+ * revoked. It is not the secret and never a substitute for it: effective machine
+ * access additionally requires `status === 'enabled'`, a matching allowlist on
+ * order creation, and the caller actually holding a live token.
  */
 export const businessApplicationSchema = z
   .object({
@@ -41,12 +45,53 @@ export const businessApplicationSchema = z
     status: applicationStatusSchema,
     version: versionNumberSchema,
     configuredProductCount: z.number().int().nonnegative(),
-    runtimeAuthorizationEnforced: z.literal(false),
+    activeCredentialCount: z.number().int().nonnegative(),
     createdAt: timestampSchema,
     updatedAt: timestampSchema,
   })
   .strict();
 export type BusinessApplicationDto = z.infer<typeof businessApplicationSchema>;
+
+/**
+ * Non-sensitive state of one issued machine credential. The database stores only
+ * a SHA-256 digest of the bearer token, so no read path can return the secret;
+ * `status` and the timestamps are the complete operator-visible fact.
+ */
+export const APPLICATION_CREDENTIAL_STATUSES = ['active', 'revoked'] as const;
+export type ApplicationCredentialStatus = (typeof APPLICATION_CREDENTIAL_STATUSES)[number];
+export const applicationCredentialStatusSchema = z.enum(APPLICATION_CREDENTIAL_STATUSES);
+
+export const applicationCredentialSchema = z
+  .object({
+    id: identifierSchema,
+    status: applicationCredentialStatusSchema,
+    issuedAt: timestampSchema,
+    revokedAt: timestampSchema.nullable(),
+  })
+  .strict();
+export type ApplicationCredentialDto = z.infer<typeof applicationCredentialSchema>;
+
+/**
+ * The one and only response that carries a raw bearer token. `secret` must be
+ * shown once in the issuing admin's browser session and never persisted,
+ * logged, cached or re-derivable.
+ */
+export const issueApplicationCredentialResponseSchema = z
+  .object({
+    credential: applicationCredentialSchema,
+    secret: z.string().min(32).max(512),
+  })
+  .strict();
+export type IssueApplicationCredentialResponse = z.infer<
+  typeof issueApplicationCredentialResponseSchema
+>;
+
+export const revokeApplicationCredentialResponseSchema = z
+  .object({ credential: applicationCredentialSchema })
+  .strict();
+export type RevokeApplicationCredentialResponse = z.infer<
+  typeof revokeApplicationCredentialResponseSchema
+>;
 
 /**
  * One internal product currently recorded as configured for an application.
@@ -70,7 +115,8 @@ export const applicationListResponseSchema = z
     page: z.number().int().min(1),
     pageSize: z.number().int().min(1),
     total: z.number().int().nonnegative(),
-    runtimeAuthorizationEnforced: z.literal(false),
+    /** The server enforces registered application state on the machine order API. */
+    runtimeAuthorizationEnforced: z.literal(true),
   })
   .strict();
 export type ApplicationListResponse = z.infer<typeof applicationListResponseSchema>;
@@ -79,7 +125,8 @@ export const applicationDetailResponseSchema = z
   .object({
     application: businessApplicationSchema,
     products: z.array(applicationProductSchema),
-    runtimeAuthorizationEnforced: z.literal(false),
+    credentials: z.array(applicationCredentialSchema),
+    runtimeAuthorizationEnforced: z.literal(true),
   })
   .strict();
 export type ApplicationDetailResponse = z.infer<typeof applicationDetailResponseSchema>;
@@ -162,6 +209,8 @@ export const APPLICATION_ERROR_CODES = [
   'APPLICATION_SOURCE_CONFLICT',
   'APPLICATION_VERSION_CONFLICT',
   'APPLICATION_UNKNOWN_PRODUCT',
+  'APPLICATION_CREDENTIAL_NOT_FOUND',
+  'APPLICATION_CREDENTIAL_LIMIT_REACHED',
   'PRODUCT_NOT_ACTIVE',
 ] as const;
 export type ApplicationErrorCode = (typeof APPLICATION_ERROR_CODES)[number];

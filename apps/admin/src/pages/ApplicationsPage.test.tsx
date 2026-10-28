@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type {
+  ApplicationCredential,
   ApplicationDetailResponse,
   ApplicationListResponse,
   ApplicationProduct,
@@ -48,7 +49,7 @@ function application(
     status: 'enabled',
     version: 1,
     configuredProductCount: 0,
-    runtimeAuthorizationEnforced: false,
+    activeCredentialCount: 0,
     createdAt: NOW,
     updatedAt: NOW,
     ...overrides,
@@ -65,7 +66,7 @@ function listResponse(
     page,
     pageSize,
     total: applications.length,
-    runtimeAuthorizationEnforced: false,
+    runtimeAuthorizationEnforced: true,
   };
   return jsonResponse(200, body);
 }
@@ -100,11 +101,17 @@ function productListResponse(products: CatalogProduct[]): Response {
 function detailResponse(
   app: BusinessApplication,
   products: ApplicationProduct[],
+  credentials: ApplicationCredential[] = [],
 ): Response {
   const body: ApplicationDetailResponse = {
-    application: { ...app, configuredProductCount: products.length },
+    application: {
+      ...app,
+      configuredProductCount: products.length,
+      activeCredentialCount: credentials.filter((item) => item.status === 'active').length,
+    },
     products,
-    runtimeAuthorizationEnforced: false,
+    credentials,
+    runtimeAuthorizationEnforced: true,
   };
   return jsonResponse(200, body);
 }
@@ -206,15 +213,12 @@ describe('downstream application list', () => {
     expect(screen.getByText('local-life')).toBeTruthy();
     expect(screen.getByText('card-doctor')).toBeTruthy();
     expect(screen.getByText('2 个')).toBeTruthy();
-    expect(screen.getAllByText('运行时鉴权未接入')).toHaveLength(2);
+    expect(screen.getByText('未签发有效凭证')).toBeTruthy();
+    expect(screen.getByText('已停用 · 机器调用被拒')).toBeTruthy();
     expect(
-      screen.getByText(
-        '此处为应用登记与商品授权配置，尚未接入运行时鉴权；已登记/启用 ≠ 已取得可调用凭证。',
-      ),
+      screen.getByText('运行时授权已生效：应用启停、凭证状态与商品授权都会约束真实机器调用。'),
     ).toBeTruthy();
-    expect(
-      screen.getByText((content) => content.includes('BENEFIT_ORDER_CLIENTS_JSON')),
-    ).toBeTruthy();
+    expect(screen.queryByText('运行时鉴权未接入')).toBeNull();
 
     fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '本地' } });
     fireEvent.click(findButtonText('查询'));
@@ -312,13 +316,15 @@ describe('downstream application list', () => {
     expect(await screen.findByText('下游应用详情', undefined, { timeout: 5000 })).toBeTruthy();
     expect(
       screen.getByText(
-        '只读身份可以查看应用与商品配置，但不能保存、启停或修改授权；服务端同时拒绝越权写入。',
+        '只读身份可以查看应用、商品授权与凭证状态，但不能保存、启停、签发或撤销凭证；服务端同时拒绝越权写入。',
       ),
     ).toBeTruthy();
     expect((screen.getByLabelText('应用名称') as HTMLInputElement).disabled).toBe(true);
     expect(await screen.findByText('APP-A')).toBeTruthy();
+    expect(screen.getByText('尚未签发服务凭证')).toBeTruthy();
     expect(screen.queryByText((content) => content.replace(/\s/g, '') === '保存')).toBeNull();
     expect(screen.queryByText('停用应用')).toBeNull();
+    expect(screen.queryByText('签发新凭证')).toBeNull();
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 });
@@ -475,11 +481,85 @@ describe('application writes', () => {
     fireEvent.click(findButtonText('保存'));
 
     expect(
-      await screen.findByText('应用配置已保存；机器调用授权仍未接入', undefined, { timeout: 5000 }),
+      await screen.findByText('应用配置已保存；已启用的应用将按商品授权校验机器调用', undefined, {
+        timeout: 5000,
+      }),
     ).toBeTruthy();
     expect(savedBody).toEqual({ version: 1, productIds: ['p-a', 'p-b'] });
     expect(catalogRequests.length).toBeGreaterThan(0);
     expect(catalogRequests.every((params) => Number(params.get('pageSize')) <= 10)).toBe(true);
+  });
+
+  it('issues a one-time secret in the browser without persisting it, then revokes it', {
+    timeout: 60_000,
+  }, async () => {
+    const localLife = application({
+      id: 'app-1',
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    const SECRET = 'bhk_fictional-once-only-secret-000000000001';
+    let credentials: ApplicationCredential[] = [];
+
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url === '/api/v1/auth/csrf') return jsonResponse(200, { csrfToken: 'csrf-token' });
+      if (url === '/api/v1/applications/app-1') return detailResponse(localLife, [], credentials);
+      if (url === '/api/v1/applications/app-1/credentials' && init?.method === 'POST') {
+        credentials = [{ id: 'cred-1', status: 'active', issuedAt: NOW, revokedAt: null }];
+        return jsonResponse(201, { credential: credentials[0], secret: SECRET });
+      }
+      if (
+        url === '/api/v1/applications/app-1/credentials/cred-1/revoke' &&
+        init?.method === 'POST'
+      ) {
+        credentials = [
+          { id: 'cred-1', status: 'revoked', issuedAt: NOW, revokedAt: NOW + 1000 },
+        ];
+        return jsonResponse(200, { credential: credentials[0] });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) return productListResponse([]);
+      if (url.startsWith('/api/v1/applications?')) return listResponse([localLife]);
+      return undefined;
+    });
+
+    renderRoutes('/applications');
+    expect(await screen.findByText('本地生活', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('编辑'));
+    expect(await screen.findByText('尚未签发服务凭证', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(findButtonText('签发新凭证'));
+    expect(
+      await screen.findByText('服务凭证（仅显示一次）', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(screen.getByText(SECRET)).toBeTruthy();
+    expect(
+      screen.getByText('请立即保存到调用方的服务器端配置'),
+    ).toBeTruthy();
+
+    // The raw secret must not be persisted anywhere in the browser.
+    expect(window.localStorage.length).toBe(0);
+    expect(window.sessionStorage.length).toBe(0);
+    expect(document.cookie).not.toContain(SECRET);
+    const requestUrls = (fetchMock.mock.calls as [string, RequestInit | undefined][]).map(
+      ([url]) => url,
+    );
+    expect(requestUrls.every((url) => !url.includes(SECRET))).toBe(true);
+
+    // Closing the one-time view removes the secret from the DOM.
+    fireEvent.click(findButtonText('我已保存'));
+    await waitFor(() => expect(screen.queryByText(SECRET)).toBeNull());
+    expect(screen.queryByText('服务凭证（仅显示一次）')).toBeNull();
+    expect(await screen.findByText('有效')).toBeTruthy();
+
+    // Revocation is a real version-free write and updates the visible state.
+    fireEvent.click(findButtonText('撤销'));
+    fireEvent.click(await findButtonTextAsync('确认撤销'));
+    expect(
+      await screen.findByText('服务凭证已撤销；后续调用将被拒绝', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+    expect(await screen.findByText('已撤销')).toBeTruthy();
+    expect(screen.queryByText('撤销')).toBeNull();
   });
 
   it('toggles persisted status from the list without claiming a credential change', { timeout: 60_000 }, async () => {
@@ -510,7 +590,11 @@ describe('application writes', () => {
     fireEvent.click(await findButtonTextAsync('确认'));
 
     expect(
-      await screen.findByText('应用已停用（配置保留）', undefined, { timeout: 5000 }),
+      await screen.findByText(
+        '应用已停用；该来源的机器调用立即被拒绝（订单与配置保留）',
+        undefined,
+        { timeout: 5000 },
+      ),
     ).toBeTruthy();
     expect(statusBody).toEqual({ version: 1 });
     await waitFor(() => expect(screen.getByText('已停用')).toBeTruthy());

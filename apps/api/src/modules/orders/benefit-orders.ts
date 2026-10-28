@@ -94,8 +94,14 @@ export class OrderIntentConflictError extends Error {}
 export class OrderVersionConflictError extends Error {}
 export class OrderNotFoundError extends Error {}
 export class OrderProductNotFoundError extends Error {}
-/** The internal product exists but is disabled, so no new order may start. */
+/** The product exists but is disabled, so no new order may start. */
 export class OrderProductNotActiveError extends Error {}
+/** The registered application has been disabled; no machine order may be created. */
+export class OrderApplicationDisabledError extends Error {}
+/** The product is not on the registered application's configured allowlist. */
+export class OrderProductNotAuthorizedError extends Error {}
+/** A previously authenticated application credential was revoked before order creation. */
+export class OrderCredentialRevokedError extends Error {}
 /** The product has no current active supplier mapping version to freeze. */
 export class OrderMappingUnavailableError extends Error {}
 
