@@ -6,6 +6,7 @@ import {
   Empty,
   Form,
   Input,
+  Pagination,
   Row,
   Segmented,
   Select,
@@ -386,14 +387,32 @@ export function CatalogPage() {
             }}
           />
         ) : (
-          <InternalProductCards
-            products={products}
-            isAdmin={Boolean(isAdmin)}
-            loading={listQuery.isPending || listQuery.isFetching}
-            emptyText={emptyText}
-            onView={(id) => setDrawer({ mode: 'view', productId: id })}
-            onEdit={(id) => setDrawer({ mode: 'edit', productId: id })}
-          />
+          <>
+            <InternalProductCards
+              products={products}
+              isAdmin={Boolean(isAdmin)}
+              loading={listQuery.isPending || listQuery.isFetching}
+              emptyText={emptyText}
+              onView={(id) => setDrawer({ mode: 'view', productId: id })}
+              onEdit={(id) => setDrawer({ mode: 'edit', productId: id })}
+            />
+            {(listQuery.data?.total ?? 0) > 0 ? (
+              <div className="catalog-card-pagination">
+                <Pagination
+                  current={page}
+                  pageSize={pageSize}
+                  total={listQuery.data?.total ?? 0}
+                  pageSizeOptions={PAGE_SIZE_OPTIONS}
+                  showSizeChanger
+                  showTotal={(total) => `共 ${total} 条`}
+                  onChange={(nextPage, nextPageSize) => {
+                    setPage(nextPage);
+                    setPageSize(nextPageSize);
+                  }}
+                />
+              </div>
+            ) : null}
+          </>
         )}
       </section>
     </Space>
