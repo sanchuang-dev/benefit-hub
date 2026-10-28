@@ -14,7 +14,8 @@ import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useSystemStatusQuery } from '../features/auth/use-auth';
+import { useSessionQuery, useSystemStatusQuery } from '../features/auth/use-auth';
+import { SupplierConnectionDrawer } from '../features/suppliers/SupplierConnectionDrawer';
 import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel';
 import { useSupplierProductsQuery } from '../features/catalog/use-catalog';
 import { useSupplierQuery, useSuppliersQuery, type SupplierSummary } from '../features/suppliers/use-suppliers';
@@ -134,6 +135,8 @@ export function SupplierDetailPage() {
   const navigate = useNavigate();
   const [tab, setTab] = useState('overview');
   const [probeRequested, setProbeRequested] = useState(false);
+  const [editorOpen, setEditorOpen] = useState(false);
+  const session = useSessionQuery();
   const supplier = useSupplierQuery('yangmao');
   const catalog = useSupplierProductsQuery({ enabled: probeRequested || tab === 'catalog' });
   const system = useSystemStatusQuery();
@@ -203,7 +206,7 @@ export function SupplierDetailPage() {
             type="warning"
             showIcon
             title="服务器未配置上力只读凭证"
-            description="当前运行环境没有完整的 D 商品查询配置。此前的测试 Key 不会被复制进浏览器或代码；只有服务端安全注入后才能执行实际读取。"
+            description="上力 D 商品读取尚未配置。管理员可在「接入与规则」中保存接口地址和测试凭证，保存后由服务器从数据库读取。"
           />
         ) : !hasReadResult ? (
           <Alert
@@ -237,7 +240,10 @@ export function SupplierDetailPage() {
 
   const connection = (
     <Space orientation="vertical" size={16} className="page-stack">
-      <Card title="接入方式与已知限制">
+      <Card
+        title="接入方式与已知限制"
+        extra={session.data?.admin.role === 'admin' ? <Button type="primary" onClick={() => setEditorOpen(true)}>编辑接入配置</Button> : null}
+      >
         <Descriptions
           column={1}
           size="small"
@@ -246,7 +252,7 @@ export function SupplierDetailPage() {
             { key: 'list', label: '商品列表', children: <Text code>GET /api/v1/catalog/supplier-products</Text> },
             { key: 'detail', label: '商品详情', children: <Text code>GET /api/v1/catalog/supplier-products/:productCode</Text> },
             { key: 'credentials', label: '测试凭证状态', children: supplierInfo ? supplierConfigLabel(supplierInfo) : '待核实' },
-            { key: 'secrets', label: '凭证处理', children: '服务器专用环境配置；页面不读取、编辑或回显 AppKey/AppSecret' },
+            { key: 'secrets', label: '凭证处理', children: '管理员可修改配置；凭证加密保存于平台数据库，客户端不会读取或回显旧密钥' },
             { key: 'quota', label: '额度分类', children: '礼包份数、权益余额（人民币）分别管理；暂无已证实的商户余额读取合同' },
           ]}
         />
@@ -292,6 +298,7 @@ export function SupplierDetailPage() {
           {supplierInfo ? supplierConfigLabel(supplierInfo) : <Tag>档案加载中</Tag>}
           {probeStatus}
         </Space>
+        <SupplierConnectionDrawer open={editorOpen} onClose={() => setEditorOpen(false)} />
         <Tabs
           activeKey={tab}
           onChange={setTab}
