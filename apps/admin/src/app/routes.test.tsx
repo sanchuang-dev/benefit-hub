@@ -170,6 +170,36 @@ describe('login flow', () => {
   }, 15_000);
 
 
+  it('keeps owned products and the supplier catalog in separate navigation workspaces', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      if (url.startsWith('/api/v1/catalog/supplier-products')) {
+        return jsonResponse(200, {
+          provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [],
+        });
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog');
+    expect(await screen.findByRole('menuitem', { name: '权益商品' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('menuitem', { name: '供货目录' }));
+
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+    expect(screen.getByRole('tab', { name: '供货目录' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '供应商商品' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '权益商品' }));
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(screen.getByRole('tab', { name: '权益商品' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '供货目录' }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+  }, 20_000);
+
   it('opens each platform destination from grouped navigation with its real capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
