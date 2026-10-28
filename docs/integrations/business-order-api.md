@@ -1,6 +1,6 @@
 # Benefit Hub · 下游业务订单 HTTP 入站（BHB-012-A）
 
-> **状态（2026-10-28）：仅本地业务意图。** 本接口把已合入的订单 Repository 暴露给三创下游业务（如本地生活、卡博士）做**接单与查询**；新订单固定为 `pending`，不调用上力/羊毛供应商，不扣额度、不派发、不产生任何上游 HTTP 副作用。`/api/v1/system/status` 的 `vendorFulfillmentEnabled` 仍为 `false`。Draft PR 合入或本文件存在都不代表真实履约上线。
+> **状态（2026-10-28）：仅本地业务意图。** 本接口把已合入的订单 Repository 暴露给三创下游业务（如本地生活、卡博士）做**接单与查询**；新订单固定为 `pending`，不调用上力/羊毛供应商，不扣额度、不派发、不产生任何上游 HTTP 副作用。平台不再提供始终为 false 的虚构履约开关字段。Draft PR 合入或本文件存在都不代表真实履约上线。
 
 范围为机器对机器接口，与管理后台的人类 Cookie 登录是两套独立身份边界。实现归属 `apps/api/src/modules/orders/business-order-routes.ts`。
 
@@ -113,4 +113,4 @@ Base path：`/api/v1/business/orders`。所有响应都是 JSON 且带 `Cache-Co
 
 - 机器 `POST /api/v1/business/orders` 是全局 CSRF 的唯一窄豁免：该路径 (method+path) 自身必须通过 Bearer 鉴权；所有人类 Cookie 写接口（登录、商品、映射等）继续要求 `bh_csrf` 双重提交和同源 `Origin`。
 - 不要把令牌放入 URL、查询参数、前端 bundle、GitHub 普通变量或日志。
-- 该接口只承接本地业务意图。真实供应商派发/查单、扣额、重试、对账与运营 UI 属于后续独立卡片，需单独授权与验收。
+- 该接口只承接本地业务意图。真实供应商派发/查单、扣额、重试、对账与运营 UI 属于后续独立卡片，需要逐模式实现供应商合同、幂等、失败恢复与结果核实。

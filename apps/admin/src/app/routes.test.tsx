@@ -87,7 +87,6 @@ describe('login flow', () => {
         return jsonResponse(200, {
           service: 'benefit-hub',
           phase: 'auth-enabled',
-          vendorFulfillmentEnabled: false,
           adminEnabled: true,
           authenticationRequired: true,
         });
@@ -102,7 +101,7 @@ describe('login flow', () => {
     fireEvent.click(screen.getByRole('button', { name: '登 录' }));
 
     expect(await screen.findByRole('heading', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
-    expect(await screen.findByText('供应商履约保持禁用')).toBeTruthy();
+    expect(screen.queryByText('供应商履约保持禁用')).toBeNull();
     for (const label of ['总览', '商品管理', '供应商管理', '下游应用', '价值换算', '接口管理', '发放记录', '系统设置']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
@@ -148,7 +147,6 @@ describe('login flow', () => {
         return jsonResponse(200, {
           service: 'benefit-hub',
           phase: 'auth-enabled',
-          vendorFulfillmentEnabled: false,
           adminEnabled: true,
           authenticationRequired: true,
         });
@@ -180,7 +178,6 @@ describe('login flow', () => {
           key: 'yangmao',
           name: '上力',
           catalogRead: { supported: true, configured: false },
-          fulfillmentEnabled: false,
         }],
       });
       if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, { provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }] });
@@ -197,7 +194,6 @@ describe('login flow', () => {
         return jsonResponse(200, {
           service: 'benefit-hub',
           phase: 'auth-enabled',
-          vendorFulfillmentEnabled: false,
           adminEnabled: true,
           authenticationRequired: true,
         });
@@ -245,7 +241,6 @@ describe('login flow', () => {
         return jsonResponse(200, {
           service: 'benefit-hub',
           phase: 'auth-enabled',
-          vendorFulfillmentEnabled: false,
           adminEnabled: true,
           authenticationRequired: true,
         });

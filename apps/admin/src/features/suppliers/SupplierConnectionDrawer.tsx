@@ -118,7 +118,6 @@ export function SupplierConnectionDrawer({
       </Form>
       <Text type="secondary">
         密钥由服务端加密持久化，后续读取不需要重新输入。历史密钥不会在页面中回显。
-        保存配置只改变只读连接凭证，不启用供应商派发或扣额。
       </Text>
       {save.isError ? (
         <Alert

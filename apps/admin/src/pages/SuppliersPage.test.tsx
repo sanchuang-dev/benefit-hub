@@ -27,16 +27,15 @@ function stubFetch(catalog: Response, detail?: Response) {
       return respond(200, { admin: ADMIN, session: { expiresAt: Date.now() + 3_600_000 } });
     }
     if (url === '/api/v1/suppliers') {
-      return respond(200, { suppliers: [{ key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 }, fulfillmentEnabled: false }] });
+      return respond(200, { suppliers: [{ key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 } }] });
     }
     if (url === '/api/v1/suppliers/yangmao') {
-      return respond(200, { supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 }, fulfillmentEnabled: false } });
+      return respond(200, { supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 } } });
     }
     if (url === '/api/v1/system/status') {
       return respond(200, {
         service: 'benefit-hub',
         phase: 'auth-enabled',
-        vendorFulfillmentEnabled: false,
         adminEnabled: true,
         authenticationRequired: true,
       });

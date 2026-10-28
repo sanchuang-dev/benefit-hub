@@ -81,7 +81,7 @@ jobs:
             "curl -fsS --max-time 5 http://127.0.0.1:18080/healthz" |
             grep -q '"status":"ok"'
           curl -fsS --max-time 10 https://benefit.proto.3cgroup.cn/api/v1/system/status |
-            grep -q '"vendorFulfillmentEnabled":false'
+            grep -q '"adminEnabled":true'
           echo 'Exact deployment active; preview viewer persisted; runtime healthy.'
 
       - name: Real Chromium login, refresh, authorization, logout and error-feedback smoke

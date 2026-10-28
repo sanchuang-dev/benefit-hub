@@ -28,7 +28,7 @@ jobs:
         run: pnpm check
       - name: Build production Docker image
         run: docker build --tag benefit-hub:ci .
-      - name: Verify runtime health and disabled fulfillment
+      - name: Verify runtime health and system status
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +45,7 @@ jobs:
           test "$ready" = "1" || { docker logs benefit-hub-ci; exit 1; }
           grep -q '"status":"ok"' /tmp/benefit-health.json
           curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
-            grep -q '"vendorFulfillmentEnabled":false'
+            grep -q '"adminEnabled":true'
           curl --fail --silent http://127.0.0.1:18081/ |
             grep -q '<title>Benefit Hub'
 

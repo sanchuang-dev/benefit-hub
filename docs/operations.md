@@ -100,7 +100,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 - 开发测试只读 API 来源是 `https://dev-api.isunpow.com`；`https://dev-admin.isunpow.com` 的网页登录会话并不等于 D Open API 的 AppKey/AppSecret。
 - 若使用 Docker Compose 主机私有 `.env`（部署目录 `/srv/benefit-hub`），只允许在授权的服务器终端录入三项凭证；文件只授权部署用户读取（`0600`）。不在仓库、Issue、PR、示例文件或日志中保存真实值。
 - 可使用 `docker compose config -q` 静态检查；不要把打印插值配置的 `docker compose config`、`docker inspect` 输出到公开日志。缺失凭证时，供应商商品读取仍返回 `SUPPLIER_NOT_CONFIGURED`，页面绝不呈现假空目录。
-- 这只允许已鉴权的 D 商品列表/详情 **GET**。保持 `vendorFulfillmentEnabled=false`，不授权任何派发或扣额。真实联调应在已登录管理端看到带时间的商品数和详情，不能仅凭环境变量存在就声称验证通过。
+- 现有目录接口是经过鉴权的 D 商品列表/详情 **GET**。实际供应商派发与扣额须由对应已实现的业务接口负责；联通验收在后台确认商品数据与时间戳，不以凭证存在冒充连接成功。
 
 
 ### 数据库存储供应商接入信息（2026-10-28）
@@ -113,7 +113,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 
 - **灰度兼容**：数据库尚无凭证时，原有 `YANGMAO_INRICE_*` 环境配置仍可只读使用；保存 DB 配置后以数据库记录为准。数据库有记录但主密钥不可用时返回明确错误，不回退到旧环境变量以免错用身份。
 - **安全限制**：本切片只允许将 D 测试连接地址保存为 `https://dev-api.isunpow.com`，不接受任意上游 URL、HTTP、内部网目标或非审核生产地址；正式生产上力地址须另行核实。管理员身份、CSRF 和乐观版本保护写入，普通只读运营账号禁止修改。
-- **不改变履约开关**：只读列表、单品详情可从持久配置读取；任何真实发放、扣额和重试仍然禁用。
+- **接口职责**：供应商连接配置服务于目录查询与凭证管理；发放、扣额与结果核实由实际订单履约实现负责，不用行政式禁用开关代替能力实现。
 - **真实验收**：合并部署与一次性密钥配置后，由管理员通过页面保存测试凭证，再点击「验证目录读取」与商品详情；如果未真正保存凭证或未读回上力数据，不得声称联通完成。不得将实际 AppKey/AppSecret 贴入 Issue/PR、日志或聊天作为调试方式。
 
 ## 5. SQLite 数据安全

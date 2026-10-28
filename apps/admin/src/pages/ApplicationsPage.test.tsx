@@ -82,7 +82,6 @@ function product(id: string, code: string, status: 'active' | 'disabled' = 'acti
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
-    vendorFulfillmentEnabled: false,
   };
 }
 

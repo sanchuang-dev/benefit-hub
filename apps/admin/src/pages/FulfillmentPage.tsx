@@ -256,7 +256,7 @@ export function FulfillmentPage() {
         <div>
           <Title level={2}>发放记录</Title>
           <Paragraph type="secondary">
-            查看平台已保存的业务订单、冻结履约来源与本地状态记录。当前为只读视图，真实供应商发放尚未启用。
+            查看平台订单、冻结履约来源和状态记录。
           </Paragraph>
         </div>
         <Tag color="blue">只读</Tag>
@@ -266,8 +266,8 @@ export function FulfillmentPage() {
         <Alert
           type="info"
           showIcon
-          title="平台本地订单视图"
-          description="列表只反映本平台保存的订单意图与本地记录，不调用供应商、不会派发或补发。平台状态「待处理」表示订单已落库等待后续处理，不等于供应商已受理、已扣额或已到账。"
+          title="订单记录说明"
+          description="「待处理」表示订单已记录，供应商是否受理、扣额和到账以对应的履约记录为准。"
         />
 
         <section className="fulfillment-surface" aria-label="平台订单列表">

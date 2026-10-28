@@ -8,7 +8,6 @@ export interface SupplierSummary {
     supported: boolean;
     configured: boolean;
   };
-  fulfillmentEnabled: boolean;
 }
 
 interface SupplierListResponse {

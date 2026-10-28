@@ -45,7 +45,6 @@ function product(
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
-    vendorFulfillmentEnabled: false,
     ...overrides,
   };
 }
@@ -211,15 +210,15 @@ describe('read-only supplier mapping panel', () => {
     renderRoutes('/catalog');
     expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
 
-    // The list never guesses mapping state from the fulfillment flag.
-    expect(screen.getByText('映射见详情')).toBeTruthy();
+    // The list does not fabricate a fulfillment state; mapping is inspected per product.
+    expect(screen.queryByRole('columnheader', { name: '真实发放' })).toBeNull();
 
     fireEvent.click(rowButton('腾讯出行券 10 元', '查看'));
     expect(await screen.findByText('内部商品详情', undefined, { timeout: 5000 })).toBeTruthy();
 
     const panel = await screen.findByLabelText('供应商映射面板');
     expect(await within(panel).findByText('尚未配置供应商映射')).toBeTruthy();
-    expect(within(panel).queryByText('上游尚未验证，真实权益发放仍禁用')).toBeNull();
+    expect(within(panel).queryByText('仅完成本地映射校验')).toBeNull();
     expect(within(panel).queryByText(/upstreamVerified/)).toBeNull();
     expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe(
       '腾讯出行券 10 元',
@@ -253,8 +252,8 @@ describe('read-only supplier mapping panel', () => {
     expect(await within(panel).findByText('草稿已保存')).toBeTruthy();
     expect(within(panel).getByText('已通过本地校验')).toBeTruthy();
     expect(within(panel).getByText('当前没有生效映射')).toBeTruthy();
-    expect(within(panel).getByText('上游尚未验证，真实权益发放仍禁用')).toBeTruthy();
-    expect(within(panel).getByText(/upstreamVerified 为 false/)).toBeTruthy();
+    expect(within(panel).getByText('仅完成本地映射校验')).toBeTruthy();
+    expect(within(panel).getByText(/本地结构与模式规则/)).toBeTruthy();
     expect(within(panel).getByText('YM-1001')).toBeTruthy();
 
     // The admin editor exposes the frozen draft -> validate -> activate flow.
@@ -292,7 +291,7 @@ describe('read-only supplier mapping panel', () => {
     expect(within(panel).getAllByText('YM-ACTIVE').length).toBeGreaterThan(0);
     expect(within(panel).getByText('ops.admin')).toBeTruthy();
     expect(within(panel).getByText('草稿已修改，需重新校验')).toBeTruthy();
-    expect(within(panel).getByText('上游尚未验证，真实权益发放仍禁用')).toBeTruthy();
+    expect(within(panel).getByText('仅完成本地映射校验')).toBeTruthy();
 
     fireEvent.click(within(panel).getByRole('tab', { name: /历史版本/ }));
     expect(await within(panel).findByText('历史版本只读')).toBeTruthy();
@@ -825,7 +824,7 @@ describe('supplier mapping draft editor', () => {
     expect(
       within(modal).getByText('本次仅基于本地结构校验，未进行上游验证（upstreamVerified: false）。'),
     ).toBeTruthy();
-    expect(within(modal).getByText(/真实权益发放仍禁用/)).toBeTruthy();
+    expect(within(modal).getByText(/激活映射只绑定订单使用的供货关系/)).toBeTruthy();
     expect(writeCalls(fetchMock)).toEqual([]);
 
     fireEvent.click(within(modal).getByRole('button', { name: /取\s*消/ }));

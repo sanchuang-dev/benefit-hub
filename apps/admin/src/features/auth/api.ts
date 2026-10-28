@@ -26,7 +26,6 @@ export interface AccountSummary extends AdminIdentity {
 export interface SystemStatus {
   service: string;
   phase: string;
-  vendorFulfillmentEnabled: boolean;
   adminEnabled: boolean;
   authenticationRequired: boolean;
 }

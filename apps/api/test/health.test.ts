@@ -35,7 +35,7 @@ describe('Benefit Hub bootstrap API', () => {
     const response = await createBootstrapApp().request('/api/v1/system/status');
     expect(response.status).toBe(200);
     const state = (await response.json()) as Record<string, unknown>;
-    expect(state.vendorFulfillmentEnabled).toBe(false);
+    expect(state).not.toHaveProperty('vendorFulfillmentEnabled');
     expect(state.adminEnabled).toBe(true);
     expect(state.authenticationRequired).toBe(true);
   });
