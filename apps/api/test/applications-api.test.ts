@@ -778,7 +778,7 @@ describe('application machine credentials', () => {
         );
         controller.close();
       },
-    });
+    }, { highWaterMark: 0 });
 
     const pendingOrder = server.app.request(BUSINESS_ORDERS, {
       method: 'POST',
