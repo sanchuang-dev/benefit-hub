@@ -31,14 +31,7 @@ export interface CatalogProduct {
   updatedAt: number;
 }
 
-/**
- * HTTP-facing product. `vendorFulfillmentEnabled` is always false in this
- * slice because no supplier mapping exists yet; clients must not infer that a
- * product can be granted just because it is active.
- */
-export interface CatalogProductDto extends CatalogProduct {
-  vendorFulfillmentEnabled: false;
-}
+export type CatalogProductDto = CatalogProduct;
 
 export class ProductInputError extends Error {}
 export class ProductNotFoundError extends Error {}
@@ -91,7 +84,7 @@ function toProduct(row: ProductRow): CatalogProduct {
 }
 
 export function toProductDto(product: CatalogProduct): CatalogProductDto {
-  return { ...product, vendorFulfillmentEnabled: false };
+  return product;
 }
 
 function isCodeConflict(error: unknown): boolean {
