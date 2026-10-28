@@ -4,6 +4,7 @@ import { YangmaoInriceError } from '@sanchuang-dev/provider-yangmao';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import { logEvent } from '../../log.js';
+import { activeYangmaoReadConfig, SupplierCredentialUnavailableError } from '../suppliers/connection.js';
 import { requireSession, type AppEnv } from '../../middleware/auth.js';
 import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
 import {
@@ -77,35 +78,40 @@ export function createSupplierCatalogRoutes(deps: {
   config: AppConfig;
 }): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
-  const reader = createYangmaoInriceReader(deps.config.yangmaoInrice);
   const requireAuthenticated = requireSession(deps.db, deps.config);
 
   const unconfigured = () =>
     apiError(
       'SUPPLIER_NOT_CONFIGURED',
-      '上力供应商商品读取尚未配置；请在服务器侧配置只读凭证后重试',
+      '上力商品查询尚未配置；请在供应商管理中保存接入凭证后重试',
     );
 
   router.get('/supplier-products', requireAuthenticated, async (c) => {
-    if (!reader) return c.json(unconfigured(), 503, NO_STORE_HEADERS);
-
     try {
+      const reader = createYangmaoInriceReader(activeYangmaoReadConfig(deps.db, deps.config));
+      if (!reader) return c.json(unconfigured(), 503, NO_STORE_HEADERS);
       const catalog = await reader.listProducts({ signal: c.req.raw.signal });
       return c.json(toSupplierCatalogDto(catalog), 200, NO_STORE_HEADERS);
     } catch (error) {
+      if (error instanceof SupplierCredentialUnavailableError) {
+        return c.json(apiError('SUPPLIER_KEY_UNAVAILABLE', '已存储的供应商凭证暂不可读取，请联系管理员核实服务器加密密钥'), 503, NO_STORE_HEADERS);
+      }
       return handleSupplierReadError(c, error);
     }
   });
 
   router.get('/supplier-products/:productCode', requireAuthenticated, async (c) => {
-    if (!reader) return c.json(unconfigured(), 503, NO_STORE_HEADERS);
-
     try {
+      const reader = createYangmaoInriceReader(activeYangmaoReadConfig(deps.db, deps.config));
+      if (!reader) return c.json(unconfigured(), 503, NO_STORE_HEADERS);
       const detail = await reader.getProductDetail(c.req.param('productCode'), {
         signal: c.req.raw.signal,
       });
       return c.json({ product: toSupplierProductDetailDto(detail) }, 200, NO_STORE_HEADERS);
     } catch (error) {
+      if (error instanceof SupplierCredentialUnavailableError) {
+        return c.json(apiError('SUPPLIER_KEY_UNAVAILABLE', '已存储的供应商凭证暂不可读取，请联系管理员核实服务器加密密钥'), 503, NO_STORE_HEADERS);
+      }
       return handleSupplierReadError(c, error);
     }
   });
