@@ -59,10 +59,11 @@ export function useProductQuery(id: string | undefined) {
  * Keyword filtering and pagination happen over this same server result, so the
  * browser never fans out 20+ detail requests or calls the supplier directly.
  */
-export function useSupplierProductsQuery() {
+export function useSupplierProductsQuery(options: { enabled?: boolean } = {}) {
   return useQuery<SupplierCatalogResponse, ApiError>({
     queryKey: catalogQueryKeys.supplierRoot,
     queryFn: fetchSupplierProducts,
+    enabled: options.enabled ?? true,
     retry: false,
   });
 }
