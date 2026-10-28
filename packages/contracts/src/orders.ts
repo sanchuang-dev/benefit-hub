@@ -89,6 +89,7 @@ export type BusinessOrderResponse = z.infer<typeof businessOrderResponseSchema>;
 
 /** Stable machine-readable error codes for the machine order surface. */
 export const BUSINESS_ORDER_ERROR_CODES = [
+  'INTERNAL_ERROR',
   'INVALID_REQUEST',
   'UNAUTHORIZED',
   'SERVICE_UNAVAILABLE',
