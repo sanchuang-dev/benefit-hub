@@ -45,8 +45,20 @@ function originMatchesHost(c: Context): boolean {
   }
 }
 
-export function csrfProtection(): MiddlewareHandler {
+export function csrfProtection(options: {
+  /**
+   * Narrow, explicit exemption for a route that authenticates every request with
+   * a non-browser credential and has no cookie flow. It must match exactly one
+   * method+path; the route's own authentication still applies.
+   */
+  isExempt?: (c: Context) => boolean;
+} = {}): MiddlewareHandler {
   return async (c, next) => {
+    if (options.isExempt?.(c)) {
+      await next();
+      return;
+    }
+
     if (SAFE_METHODS.has(c.req.method.toUpperCase())) {
       await next();
       return;

@@ -89,6 +89,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 | `COOKIE_SECURE` | `NODE_ENV=production` 时为 true | 生产必须保持 true；本地 http 联调才可关闭 |
 | `TRUST_PROXY` | `false`（compose 为 `true`） | 仅当宿主机 Caddy 在容器前时才信任 `X-Forwarded-For` |
 | `YANGMAO_INRICE_BASE_URL` / `YANGMAO_INRICE_APP_KEY` / `YANGMAO_INRICE_APP_SECRET` | 未设置 | 可选的上力 D 商品只读凭证，三项必须同时由服务器侧安全注入；缺失时只读入口明确返回 503，不回退默认值或假数据 |
+| `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 可选的下游业务订单服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。缺失时订单接口返回 503 且零写入；格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
 
 登录限速（同一账号 15 分钟 5 次失败、同一来源 15 分钟 20 次）保存在进程内存，重启只会解除锁定，不会放行凭据。
 

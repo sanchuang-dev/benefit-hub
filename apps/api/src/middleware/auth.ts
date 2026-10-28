@@ -12,6 +12,11 @@ export interface AppEnv {
   Variables: {
     admin: SessionPrincipal;
     sessionExpiresAt: number;
+    /**
+     * Normalized downstream business identity derived from a validated machine
+     * service credential. It is never read from a request body or query string.
+     */
+    businessSource: string;
   };
 }
 
