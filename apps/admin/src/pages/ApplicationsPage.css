@@ -1,0 +1,24 @@
+/*
+ * Downstream application page surface. Kept small and page-local so the page
+ * does not depend on the catalogue module's stylesheet load order.
+ */
+.applications-surface {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+}
+
+.applications-toolbar {
+  padding: 12px 16px;
+  row-gap: 8px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.applications-actions {
+  padding: 12px 16px 0;
+}
+
+.applications-table {
+  padding: 0 0 8px;
+}

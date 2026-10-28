@@ -6,6 +6,7 @@ import type { AppDatabase } from './db/client.js';
 import { logEvent } from './log.js';
 import type { AppEnv } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
+import { createApplicationRoutes } from './modules/applications/routes.js';
 import { createAdminAccountRoutes } from './modules/auth/admin-routes.js';
 import { apiError, NO_STORE_HEADERS } from './modules/auth/http.js';
 import { createAuthRoutes } from './modules/auth/routes.js';
@@ -80,6 +81,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
 
   app.route('/api/v1/auth', createAuthRoutes(deps));
   app.route('/api/v1/admin', createAdminAccountRoutes(deps));
+  app.route('/api/v1/applications', createApplicationRoutes(deps));
   app.route('/api/v1/catalog', createCatalogRoutes(deps));
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
   app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));

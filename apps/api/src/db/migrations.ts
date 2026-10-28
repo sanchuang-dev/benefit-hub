@@ -334,4 +334,69 @@ export const migrations: readonly Migration[] = [
         ON supplier_connection_events (provider, created_at);
     `,
   },
+  {
+    id: '0007_business_applications',
+    sql: `
+      -- Downstream application registry: operator configuration only. No token,
+      -- secret or runtime authorization column exists here, and the unique
+      -- source index makes the normalized business identity stable.
+      CREATE TABLE IF NOT EXISTS business_applications (
+        id TEXT PRIMARY KEY NOT NULL,
+        business_source TEXT NOT NULL,
+        name TEXT NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK (status IN ('enabled', 'disabled')),
+        version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (length(business_source) BETWEEN 1 AND 64),
+        CHECK (business_source GLOB '[a-z0-9]*'),
+        CHECK (business_source NOT GLOB '*[^a-z0-9._-]*'),
+        CHECK (length(name) BETWEEN 1 AND 80),
+        CHECK (length(note) <= 200)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_business_applications_source
+        ON business_applications (business_source);
+      CREATE INDEX IF NOT EXISTS idx_business_applications_status_created
+        ON business_applications (status, created_at DESC);
+
+      -- One row per configured (application, internal product) pair. The
+      -- composite primary key makes duplicates unrepresentable; both foreign
+      -- keys keep the configuration pointed at persisted rows, so an arbitrary
+      -- supplier product code can never be stored as an internal product id.
+      CREATE TABLE IF NOT EXISTS business_application_products (
+        application_id TEXT NOT NULL REFERENCES business_applications(id) ON DELETE RESTRICT,
+        product_id TEXT NOT NULL REFERENCES catalog_products(id) ON DELETE RESTRICT,
+        configured_at INTEGER NOT NULL,
+        PRIMARY KEY (application_id, product_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_business_application_products_product
+        ON business_application_products (product_id);
+
+      -- Bounded operator audit facts; no request body, token or secret values.
+      CREATE TABLE IF NOT EXISTS business_application_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        application_id TEXT NOT NULL REFERENCES business_applications(id) ON DELETE RESTRICT,
+        actor_account_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (
+          action IN ('created', 'updated', 'enabled', 'disabled', 'products_updated')
+        ),
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_business_application_events_application
+        ON business_application_events (application_id, created_at);
+
+      -- The registered source is the stable application identity. Operators may
+      -- rename the display name and edit the note, but rebinding an existing row
+      -- to another business source would silently change its meaning.
+      CREATE TRIGGER IF NOT EXISTS trg_business_applications_source_immutable
+      BEFORE UPDATE OF business_source ON business_applications
+      BEGIN
+        SELECT RAISE(ABORT, 'business application source is immutable');
+      END;
+    `,
+  },
 ];
