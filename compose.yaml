@@ -25,6 +25,8 @@ services:
       YANGMAO_INRICE_BASE_URL: ${YANGMAO_INRICE_BASE_URL:-}
       YANGMAO_INRICE_APP_KEY: ${YANGMAO_INRICE_APP_KEY:-}
       YANGMAO_INRICE_APP_SECRET: ${YANGMAO_INRICE_APP_SECRET:-}
+      # A single independent master key protects provider connection records.
+      BENEFIT_SUPPLIER_MASTER_KEY: ${BENEFIT_SUPPLIER_MASTER_KEY:-}
     volumes:
       - "${BENEFIT_DATA_DIR:-/srv/benefit-hub/data}:/data"
     read_only: true
