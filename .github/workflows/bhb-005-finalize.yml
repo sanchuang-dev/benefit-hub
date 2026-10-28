@@ -198,7 +198,7 @@ jobs:
           const submitted = await evaluate("(() => { const button = document.querySelector('button[type=\"submit\"]'); if (!button) return false; button.click(); return true; })()");
           if (!submitted) throw new Error('Login button missing');
           await waitFor(
-            "location.pathname === '/' && document.body.innerText.includes('Benefit Hub · 权益运营台')",
+            "location.pathname === '/' && Boolean(document.querySelector('.app-shell')) && document.querySelector('.app-header')?.innerText.includes('只读')",
             'successful login',
           );
           console.log('browser login: PASS');
