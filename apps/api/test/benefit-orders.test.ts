@@ -1153,7 +1153,7 @@ describe('benefit order mapping version migration (0005)', () => {
         .prepare("UPDATE supplier_product_mappings SET active_version_id = 'legacy-version' WHERE id = 'legacy-mapping'")
         .run();
 
-      expect(runMigrations(handle.sqlite)).toEqual(['0005_benefit_order_mapping_version']);
+      expect(runMigrations(handle.sqlite)).toEqual(['0005_benefit_order_mapping_version', '0006_supplier_connections']);
 
       // Every pre-existing fact survives the additive migration.
       expect(
