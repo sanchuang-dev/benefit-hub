@@ -31,6 +31,8 @@ BENEFIT_ORDER_CLIENTS_JSON='{"local-life":"<token>","card-doctor":"<token>"}'
 
 `compose.yaml`、CI 和 `.env.example` 均**不**保存真实令牌。修改配置需要重启应用；轮换令牌时应同时更换配置并重新部署，不在运行时热加载。
 
+> **应用登记不等于服务凭证（BHB-014-A）。** 管理后台「下游应用」登记的同名 `businessSource` 只是运营配置，不会生成、导入、替换或废止 `BENEFIT_ORDER_CLIENTS_JSON` 中的令牌，也不会把已配置的内部商品清单变成运行时授权。即使应用已登记并启用，缺少/错误 Bearer 仍返回 401；停用应用也不会使既有服务凭证失效。运行时绑定与强制校验属于后续独立切片。
+
 ## 2. 端点
 
 Base path：`/api/v1/business/orders`。所有响应都是 JSON 且带 `Cache-Control: no-store`。

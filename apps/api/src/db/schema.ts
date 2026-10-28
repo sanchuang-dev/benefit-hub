@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * Admin accounts are intentionally minimal for the first slice: password login
@@ -153,6 +153,74 @@ export const supplierProductMappingVersions = sqliteTable(
     index('idx_supplier_product_mapping_versions_mapping').on(
       table.mappingId,
       table.versionNumber,
+    ),
+  ],
+);
+
+/**
+ * Downstream business application registry (BHB-014-A).
+ *
+ * This is the operator configuration plane only. Rows never hold a token,
+ * secret, supplier credential or runtime authorization decision:
+ * `business_source` is the stable normalized identity shared with the existing
+ * machine order contract, and the unique index prevents two applications from
+ * claiming the same source. `version` guards operator edits. Disabled rows stay
+ * readable and re-enableable; there is no delete path.
+ */
+export const businessApplications = sqliteTable('business_applications', {
+  id: text('id').primaryKey(),
+  businessSource: text('business_source').notNull().unique(),
+  name: text('name').notNull(),
+  note: text('note').notNull(),
+  status: text('status').notNull(),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/**
+ * Configured internal-product allowlist for one application. The composite
+ * primary key makes a duplicate pair unrepresentable, and both foreign keys
+ * keep the pair pointed at persisted rows. This is configuration data for a
+ * future runtime binding; nothing here grants a machine caller access today.
+ */
+export const businessApplicationProducts = sqliteTable(
+  'business_application_products',
+  {
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    configuredAt: integer('configured_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.applicationId, table.productId] }),
+    index('idx_business_application_products_product').on(table.productId),
+  ],
+);
+
+/**
+ * Minimal operator audit facts for application configuration writes: who
+ * changed which application and what kind of action occurred. No request
+ * bodies, tokens, product codes or secrets are recorded here.
+ */
+export const businessApplicationEvents = sqliteTable(
+  'business_application_events',
+  {
+    id: text('id').primaryKey(),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    actorAccountId: text('actor_account_id').notNull(),
+    action: text('action').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_business_application_events_application').on(
+      table.applicationId,
+      table.createdAt,
     ),
   ],
 );

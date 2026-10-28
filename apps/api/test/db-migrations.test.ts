@@ -67,5 +67,37 @@ describe('database migrations', () => {
     expect(names).toContain('fulfillment_attempts');
     expect(names).toContain('supplier_product_mappings');
     expect(names).toContain('supplier_product_mapping_versions');
+    expect(names).toContain('business_applications');
+    expect(names).toContain('business_application_products');
+    expect(names).toContain('business_application_events');
+  });
+
+  it('upgrades a pre-0007 database additively and keeps existing rows', () => {
+    server = new TestServer();
+    // Simulate a database created before the application registry existed by
+    // removing only the new objects, then re-running the full migration list.
+    server.database.sqlite.exec(`
+      DROP TRIGGER IF EXISTS trg_business_applications_source_immutable;
+      DROP TABLE IF EXISTS business_application_events;
+      DROP TABLE IF EXISTS business_application_products;
+      DROP TABLE IF EXISTS business_applications;
+      DELETE FROM schema_migrations WHERE id = '0007_business_applications';
+      INSERT INTO catalog_products
+        (id, code, name, short_description, status, version, created_at, updated_at)
+      VALUES ('legacy-product', 'LEGACY-1', '历史商品', '', 'active', 1, 1, 1);
+    `);
+
+    expect(runMigrations(server.database.sqlite)).toEqual(['0007_business_applications']);
+    expect(runMigrations(server.database.sqlite)).toEqual([]);
+
+    const products = server.database.sqlite
+      .prepare('SELECT id FROM catalog_products WHERE id = ?')
+      .all('legacy-product');
+    expect(products).toHaveLength(1);
+    expect(
+      server.database.sqlite
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'business_applications'")
+        .get(),
+    ).toEqual({ name: 'business_applications' });
   });
 });

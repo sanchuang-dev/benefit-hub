@@ -1153,7 +1153,7 @@ describe('benefit order mapping version migration (0005)', () => {
         .prepare("UPDATE supplier_product_mappings SET active_version_id = 'legacy-version' WHERE id = 'legacy-mapping'")
         .run();
 
-      expect(runMigrations(handle.sqlite)).toEqual(['0005_benefit_order_mapping_version', '0006_supplier_connections']);
+      expect(runMigrations(handle.sqlite)).toEqual(['0005_benefit_order_mapping_version', '0006_supplier_connections', '0007_business_applications']);
 
       // Every pre-existing fact survives the additive migration.
       expect(
@@ -1316,6 +1316,7 @@ describe('benefit order mapping version migration (0005)', () => {
         { id: '0004_supplier_product_mappings' },
         { id: '0005_benefit_order_mapping_version' },
         { id: '0006_supplier_connections' },
+        { id: '0007_business_applications' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
@@ -1324,6 +1325,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0004_supplier_product_mappings',
         '0005_benefit_order_mapping_version',
         '0006_supplier_connections',
+        '0007_business_applications',
       ]);
     } finally {
       handle.close();
