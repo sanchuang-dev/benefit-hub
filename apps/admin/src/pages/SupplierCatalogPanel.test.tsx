@@ -148,7 +148,6 @@ describe('supplier products tab', () => {
                 version: 1,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
-                vendorFulfillmentEnabled: false,
               },
             ]
           : [];
@@ -188,7 +187,6 @@ describe('supplier products tab', () => {
       version: 1,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      vendorFulfillmentEnabled: false as const,
     }));
 
     const fetchMock = mockFetch((url) => {
