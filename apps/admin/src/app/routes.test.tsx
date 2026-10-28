@@ -172,6 +172,15 @@ describe('login flow', () => {
   it('opens each platform domain from the first-level sidebar without inventing a backend', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/suppliers') return jsonResponse(200, {
+        suppliers: [{
+          key: 'yangmao',
+          name: '上力',
+          catalogRead: { supported: true, configured: false },
+          fulfillmentEnabled: false,
+        }],
+      });
+      if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, { provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }] });
       if (url === '/api/v1/system/status') {
         return jsonResponse(200, {
           service: 'benefit-hub',
@@ -186,8 +195,11 @@ describe('login flow', () => {
 
     renderRoutes('/');
 
+    fireEvent.click(await screen.findByRole('menuitem', { name: '供应商管理' }));
+    expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '查看供应商' })).toBeTruthy();
+
     for (const [name, notice] of [
-      ['供应商管理', '供应商管理 API 尚未接入'],
       ['下游应用', '应用登记与授权管理 API 尚未接入'],
       ['价值换算', '价值换算规则服务尚未接入'],
       ['接口管理', '配置驱动的接口生成与发布尚未接入'],
