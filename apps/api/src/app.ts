@@ -11,6 +11,7 @@ import { apiError } from './modules/auth/http.js';
 import { createAuthRoutes } from './modules/auth/routes.js';
 import { createCatalogMappingRoutes } from './modules/catalog/mapping-routes.js';
 import { createCatalogRoutes } from './modules/catalog/routes.js';
+import { createSupplierCatalogRoutes } from './modules/catalog/supplier-catalog-routes.js';
 
 export interface AppDependencies {
   db: AppDatabase;
@@ -65,6 +66,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.route('/api/v1/admin', createAdminAccountRoutes(deps));
   app.route('/api/v1/catalog', createCatalogRoutes(deps));
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
+  app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));
 
   app.all('/api/*', (c) => c.json(apiError('NOT_FOUND', '接口不存在'), 404));
 

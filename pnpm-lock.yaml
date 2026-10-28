@@ -78,6 +78,9 @@ importers:
       '@sanchuang-dev/benefit-contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@sanchuang-dev/provider-yangmao':
+        specifier: workspace:*
+        version: link:../../packages/provider-yangmao
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
