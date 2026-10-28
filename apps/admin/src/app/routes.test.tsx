@@ -172,6 +172,14 @@ describe('login flow', () => {
   it('opens each platform domain from the first-level sidebar without inventing a backend', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/suppliers') return jsonResponse(200, {
+        suppliers: [{
+          key: 'yangmao',
+          name: '上力',
+          catalogRead: { supported: true, configured: false },
+          fulfillmentEnabled: false,
+        }],
+      });
       if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, { provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }] });
       if (url === '/api/v1/system/status') {
         return jsonResponse(200, {
