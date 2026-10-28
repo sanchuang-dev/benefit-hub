@@ -11,6 +11,7 @@ const config: AppConfig = {
   trustProxy: false,
   sessionTtlMs: 60_000,
   yangmaoInrice: null,
+  supplierMasterKey: null,
   businessOrderClients: null,
 };
 
