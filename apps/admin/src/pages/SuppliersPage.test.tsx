@@ -26,6 +26,12 @@ function stubFetch(catalog: Response, detail?: Response) {
     if (url === '/api/v1/auth/session') {
       return respond(200, { admin: ADMIN, session: { expiresAt: Date.now() + 3_600_000 } });
     }
+    if (url === '/api/v1/suppliers') {
+      return respond(200, { suppliers: [{ key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 }, fulfillmentEnabled: false }] });
+    }
+    if (url === '/api/v1/suppliers/yangmao') {
+      return respond(200, { supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: catalog.status !== 503 }, fulfillmentEnabled: false } });
+    }
     if (url === '/api/v1/system/status') {
       return respond(200, {
         service: 'benefit-hub',
@@ -73,6 +79,8 @@ describe('Yangmao supplier management', () => {
     expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: '查看供应商' }));
     expect(await screen.findByRole('heading', { name: '上力' })).toBeTruthy();
+    // The overview only reads safe registration metadata; opening the catalogue triggers the signed GET.
+    fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
     expect(await screen.findByText('FIXTURE-A')).toBeTruthy();
     expect(screen.getByText('¥12.34')).toBeTruthy();
 
@@ -96,9 +104,9 @@ describe('Yangmao supplier management', () => {
 
     renderRoutes('/suppliers/yangmao');
     expect(await screen.findByRole('heading', { name: '上力' })).toBeTruthy();
-    expect(await screen.findByText('尚未配置上力只读凭证')).toBeTruthy();
+    expect(await screen.findByText('服务器未配置上力只读凭证')).toBeTruthy();
     expect(screen.queryByText('共 0 条')).toBeNull();
-    fireEvent.click(screen.getByRole('tab', { name: '供应商概览' }));
-    expect(await screen.findByText('上力只读接口尚未配置')).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
+    expect(await screen.findByText('尚未配置上力只读凭证')).toBeTruthy();
   }, 20_000);
 });
