@@ -1,0 +1,97 @@
+name: Initialize Benefit Hub Supplier Master Key
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benefit-hub-ops-supplier-key
+  cancel-in-progress: false
+
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH password transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Verify pinned server and safely initialize
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SSHPASS" && test -n "$TARGET_USER" && test -n "$TARGET_PORT"
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Unexpected host"; exit 1 ;;
+          esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
+          mkdir -m 700 -p "$RUNNER_TEMP/bhb_ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          test -s "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/bhb_ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' || {
+            echo "::error::SSH host fingerprint mismatch"
+            exit 1
+          }
+          sshpass -e ssh \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/bhb_ssh/known_hosts" \
+            -o PreferredAuthentications=password \
+            -o PubkeyAuthentication=no \
+            -o ConnectTimeout=15 \
+            -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          test "$(id -u)" -eq 0 || { echo 'Root-only operation'; exit 1; }
+          cd /srv/benefit-hub
+          test -f compose.yaml && test -f .env
+          test ! -L .env
+          test "$(stat -c %u .env)" = '0' || { echo 'Unexpected .env owner'; exit 1; }
+          chmod 600 .env
+          count="$(grep -c '^BENEFIT_SUPPLIER_MASTER_KEY=' .env || true)"
+          case "$count" in
+            0)
+              command -v openssl >/dev/null
+              tmp="$(mktemp ./.env.supplier.XXXXXX)"
+              chmod 600 "$tmp"
+              cat .env > "$tmp"
+              printf '\nBENEFIT_SUPPLIER_MASTER_KEY=%s\n' "$(openssl rand -hex 32)" >> "$tmp"
+              mv -f "$tmp" .env
+              echo 'Supplier master key generated on host'
+              ;;
+            1)
+              grep -Eq '^BENEFIT_SUPPLIER_MASTER_KEY=[a-fA-F0-9]{64}$' .env || {
+                echo 'Existing supplier key is invalid; refusing replacement'
+                exit 1
+              }
+              echo 'Supplier master key already exists; unchanged'
+              ;;
+            *)
+              echo 'Duplicate supplier keys; refusing modification'
+              exit 1
+              ;;
+          esac
+          docker compose --project-name benefit-hub -f compose.yaml config -q
+          docker compose --project-name benefit-hub -f compose.yaml up -d --no-build --force-recreate benefit-hub
+          cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
+          test -n "$cid"
+          docker exec "$cid" node -e 'const k=process.env.BENEFIT_SUPPLIER_MASTER_KEY; process.exit(/^[a-fA-F0-9]{64}$/.test(k??"") ? 0 : 1)'
+          ready=0
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null 2>&1; then ready=1; break; fi
+            sleep 2
+          done
+          test "$ready" -eq 1 || { echo 'Benefit Hub health check failed'; exit 1; }
+          echo 'Supplier key ready, container configured, Benefit Hub healthy'
+          REMOTE

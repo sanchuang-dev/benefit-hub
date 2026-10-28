@@ -16,6 +16,7 @@ const environmentSchema = z.object({
   YANGMAO_INRICE_BASE_URL: z.string().optional(),
   YANGMAO_INRICE_APP_KEY: z.string().optional(),
   YANGMAO_INRICE_APP_SECRET: z.string().optional(),
+  BENEFIT_SUPPLIER_MASTER_KEY: z.string().optional(),
   // Optional, server-only machine-to-machine order intake credentials. Absent
   // means the downstream order API is explicitly unavailable (503); a present
   // but malformed value is a startup error so a broken auth boundary can never
@@ -72,6 +73,7 @@ export interface AppConfig {
    * unavailability instead of attempting a signed request with a gap.
    */
   yangmaoInrice: YangmaoInriceConfig | null;
+  supplierMasterKey: Buffer | null;
   /**
    * Present only when at least one downstream business client is configured.
    * A malformed configuration never reaches this state; `loadConfig` throws.
@@ -182,6 +184,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     trustProxy: value.TRUST_PROXY === 'true',
     sessionTtlMs: value.SESSION_TTL_HOURS * 60 * 60 * 1000,
     yangmaoInrice: readYangmaoInriceConfig(env),
+    supplierMasterKey: value.BENEFIT_SUPPLIER_MASTER_KEY && /^[a-fA-F0-9]{64}$/.test(value.BENEFIT_SUPPLIER_MASTER_KEY)
+      ? Buffer.from(value.BENEFIT_SUPPLIER_MASTER_KEY, 'hex')
+      : null,
     businessOrderClients: readBusinessOrderClientsConfig(env),
   };
 }

@@ -318,3 +318,22 @@ export const fulfillmentAttempts = sqliteTable(
   },
   (table) => [index('idx_fulfillment_attempts_order').on(table.orderId, table.occurredAt)],
 );
+
+/** Encrypted server-side provider credentials. No plaintext secrets in DB. */
+export const supplierConnections = sqliteTable('supplier_connections', {
+  provider: text('provider').primaryKey(),
+  baseUrl: text('base_url').notNull(),
+  encryptedCredentials: text('encrypted_credentials').notNull(),
+  version: integer('version').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const supplierConnectionEvents = sqliteTable('supplier_connection_events', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  actorAccountId: text('actor_account_id').notNull(),
+  action: text('action').notNull(),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+});

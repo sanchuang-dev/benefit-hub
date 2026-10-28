@@ -72,7 +72,7 @@ describe('database migrations', () => {
     expect(names).toContain('business_application_events');
   });
 
-  it('upgrades a pre-0006 database additively and keeps existing rows', () => {
+  it('upgrades a pre-0007 database additively and keeps existing rows', () => {
     server = new TestServer();
     // Simulate a database created before the application registry existed by
     // removing only the new objects, then re-running the full migration list.
@@ -81,13 +81,13 @@ describe('database migrations', () => {
       DROP TABLE IF EXISTS business_application_events;
       DROP TABLE IF EXISTS business_application_products;
       DROP TABLE IF EXISTS business_applications;
-      DELETE FROM schema_migrations WHERE id = '0006_business_applications';
+      DELETE FROM schema_migrations WHERE id = '0007_business_applications';
       INSERT INTO catalog_products
         (id, code, name, short_description, status, version, created_at, updated_at)
       VALUES ('legacy-product', 'LEGACY-1', '历史商品', '', 'active', 1, 1, 1);
     `);
 
-    expect(runMigrations(server.database.sqlite)).toEqual(['0006_business_applications']);
+    expect(runMigrations(server.database.sqlite)).toEqual(['0007_business_applications']);
     expect(runMigrations(server.database.sqlite)).toEqual([]);
 
     const products = server.database.sqlite
