@@ -78,7 +78,6 @@ export function supplierConnectionSummary(db: AppDatabase, config: AppConfig) {
       locked,
       canEdit: Boolean(config.supplierMasterKey),
     },
-    fulfillmentEnabled: false,
   };
 }
 
