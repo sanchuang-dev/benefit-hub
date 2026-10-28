@@ -45,7 +45,50 @@ export interface YangmaoOpenV1ReadOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * Recovery reads are only validated snapshots of the fields documented so far.
+ * Unknown upstream keys are discarded; no successful read means an issuance.
+ */
+export interface YangmaoOpenV1PrepaidOrderLookup {
+  provider: 'yangmao';
+  observedAt: string;
+  claimUrl?: string;
+  claimable?: boolean;
+  orderNo?: string;
+}
+export interface YangmaoOpenV1GiftVoucherLookup {
+  provider: 'yangmao';
+  observedAt: string;
+  claimUrl?: string;
+  packTotal?: number;
+  packRemaining?: number;
+  expiresAt?: string;
+}
+const RECOVERY_ID_PATTERN = /^[!-~]{1,64}$/;
+const VOUCHER_CODE_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/;
+const safeClaimUrlSchema = z.string().min(1).max(2048).refine((value) => {
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+});
+const prepaidOrderLookupSchema = z.object({
+  claimUrl: safeClaimUrlSchema.nullish(),
+  claimable: z.boolean().nullish(),
+  orderNo: z.string().min(1).max(128).nullish(),
+});
+const giftVoucherLookupSchema = z.object({
+  claimUrl: safeClaimUrlSchema.nullish(),
+  packTotal: z.number().int().min(0).nullish(),
+  packRemaining: z.number().int().min(0).nullish(),
+  expiresAt: z.string().min(1).max(128).nullish(),
+});
+
 export interface YangmaoOpenV1PurchaseReader {
+  queryPrepaidOrder(requestId: string, options?: YangmaoOpenV1ReadOptions): Promise<YangmaoOpenV1PrepaidOrderLookup>;
+  queryGiftVoucher(code: string, options?: YangmaoOpenV1ReadOptions): Promise<YangmaoOpenV1GiftVoucherLookup>;
   /**
    * Read-only pre-payment eligibility check by phone. Never deducts a pack
    * quota or a monetary balance and never places an order. A successful answer
@@ -177,6 +220,80 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
     };
   }
 
+  /** A-mode link recovery. This POST is a read-only vendor business action. */
+  async queryPrepaidOrder(
+    requestId: string,
+    options: YangmaoOpenV1ReadOptions = {},
+  ): Promise<YangmaoOpenV1PrepaidOrderLookup> {
+    if (!RECOVERY_ID_PATTERN.test(requestId)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    const timestamp = String(Math.trunc(this.clock()));
+    const nonce = this.nonceFactory();
+    if (!NONCE_PATTERN.test(nonce)) throw configError();
+    const signature = createOpenV1Signature(
+      { appKey: this.appKey, timestamp, nonce, requestId },
+      this.appSecret,
+    );
+    const data = await this.readSignedData(
+      timestamp, nonce, signature, '', options.signal, {
+        path: '/open/v1/prepaid/orders/query',
+        method: 'POST',
+        body: JSON.stringify({ requestId }),
+      },
+    );
+    const parsed = prepaidOrderLookupSchema.safeParse(data);
+    if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    const { claimUrl, claimable, orderNo } = parsed.data;
+    if (claimUrl == null && claimable == null && orderNo == null) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    }
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      ...(claimUrl == null ? {} : { claimUrl }),
+      ...(claimable == null ? {} : { claimable }),
+      ...(orderNo == null ? {} : { orderNo }),
+    };
+  }
+
+  /** C-mode lookup; the vendor voucher code is never logged or echoed. */
+  async queryGiftVoucher(
+    code: string,
+    options: YangmaoOpenV1ReadOptions = {},
+  ): Promise<YangmaoOpenV1GiftVoucherLookup> {
+    if (!VOUCHER_CODE_PATTERN.test(code)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    const timestamp = String(Math.trunc(this.clock()));
+    const nonce = this.nonceFactory();
+    if (!NONCE_PATTERN.test(nonce)) throw configError();
+    const signature = createOpenV1Signature(
+      { appKey: this.appKey, timestamp, nonce, code },
+      this.appSecret,
+    );
+    const data = await this.readSignedData(
+      timestamp, nonce, signature, '', options.signal, {
+        path: `/open/v1/gift-vouchers/${encodeURIComponent(code)}`,
+        method: 'GET',
+      },
+    );
+    const parsed = giftVoucherLookupSchema.safeParse(data);
+    if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    const { claimUrl, packTotal, packRemaining, expiresAt } = parsed.data;
+    if (claimUrl == null && packTotal == null && packRemaining == null && expiresAt == null) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    }
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      ...(claimUrl == null ? {} : { claimUrl }),
+      ...(packTotal == null ? {} : { packTotal }),
+      ...(packRemaining == null ? {} : { packRemaining }),
+      ...(expiresAt == null ? {} : { expiresAt }),
+    };
+  }
+
   /**
    * Shared signed-POST pipeline: A/B/C headers only, no redirect following,
    * then four independent gates in order — HTTP status, JSON parsing, envelope
@@ -190,12 +307,13 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
     signature: string,
     phone: string,
     callerSignal: AbortSignal | undefined,
+    recovery?: { path: string; method: 'GET' | 'POST'; body?: string },
   ): Promise<unknown> {
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
-    const request = new Request(`${this.baseUrl}${OPEN_V1_PURCHASE_CHECK_PATH}`, {
-      method: 'POST',
+    const request = new Request(`${this.baseUrl}${recovery?.path ?? OPEN_V1_PURCHASE_CHECK_PATH}`, {
+      method: recovery?.method ?? 'POST',
       headers: {
         'X-App-Key': this.appKey,
         'X-Timestamp': timestamp,
@@ -204,7 +322,7 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ phone }),
+      body: recovery ? recovery.body : JSON.stringify({ phone }),
       redirect: 'manual',
       signal,
     });
