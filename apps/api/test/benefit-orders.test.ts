@@ -1322,6 +1322,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0003_benefit_orders',
         '0004_supplier_product_mappings',
         '0005_benefit_order_mapping_version',
+        '0006_supplier_connections',
       ]);
     } finally {
       handle.close();
