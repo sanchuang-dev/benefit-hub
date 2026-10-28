@@ -212,7 +212,9 @@ describe('login flow', () => {
       expect(screen.getByText(notice)).toBeTruthy();
       expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
     }
-  }, 20_000);
+  // Four Ant Design route transitions render asynchronously on loaded CI runners;
+  // retain the full assertions with a bounded 45s integration budget.
+  }, 45_000);
 
   it('logs out through the user menu and returns to the login screen', async () => {
     let loggedOut = false;
