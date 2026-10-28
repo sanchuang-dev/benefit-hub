@@ -139,6 +139,7 @@ export function SupplierDetailPage() {
   const system = useSystemStatusQuery();
 
   const supplierInfo = supplier.data?.supplier;
+  const hasReadResult = probeRequested || catalog.isSuccess || catalog.isError;
   const readConfigured = supplierInfo?.catalogRead.configured ?? false;
   const probeStatus = catalog.isSuccess ? (
     <Tag color="green">本次目录读取成功</Tag>
@@ -189,11 +190,11 @@ export function SupplierDetailPage() {
             loading={catalog.isFetching}
             disabled={!readConfigured}
             onClick={() => {
-              if (!probeRequested) setProbeRequested(true);
+              if (!hasReadResult) setProbeRequested(true);
               else void catalog.refetch();
             }}
           >
-            {probeRequested ? '重新验证' : '验证目录读取'}
+            {hasReadResult ? '重新验证' : '验证目录读取'}
           </Button>
         }
       >
@@ -204,7 +205,7 @@ export function SupplierDetailPage() {
             title="服务器未配置上力只读凭证"
             description="当前运行环境没有完整的 D 商品查询配置。此前的测试 Key 不会被复制进浏览器或代码；只有服务端安全注入后才能执行实际读取。"
           />
-        ) : !probeRequested ? (
+        ) : !hasReadResult ? (
           <Alert
             type="info"
             showIcon
