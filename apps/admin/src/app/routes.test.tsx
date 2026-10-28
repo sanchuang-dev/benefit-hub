@@ -74,7 +74,7 @@ describe('unauthenticated access', () => {
 });
 
 describe('login flow', () => {
-  it('authenticates and enters the protected four-module shell', async () => {
+  it('authenticates and enters the protected platform shell', async () => {
     mockFetch((url, init) => {
       if (url === '/api/v1/auth/session') {
         return jsonResponse(401, { error: 'UNAUTHENTICATED', message: '请先登录' });
@@ -103,7 +103,7 @@ describe('login flow', () => {
 
     expect(await screen.findByRole('heading', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
     expect(await screen.findByText('供应商履约保持禁用')).toBeTruthy();
-    for (const label of ['总览', '商品管理', '发放记录', '系统设置']) {
+    for (const label of ['总览', '商品管理', '供应商管理', '下游应用', '价值换算', '接口管理', '发放记录', '系统设置']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(screen.getAllByText('运维管理员').length).toBeGreaterThan(0);
@@ -167,6 +167,37 @@ describe('login flow', () => {
     fireEvent.click(screen.getByRole('tab', { name: '总览' }));
     expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
   }, 15_000);
+
+
+  it('opens each platform domain from the first-level sidebar without inventing a backend', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          vendorFulfillmentEnabled: false,
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+
+    for (const [name, notice] of [
+      ['供应商管理', '供应商管理 API 尚未接入'],
+      ['下游应用', '应用登记与授权管理 API 尚未接入'],
+      ['价值换算', '价值换算规则服务尚未接入'],
+      ['接口管理', '配置驱动的接口生成与发布尚未接入'],
+    ]) {
+      fireEvent.click(await screen.findByRole('menuitem', { name }));
+      expect(await screen.findByRole('heading', { name })).toBeTruthy();
+      expect(screen.getByText(notice)).toBeTruthy();
+      expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
+    }
+  }, 20_000);
 
   it('logs out through the user menu and returns to the login screen', async () => {
     let loggedOut = false;
