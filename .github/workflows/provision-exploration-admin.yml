@@ -1,0 +1,16 @@
+name: Provision Exploration Admin
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  provision:
+    if: github.actor == 'dangjingtao' && github.repository == 'sanchuang-dev/benefit-hub'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate account provisioning request
+        env:
+          INITIAL_PASSWORD: ${{ secrets.BENEFIT_ADMIN_INITIAL_PASSWORD }}
+        run: |
+          test -n "$INITIAL_PASSWORD"
+          echo "Account provisioning preflight OK"
