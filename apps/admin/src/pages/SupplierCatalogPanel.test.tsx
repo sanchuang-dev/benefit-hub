@@ -209,7 +209,7 @@ describe('supplier products tab', () => {
     });
 
     renderRoutes('/catalog');
-    const section = screen.getByRole('region', { name: '内部商品列表' });
+    const section = await screen.findByRole('region', { name: '内部商品列表' }, { timeout: 5000 });
     expect(await within(section).findByText('INTERNAL-01', undefined, { timeout: 5000 })).toBeTruthy();
 
     fireEvent.click(within(section).getByText('卡片'));
