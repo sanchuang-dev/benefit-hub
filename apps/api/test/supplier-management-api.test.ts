@@ -44,7 +44,6 @@ describe('read-only supplier management API', () => {
         key: 'yangmao',
         name: '上力',
         catalogRead: { supported: true, configured: false, source: 'none', locked: false, canEdit: false },
-        fulfillmentEnabled: false,
       }],
     });
   });
@@ -60,7 +59,7 @@ describe('read-only supplier management API', () => {
       const raw = await response.text();
       expect(response.status).toBe(200);
       expect(raw).toContain('"configured":true');
-      expect(raw).toContain('"fulfillmentEnabled":false');
+      expect(raw).not.toContain('"fulfillmentEnabled"');
       expect(raw).not.toContain('fixture-no-real-key');
       expect(raw).not.toContain('fixture-no-real-secret');
       expect(raw).not.toContain('dev-api.isunpow.com');
