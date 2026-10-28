@@ -176,6 +176,67 @@ describe('supplier products tab', () => {
     expect((screen.getByLabelText('关键词') as HTMLInputElement).value).toBe('咖啡');
   }, 60_000);
 
+  it('paginates internal product cards and keeps the page when switching to table view', async () => {
+    const internalProducts = Array.from({ length: 25 }, (_, index) => ({
+      id: `internal-${index + 1}`,
+      code: `INTERNAL-${String(index + 1).padStart(2, '0')}`,
+      name: `内部商品${index + 1}`,
+      shortDescription: '',
+      status: 'active' as const,
+      displayPriceCents: 1200,
+      estimatedCostCents: null,
+      version: 1,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      vendorFulfillmentEnabled: false as const,
+    }));
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, SUPPLIER_CATALOG);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = new URLSearchParams(url.split('?')[1] ?? '');
+        const page = Number(params.get('page') ?? 1);
+        const pageSize = Number(params.get('pageSize') ?? 20);
+        return jsonResponse(200, {
+          products: internalProducts.slice((page - 1) * pageSize, page * pageSize),
+          page,
+          pageSize,
+          total: internalProducts.length,
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    const section = screen.getByRole('region', { name: '内部商品列表' });
+    expect(await within(section).findByText('INTERNAL-01', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(within(section).getByText('卡片'));
+    expect(await within(section).findByText('INTERNAL-01')).toBeTruthy();
+
+    const nextPage = section.querySelector('.catalog-card-pagination .ant-pagination-next button');
+    expect(nextPage).toBeTruthy();
+    fireEvent.click(nextPage!);
+
+    expect(await within(section).findByText('INTERNAL-21', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(within(section).queryByText('INTERNAL-01')).toBeNull();
+
+    fireEvent.click(within(section).getByText('表格'));
+    expect(await within(section).findByText('INTERNAL-21')).toBeTruthy();
+    fireEvent.click(within(section).getByText('卡片'));
+    expect(await within(section).findByText('INTERNAL-21')).toBeTruthy();
+
+    const readUrls = (fetchMock.mock.calls as [string][]).map(([url]) => url);
+    expect(
+      readUrls.some((url) =>
+        url.startsWith('/api/v1/catalog/products?') &&
+        new URLSearchParams(url.split('?')[1] ?? '').get('page') === '2',
+      ),
+    ).toBe(true);
+    expect(writeCalls(fetchMock)).toEqual([]);
+  }, 60_000);
+
   it('shows a real empty supplier catalogue distinctly from a failure', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return sessionResponse();
