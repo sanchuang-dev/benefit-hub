@@ -12,6 +12,7 @@ import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
 import { invalidRequest, issueFields, readJson } from '../http.js';
 import {
   OrderApplicationDisabledError,
+  OrderCredentialRevokedError,
   OrderInputError,
   OrderIntentConflictError,
   OrderMappingUnavailableError,
@@ -70,6 +71,9 @@ function handleOrderError(c: Context<AppEnv>, error: unknown) {
       409,
       NO_STORE_HEADERS,
     );
+  }
+  if (error instanceof OrderCredentialRevokedError) {
+    return c.json(apiError('UNAUTHORIZED', '缺少或无效的服务凭证'), 401, NO_STORE_HEADERS);
   }
   if (error instanceof OrderApplicationDisabledError) {
     return c.json(
@@ -158,6 +162,7 @@ export function createBusinessOrderRoutes(deps: {
       const result = repository.createOrGetIntent({
         // The only trusted source of caller identity is the verified credential.
         businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
         businessOrderNo: parsed.data.businessOrderNo,
         productId: parsed.data.productId,
       });

@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, gte, lte } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import {
   benefitOrders,
   benefitOrderStatusEvents,
+  businessApplicationCredentials,
   businessApplicationProducts,
   businessApplications,
   catalogProducts,
@@ -19,6 +20,7 @@ import {
   normalizeBusinessSource,
   normalizeUpstreamRef,
   OrderApplicationDisabledError,
+  OrderCredentialRevokedError,
   OrderInputError,
   OrderIntentConflictError,
   OrderMappingUnavailableError,
@@ -50,6 +52,8 @@ import {
  */
 export interface CreateOrderIntentInput {
   businessSource: string;
+  /** Present only for a DB-issued Bearer verified by machine auth, never supplied by the caller. */
+  applicationCredentialId?: string | null;
   businessOrderNo: string;
   productId: string;
 }
@@ -325,6 +329,28 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
             .where(eq(businessApplications.businessSource, businessSource))
             .limit(1)
             .get();
+
+          // Authentication happens before async request-body parsing. A credential
+          // can be revoked while the request waits for its body, so re-check the
+          // exact verified credential under the same write lock as the order insert.
+          // Legacy environment clients have no DB credential id and retain their
+          // existing application-status/allowlist checks below.
+          if (input.applicationCredentialId != null) {
+            const credential = tx
+              .select({ applicationId: businessApplicationCredentials.applicationId })
+              .from(businessApplicationCredentials)
+              .where(
+                and(
+                  eq(businessApplicationCredentials.id, input.applicationCredentialId),
+                  isNull(businessApplicationCredentials.revokedAt),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!application || !credential || credential.applicationId !== application.id) {
+              throw new OrderCredentialRevokedError('应用服务凭证已失效');
+            }
+          }
 
           if (application && application.status !== 'enabled') {
             throw new OrderApplicationDisabledError(

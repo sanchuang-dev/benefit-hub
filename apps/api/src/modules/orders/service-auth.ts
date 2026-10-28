@@ -86,6 +86,7 @@ export function requireBusinessClient(
         );
       }
       c.set('businessSource', matchedSource);
+      c.set('businessCredentialId', null);
       await next();
       return;
     }
@@ -103,6 +104,7 @@ export function requireBusinessClient(
     }
 
     c.set('businessSource', credential.businessSource);
+    c.set('businessCredentialId', credential.credentialId);
     await next();
   };
 }

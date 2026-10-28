@@ -736,6 +736,78 @@ describe('application machine credentials', () => {
     expect(orderCount(server)).toBe(0);
   });
 
+  it('refuses a new order when the credential is revoked after authentication while its body is pending', async () => {
+    const server = startServer();
+    const admin = await login(server, 'app.admin', 'admin');
+    const product = seedProduct(server, 'CRED-REVOKE-RACE');
+    activateMapping(server, product.id);
+    const application = await createApplication(admin, {
+      businessSource: 'local-life',
+      name: '本地生活',
+    });
+    expect(
+      (
+        await admin.put(`${BASE}/${application.id}/products`, {
+          version: application.version,
+          productIds: [product.id],
+        })
+      ).status,
+    ).toBe(200);
+    const issued = issueApplicationCredentialResponseSchema.parse(
+      await (await admin.post(`${BASE}/${application.id}/credentials`)).json(),
+    );
+
+    // The real HTTP order route authenticates the Bearer before readJson waits
+    // for the request stream. Pause body delivery at that boundary, then revoke.
+    let notifyBodyRead!: () => void;
+    let releaseBody!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      notifyBodyRead = resolve;
+    });
+    const bodyReleased = new Promise<void>((resolve) => {
+      releaseBody = resolve;
+    });
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        notifyBodyRead();
+        await bodyReleased;
+        controller.enqueue(
+          new TextEncoder().encode(
+            JSON.stringify({ businessOrderNo: 'CRED-RACE-1', productId: product.id }),
+          ),
+        );
+        controller.close();
+      },
+    });
+
+    const pendingOrder = server.app.request(BUSINESS_ORDERS, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${issued.secret}`,
+        'content-type': 'application/json',
+      },
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    try {
+      await bodyReadStarted;
+      const revoked = await admin.post(
+        `${BASE}/${application.id}/credentials/${issued.credential.id}/revoke`,
+      );
+      expect(revoked.status).toBe(200);
+    } finally {
+      releaseBody();
+    }
+
+    const result = await pendingOrder;
+    expect(result.status).toBe(401);
+    expect(businessOrderErrorSchema(await result.json())).toBe('UNAUTHORIZED');
+    expect(orderCount(server)).toBe(0);
+    expect(statusEventCount(server)).toBe(0);
+    expect(attemptCount(server)).toBe(0);
+  });
+
   it('revokes immediately, idempotently and without cross-application access', async () => {
     const server = startServer();
     const admin = await login(server, 'app.admin', 'admin');

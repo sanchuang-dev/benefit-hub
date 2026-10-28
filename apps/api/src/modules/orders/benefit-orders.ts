@@ -100,6 +100,8 @@ export class OrderProductNotActiveError extends Error {}
 export class OrderApplicationDisabledError extends Error {}
 /** The product is not on the registered application's configured allowlist. */
 export class OrderProductNotAuthorizedError extends Error {}
+/** A previously authenticated application credential was revoked before order creation. */
+export class OrderCredentialRevokedError extends Error {}
 /** The product has no current active supplier mapping version to freeze. */
 export class OrderMappingUnavailableError extends Error {}
 

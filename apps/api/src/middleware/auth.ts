@@ -17,6 +17,8 @@ export interface AppEnv {
      * service credential. It is never read from a request body or query string.
      */
     businessSource: string;
+    /** Server-verified DB credential identity; null for legacy environment callers. */
+    businessCredentialId: string | null;
   };
 }
 
