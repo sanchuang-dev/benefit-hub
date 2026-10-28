@@ -153,6 +153,9 @@ describe('login flow', () => {
           authenticationRequired: true,
         });
       }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, { orders: [], page: 1, pageSize: 20, total: 0 });
+      }
       return undefined;
     });
 

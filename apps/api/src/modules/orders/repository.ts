@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import {
   benefitOrders,
@@ -34,6 +34,7 @@ import {
   type AttemptResult,
   type BenefitOrder,
   type FulfillmentAttempt,
+  type FulfillmentMode,
   type OrderStatus,
   type OrderStatusEvent,
 } from './benefit-orders.js';
@@ -70,6 +71,60 @@ export interface AppendFulfillmentAttemptInput {
   observedStatus?: OrderStatus | null;
   occurredAt?: number;
   lastVerifiedAt?: number | null;
+}
+
+/**
+ * Operator list query. Every filter is independent and already validated at the
+ * HTTP boundary; the repository only applies exact, index-friendly predicates.
+ * `createdFrom`/`createdTo` are inclusive UTC epoch-millisecond bounds.
+ */
+export interface ListOrdersForOperationsQuery {
+  page: number;
+  pageSize: number;
+  businessSource?: string;
+  businessOrderNo?: string;
+  status?: OrderStatus;
+  createdFrom?: number;
+  createdTo?: number;
+}
+
+export interface OperationsOrderListRow {
+  order: BenefitOrder;
+  /** Current internal product name, not a creation-time historical snapshot. */
+  currentProductName: string;
+}
+
+export interface OperationsOrderListResult {
+  orders: OperationsOrderListRow[];
+  total: number;
+}
+
+/** Current internal product row; deliberately separate from frozen provenance. */
+export interface OperationsOrderProduct {
+  id: string;
+  code: string;
+  name: string;
+  status: 'active' | 'disabled';
+}
+
+/** Immutable mapping snapshot referenced by the order's own `mappingVersionId`. */
+export interface OperationsOrderFrozenMapping {
+  id: string;
+  mappingId: string;
+  versionNumber: number;
+  provider: string;
+  productCode: string;
+  fulfillmentMode: FulfillmentMode;
+  deductionUnit: 'pack' | 'amount';
+  activatedAt: number;
+}
+
+export interface OperationsOrderDetail {
+  order: BenefitOrder;
+  currentProduct: OperationsOrderProduct;
+  frozenMapping: OperationsOrderFrozenMapping | null;
+  statusEvents: OrderStatusEvent[];
+  attempts: FulfillmentAttempt[];
 }
 
 /**
@@ -111,6 +166,16 @@ export interface BenefitOrderRepository {
   listStatusEvents(orderId: string): OrderStatusEvent[];
   appendAttempt(input: AppendFulfillmentAttemptInput): FulfillmentAttempt;
   listAttempts(orderId: string): FulfillmentAttempt[];
+  /**
+   * Operator-only paginated listing across all business sources. Ordered by
+   * `createdAt DESC, id DESC` so equal timestamps still page deterministically.
+   */
+  listForOperations(query: ListOrdersForOperationsQuery): OperationsOrderListResult;
+  /**
+   * Operator-only detail assembled from persisted local facts. The product row
+   * is current; supplier provenance comes only from the order's frozen snapshot.
+   */
+  getForOperations(orderId: string): OperationsOrderDetail | null;
 }
 
 interface OrderRow {
@@ -184,6 +249,41 @@ function toFulfillmentAttempt(row: AttemptRow): FulfillmentAttempt {
     lastVerifiedAt: row.lastVerifiedAt,
   };
 }
+
+/**
+ * Stored enum columns are constrained by SQLite CHECKs. Reading anything else
+ * is data corruption, not a reason to render a guessed operator-facing value.
+ */
+function toStoredProductStatus(value: string): 'active' | 'disabled' {
+  if (value === 'active' || value === 'disabled') return value;
+  throw new Error(`Unknown catalog product status stored in database: ${value}`);
+}
+
+function toStoredDeductionUnit(value: string): 'pack' | 'amount' {
+  if (value === 'pack' || value === 'amount') return value;
+  throw new Error(`Unknown deduction unit stored in database: ${value}`);
+}
+
+function loadStatusEvents(db: AppDatabase, orderId: string): OrderStatusEvent[] {
+  const rows = db
+    .select()
+    .from(benefitOrderStatusEvents)
+    .where(eq(benefitOrderStatusEvents.orderId, orderId))
+    .orderBy(asc(benefitOrderStatusEvents.version))
+    .all();
+  return rows.map(toOrderStatusEvent);
+}
+
+function loadAttempts(db: AppDatabase, orderId: string): FulfillmentAttempt[] {
+  const rows = db
+    .select()
+    .from(fulfillmentAttempts)
+    .where(eq(fulfillmentAttempts.orderId, orderId))
+    .orderBy(asc(fulfillmentAttempts.occurredAt), asc(fulfillmentAttempts.id))
+    .all();
+  return rows.map(toFulfillmentAttempt);
+}
+
 
 function isForeignKeyViolation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('FOREIGN KEY constraint failed');
@@ -378,13 +478,7 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
     },
 
     listStatusEvents(orderId) {
-      const rows = db
-        .select()
-        .from(benefitOrderStatusEvents)
-        .where(eq(benefitOrderStatusEvents.orderId, requireOrderId(orderId)))
-        .orderBy(asc(benefitOrderStatusEvents.version))
-        .all();
-      return rows.map(toOrderStatusEvent);
+      return loadStatusEvents(db, requireOrderId(orderId));
     },
 
     appendAttempt(input) {
@@ -423,13 +517,123 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
     },
 
     listAttempts(orderId) {
+      return loadAttempts(db, requireOrderId(orderId));
+    },
+
+    listForOperations(query) {
+      const conditions = [];
+      if (query.businessSource !== undefined) {
+        conditions.push(eq(benefitOrders.businessSource, query.businessSource));
+      }
+      if (query.businessOrderNo !== undefined) {
+        conditions.push(eq(benefitOrders.businessOrderNo, query.businessOrderNo));
+      }
+      if (query.status !== undefined) {
+        conditions.push(eq(benefitOrders.status, query.status));
+      }
+      if (query.createdFrom !== undefined) {
+        conditions.push(gte(benefitOrders.createdAt, query.createdFrom));
+      }
+      if (query.createdTo !== undefined) {
+        conditions.push(lte(benefitOrders.createdAt, query.createdTo));
+      }
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+      // The count is a separate bounded aggregate over the same predicates, so
+      // the UI total is the real filtered total rather than the current page.
+      const total =
+        db.select({ value: count() }).from(benefitOrders).where(where).get()?.value ?? 0;
+
+      // Existing indexes cover the source/identity and status+creation filters.
+      // There is deliberately no new `created_at` index in this slice, so the
+      // unfiltered ordering still needs SQLite's sort; that remains a separate
+      // migration decision rather than being smuggled into a read-only card.
       const rows = db
-        .select()
-        .from(fulfillmentAttempts)
-        .where(eq(fulfillmentAttempts.orderId, requireOrderId(orderId)))
-        .orderBy(asc(fulfillmentAttempts.occurredAt), asc(fulfillmentAttempts.id))
+        .select({ order: benefitOrders, currentProductName: catalogProducts.name })
+        .from(benefitOrders)
+        .innerJoin(catalogProducts, eq(catalogProducts.id, benefitOrders.productId))
+        .where(where)
+        .orderBy(desc(benefitOrders.createdAt), desc(benefitOrders.id))
+        .limit(query.pageSize)
+        .offset((query.page - 1) * query.pageSize)
         .all();
-      return rows.map(toFulfillmentAttempt);
+
+      return {
+        orders: rows.map((row) => ({
+          order: toBenefitOrder(row.order),
+          currentProductName: row.currentProductName,
+        })),
+        total,
+      };
+    },
+
+    getForOperations(orderId) {
+      const row = db
+        .select()
+        .from(benefitOrders)
+        .where(eq(benefitOrders.id, requireOrderId(orderId)))
+        .limit(1)
+        .get();
+      if (!row) return null;
+      const order = toBenefitOrder(row);
+
+      const productRow = db
+        .select({
+          id: catalogProducts.id,
+          code: catalogProducts.code,
+          name: catalogProducts.name,
+          status: catalogProducts.status,
+        })
+        .from(catalogProducts)
+        .where(eq(catalogProducts.id, order.productId))
+        .limit(1)
+        .get();
+      if (!productRow) {
+        // The foreign key makes this unreachable; a fabricated product name
+        // would be worse than an explicit server-side failure.
+        throw new Error(`Order ${order.id} references a missing catalog product`);
+      }
+
+      const frozenRow =
+        order.mappingVersionId === null
+          ? undefined
+          : db
+              .select({
+                id: supplierProductMappingVersions.id,
+                mappingId: supplierProductMappingVersions.mappingId,
+                versionNumber: supplierProductMappingVersions.versionNumber,
+                provider: supplierProductMappingVersions.provider,
+                productCode: supplierProductMappingVersions.productCode,
+                fulfillmentMode: supplierProductMappingVersions.fulfillmentMode,
+                deductionUnit: supplierProductMappingVersions.deductionUnit,
+                activatedAt: supplierProductMappingVersions.activatedAt,
+              })
+              .from(supplierProductMappingVersions)
+              .where(eq(supplierProductMappingVersions.id, order.mappingVersionId))
+              .limit(1)
+              .get();
+      if (order.mappingVersionId !== null && !frozenRow) {
+        // The frozen reference is a foreign key; never fall back to the current
+        // active mapping, because that would rewrite history.
+        throw new Error(`Order ${order.id} references a missing mapping version`);
+      }
+
+      return {
+        order,
+        currentProduct: {
+          ...productRow,
+          status: toStoredProductStatus(productRow.status),
+        },
+        frozenMapping: frozenRow
+          ? {
+              ...frozenRow,
+              fulfillmentMode: toFulfillmentMode(frozenRow.fulfillmentMode),
+              deductionUnit: toStoredDeductionUnit(frozenRow.deductionUnit),
+            }
+          : null,
+        statusEvents: loadStatusEvents(db, order.id),
+        attempts: loadAttempts(db, order.id),
+      };
     },
   };
 }

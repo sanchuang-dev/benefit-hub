@@ -16,6 +16,7 @@ import {
   BUSINESS_ORDER_COLLECTION_PATH,
   createBusinessOrderRoutes,
 } from './modules/orders/business-order-routes.js';
+import { createOperationsOrderRoutes } from './modules/operations/order-routes.js';
 
 export interface AppDependencies {
   db: AppDatabase;
@@ -82,6 +83,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
   app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));
   app.route('/api/v1/business/orders', createBusinessOrderRoutes(deps));
+  app.route('/api/v1/operations', createOperationsOrderRoutes(deps));
 
   app.all('/api/*', (c) => c.json(apiError('NOT_FOUND', '接口不存在'), 404));
 

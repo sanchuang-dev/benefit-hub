@@ -105,7 +105,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 
 ## 6. 发布门槛与验收证据
 
-- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，供应商商品、发放记录等页面仍待实现。
+- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，BHB-013-B1 已实现「发放记录」的平台本地订单只读页（真实供应商履约与发放仍未实现）。
 - [x] 公司原型服务器 Docker/Compose、端口占用及 Caddy/原型服务已读检查（后续变更须复核）。
 - [x] SSH 凭证链路和主机指纹已在 CI 实测通过；不得回显 Secret。
 - [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在（BHB-002 仅在本地临时 SQLite 验证迁移/重启，未在服务器复核）。

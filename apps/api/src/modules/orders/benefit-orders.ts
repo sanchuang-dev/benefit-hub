@@ -7,10 +7,14 @@
  */
 
 import {
+  ATTEMPT_OPERATIONS,
+  ATTEMPT_RESULTS,
   BUSINESS_ORDER_NO_PATTERN,
   BUSINESS_SOURCE_PATTERN,
   FULFILLMENT_MODES,
   ORDER_STATUSES,
+  type AttemptOperation,
+  type AttemptResult,
   type FulfillmentMode,
   type OrderStatus,
 } from '@sanchuang-dev/benefit-contracts';
@@ -30,16 +34,9 @@ export type { FulfillmentMode };
 export { ORDER_STATUSES };
 export type { OrderStatus };
 
-/** Operations we may record against an order; no supplier-specific action names. */
-export const ATTEMPT_OPERATIONS = ['grant', 'query', 'reissue'] as const;
-export type AttemptOperation = (typeof ATTEMPT_OPERATIONS)[number];
-
-/**
- * What a single attempt observed. `accepted` only means the supplier
- * acknowledged the request, never that the benefit reached the user.
- */
-export const ATTEMPT_RESULTS = ['accepted', 'rejected', 'unknown'] as const;
-export type AttemptResult = (typeof ATTEMPT_RESULTS)[number];
+/** Attempt vocabularies are also owned by the shared wire contract. */
+export { ATTEMPT_OPERATIONS, ATTEMPT_RESULTS };
+export type { AttemptOperation, AttemptResult };
 
 /**
  * A persisted business grant intent. `businessSource + businessOrderNo` is the
