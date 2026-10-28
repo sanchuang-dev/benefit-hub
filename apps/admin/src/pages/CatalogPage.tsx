@@ -127,10 +127,7 @@ function InternalProductCards({
                 </Text>
               </Space>
               <Text type="secondary">更新时间：{formatDateTime(product.updatedAt)}</Text>
-              <Space size={6} wrap>
-                <Tag>真实发放未启用</Tag>
-                <Text type="secondary">映射见详情</Text>
-              </Space>
+              <Text type="secondary">映射见详情</Text>
             </Space>
           </Card>
         </Col>
@@ -207,24 +204,6 @@ export function CatalogPage() {
       key: 'status',
       width: 88,
       render: (status: ProductStatus) => <ProductStatusTag status={status} />,
-    },
-    {
-      title: '真实发放',
-      dataIndex: 'vendorFulfillmentEnabled',
-      key: 'vendorFulfillmentEnabled',
-      width: 188,
-      // This field is the real fulfillment switch and is fixed false in this
-      // slice. It never means "no supplier mapping"; mapping is read per
-      // product in the detail drawer, so the list must not guess or N+1 fetch.
-      render: (enabled: CatalogProduct['vendorFulfillmentEnabled']) =>
-        enabled ? (
-          <Tag color="green">已启用</Tag>
-        ) : (
-          <Space size={6} wrap={false}>
-            <Tag>未启用</Tag>
-            <Text type="secondary">映射见详情</Text>
-          </Space>
-        ),
     },
     {
       title: '展示价',
@@ -424,7 +403,7 @@ export function CatalogPage() {
         <div className="catalog-header-text">
           <Title level={2}>商品管理</Title>
           <Paragraph type="secondary">
-            内部商品由本平台维护名称、展示价与启停；供应商商品是只读来源目录，当前供货方为上力。供应商映射只在内部商品详情中只读查看，真实发放尚未启用。
+            内部商品由本平台维护名称、展示价与状态，供应商商品来自上力供货目录。映射配置请在内部商品详情中查看。
           </Paragraph>
         </div>
         {activeTab === 'internal' ? (
