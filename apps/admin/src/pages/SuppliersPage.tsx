@@ -14,7 +14,7 @@ import type { ColumnsType } from 'antd/es/table';
 import { ArrowLeft, RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { useSessionQuery, useSystemStatusQuery } from '../features/auth/use-auth';
+import { useSessionQuery } from '../features/auth/use-auth';
 import { SupplierConnectionDrawer } from '../features/suppliers/SupplierConnectionDrawer';
 import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel';
 import { useSupplierProductsQuery } from '../features/catalog/use-catalog';
@@ -30,9 +30,9 @@ function formatObservedAt(iso: string): string {
 
 function supplierConfigLabel(supplier: SupplierSummary) {
   return supplier.catalogRead.configured ? (
-    <Tag color="blue">只读凭证已配置（未验证）</Tag>
+    <Tag color="blue">目录凭证已配置</Tag>
   ) : (
-    <Tag>只读凭证未配置</Tag>
+    <Tag>目录凭证待配置</Tag>
   );
 }
 
@@ -61,12 +61,6 @@ export function SuppliersPage() {
       render: (_, supplier) => supplierConfigLabel(supplier),
     },
     {
-      title: '真实发放',
-      key: 'fulfillment',
-      render: (_, supplier) =>
-        supplier.fulfillmentEnabled ? <Tag color="green">已启用（仍需核实履约）</Tag> : <Tag>未启用</Tag>,
-    },
-    {
       title: '操作',
       key: 'action',
       render: (_, supplier) => (
@@ -82,7 +76,7 @@ export function SuppliersPage() {
       <header className="page-header">
         <Title level={2}>供应商管理</Title>
         <Paragraph type="secondary">
-          查看真实供货方、接入配置与供货商品。连接是否可用需要单独执行只读验证。
+          查看供货方、接入配置与供货商品。
         </Paragraph>
       </header>
 
@@ -120,12 +114,6 @@ export function SuppliersPage() {
             />
           )}
         </Card>
-        <Alert
-          type="info"
-          showIcon
-          title="已配置不等于连接成功"
-          description="供应商列表只读取本平台的接入登记与服务器配置状态，不会自动轮询上力；进入供应商详情后可按需验证目录查询。"
-        />
       </Space>
     </div>
   );
@@ -139,7 +127,6 @@ export function SupplierDetailPage() {
   const session = useSessionQuery();
   const supplier = useSupplierQuery('yangmao');
   const catalog = useSupplierProductsQuery({ enabled: probeRequested || tab === 'catalog' });
-  const system = useSystemStatusQuery();
 
   const supplierInfo = supplier.data?.supplier;
   const hasReadResult = probeRequested || catalog.isSuccess || catalog.isError;
@@ -170,15 +157,6 @@ export function SupplierDetailPage() {
               children: supplierInfo ? supplierConfigLabel(supplierInfo) : '待核实',
             },
             { key: 'connection', label: '目录读取结果', children: probeStatus },
-            {
-              key: 'fulfillment',
-              label: '真实派发',
-              children: system.isSuccess && system.data.vendorFulfillmentEnabled
-                ? <Tag color="green">开关已启用，履约仍需核实</Tag>
-                : <Tag>未启用或状态待核实</Tag>,
-            },
-            { key: 'abc', label: 'A/B/C 业务履约', children: <Tag>未联调验收</Tag> },
-            { key: 'orders', label: 'D 查单完整状态合同', children: <Tag>待核实</Tag> },
             { key: 'balance', label: '上游额度余额', children: '商户只读余额接口尚无实证' },
             { key: 'cost', label: '实际扣额和手续费', children: '缺有效订单/账本实证，不以商品售价推断' },
           ]}
@@ -241,7 +219,7 @@ export function SupplierDetailPage() {
   const connection = (
     <Space orientation="vertical" size={16} className="page-stack">
       <Card
-        title="接入方式与已知限制"
+        title="接入方式"
         extra={session.data?.admin.role === 'admin' ? <Button type="primary" onClick={() => setEditorOpen(true)}>编辑接入配置</Button> : null}
       >
         <Descriptions
@@ -257,12 +235,6 @@ export function SupplierDetailPage() {
           ]}
         />
       </Card>
-      <Alert
-        type="warning"
-        showIcon
-        title="真实履约未开放"
-        description="读取商品目录不等于可发券；本页面不执行充值、派发、补发、退款和上力后台管理 API。"
-      />
     </Space>
   );
 
@@ -278,7 +250,7 @@ export function SupplierDetailPage() {
           />
           <div>
             <Title level={2}>上力</Title>
-            <Paragraph type="secondary">接入状态、商品目录和供应商履约边界。</Paragraph>
+            <Paragraph type="secondary">接入配置、商品目录与供货信息。</Paragraph>
           </div>
         </Space>
       </header>
