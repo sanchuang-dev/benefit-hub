@@ -271,7 +271,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
                 description={
                   status === 'active'
                     ? '停用后该内部商品不可再用于后续发放，历史数据不会被删除。'
-                    : '启用后商品可用于创建业务订单；供应商映射在下方独立管理。'
+                    : '启用仅改变商品状态；创建订单还需要有效的供应商映射。'
                 }
                 okText="确认"
                 cancelText="取消"
