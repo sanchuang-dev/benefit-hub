@@ -170,6 +170,38 @@ describe('login flow', () => {
   }, 15_000);
 
 
+  it('keeps the brand toggle operable and restores grouped navigation after collapsing', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+
+    const sider = document.querySelector('.app-sider');
+    expect(sider).not.toBeNull();
+    expect(await screen.findByRole('button', { name: '收起侧边栏' })).toBeTruthy();
+    expect(sider?.classList.contains('ant-layout-sider-collapsed')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: '收起侧边栏' }));
+    expect(await screen.findByRole('button', { name: '展开侧边栏' })).toBeTruthy();
+    expect(sider?.classList.contains('ant-layout-sider-collapsed')).toBe(true);
+    expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '展开侧边栏' }));
+    expect(await screen.findByRole('button', { name: '收起侧边栏' })).toBeTruthy();
+    expect(sider?.classList.contains('ant-layout-sider-collapsed')).toBe(false);
+    expect(screen.getByRole('menuitem', { name: '供货目录' })).toBeTruthy();
+  }, 15_000);
+
   it('keeps owned products and the supplier catalog in separate navigation workspaces', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
