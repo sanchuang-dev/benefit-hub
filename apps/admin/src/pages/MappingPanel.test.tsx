@@ -210,8 +210,8 @@ describe('read-only supplier mapping panel', () => {
     renderRoutes('/catalog');
     expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
 
-    // The list never guesses mapping state from the fulfillment flag.
-    expect(screen.getByText('映射见详情')).toBeTruthy();
+    // The list does not fabricate a fulfillment state; mapping is inspected per product.
+    expect(screen.queryByRole('columnheader', { name: '真实发放' })).toBeNull();
 
     fireEvent.click(rowButton('腾讯出行券 10 元', '查看'));
     expect(await screen.findByText('内部商品详情', undefined, { timeout: 5000 })).toBeTruthy();
@@ -253,7 +253,7 @@ describe('read-only supplier mapping panel', () => {
     expect(within(panel).getByText('已通过本地校验')).toBeTruthy();
     expect(within(panel).getByText('当前没有生效映射')).toBeTruthy();
     expect(within(panel).getByText('仅完成本地映射校验')).toBeTruthy();
-    expect(within(panel).getByText(/本地结构校验/)).toBeTruthy();
+    expect(within(panel).getByText(/本地结构与模式规则/)).toBeTruthy();
     expect(within(panel).getByText('YM-1001')).toBeTruthy();
 
     // The admin editor exposes the frozen draft -> validate -> activate flow.
