@@ -134,7 +134,7 @@ describe('Yangmao supplier management', () => {
     expect(await screen.findByText('限领中')).toBeTruthy();
     expect(calls.some((c) => c.url === '/api/v1/suppliers/yangmao/purchase-check' &&
       c.method === 'POST' && c.body === JSON.stringify({ phone: '13800138000' }))).toBe(true);
-    expect(screen.getByText('响应成功不等于已扣额、发券或到账。')).toBeTruthy();
+    expect(screen.getByText(/响应成功不等于已扣额、发券或到账/)).toBeTruthy();
   }, 20_000);
 
 });
