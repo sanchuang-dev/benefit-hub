@@ -3,12 +3,6 @@ import { apiRequest } from '../../shared/lib/api-client';
 export const PRODUCT_STATUSES = ['active', 'disabled'] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
 
-/**
- * Mirrors the BHB-003 HTTP DTO. `vendorFulfillmentEnabled` is the real
- * fulfillment switch and is always false in this slice; it does not describe
- * whether a supplier mapping exists. Mapping state is read per product through
- * the BHB-009 overview and must never be inferred from this field.
- */
 export interface CatalogProduct {
   id: string;
   code: string;
@@ -20,7 +14,6 @@ export interface CatalogProduct {
   version: number;
   createdAt: number;
   updatedAt: number;
-  vendorFulfillmentEnabled: false;
 }
 
 export interface ProductListParams {
