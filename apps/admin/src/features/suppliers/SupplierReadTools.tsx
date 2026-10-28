@@ -38,7 +38,12 @@ const labels: Record<string, string> = {
   orderNo: '供应商订单号',
   packTotal: '签发礼包份数',
   packRemaining: '剩余礼包份数',
-  expiresAt: '到期信息（供应商原值）',
+  expiresAt: '到期信息（原值，格式待核定）',
+};
+const displayedFields: Record<Kind, string[]> = {
+  eligibility: ['purchaseRestricted', 'giftUnclaimed', 'lotteryUnbet', 'message', 'claimUrl'],
+  order: ['claimable', 'claimUrl', 'orderNo'],
+  voucher: ['packTotal', 'packRemaining', 'expiresAt', 'claimUrl'],
 };
 function resultText(value: unknown): string {
   if (value === true) return '是';
@@ -109,12 +114,10 @@ export function SupplierReadTools() {
         {failure ? <Alert type="error" showIcon title="查询未成功" description={failure} /> : null}
         {result ? (
           <Card size="small" title={<Space><Tag color="green">上力本次响应已解析</Tag><Typography.Text type="secondary">{result.observedAt}</Typography.Text></Space>}>
-            <Descriptions column={1} size="small" items={Object.entries(result)
-              .filter(([key]) => key !== 'provider' && key !== 'observedAt')
-              .map(([key, field]) => ({
+            <Descriptions column={1} size="small" items={displayedFields[kind].map((key) => ({
                 key,
                 label: labels[key] ?? key,
-                children: resultText(field),
+                children: resultText(result[key]),
               }))} />
             <Typography.Text type="secondary">这里只显示已解析字段；响应成功不等于已扣额、发券或到账。</Typography.Text>
           </Card>

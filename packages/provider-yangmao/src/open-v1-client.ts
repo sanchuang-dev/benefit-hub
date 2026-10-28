@@ -62,7 +62,7 @@ export interface YangmaoOpenV1GiftVoucherLookup {
   claimUrl?: string;
   packTotal?: number;
   packRemaining?: number;
-  expiresAt?: string;
+  expiresAt?: string | number;
 }
 const RECOVERY_ID_PATTERN = /^[!-~]{1,64}$/;
 const VOUCHER_CODE_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/;
@@ -83,7 +83,9 @@ const giftVoucherLookupSchema = z.object({
   claimUrl: safeClaimUrlSchema.nullish(),
   packTotal: z.number().int().min(0).nullish(),
   packRemaining: z.number().int().min(0).nullish(),
-  expiresAt: z.string().min(1).max(128).nullish(),
+  // Vendor has not yet confirmed timestamp unit/encoding. Preserve the raw
+  // bounded scalar without guessing ISO/Unix seconds/milliseconds.
+  expiresAt: z.union([z.string().min(1).max(128), z.number().finite().nonnegative()]).nullish(),
 });
 
 export interface YangmaoOpenV1PurchaseReader {
@@ -295,7 +297,7 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
   }
 
   /**
-   * Shared signed-POST pipeline: A/B/C headers only, no redirect following,
+   * Shared signed A/B/C read pipeline (business-read POST or GET), no redirects,
    * then four independent gates in order — HTTP status, JSON parsing, envelope
    * shape, and body `code`. The caller receives the raw `data` value for
    * endpoint-specific validation; nothing here is ever interpreted as an

@@ -30,12 +30,15 @@ function readFailure(c: Context<AppEnv>, error: unknown) {
     return c.json(apiError('SUPPLIER_RESPONSE_UNVERIFIED', '上力响应格式与已确认字段不符，请核对接口合同'), 502, NO_STORE_HEADERS);
   }
   if (error.code === 'YANGMAO_OPEN_V1_AUTH_FAILED' || error.code === 'YANGMAO_OPEN_V1_FORBIDDEN') {
-    return c.json({ ...apiError('SUPPLIER_AUTH_FAILED', '上力鉴权或权限被拒'), vendorCode: error.vendorCode ?? null }, 502, NO_STORE_HEADERS);
+    const detail = error.httpStatus !== undefined
+      ? `HTTP ${error.httpStatus}`
+      : error.vendorCode !== undefined ? `业务码 ${error.vendorCode}` : '来源代码未知';
+    return c.json({ ...apiError('SUPPLIER_AUTH_FAILED', `上力鉴权或权限被拒（${detail}）`), vendorCode: error.vendorCode ?? null, httpStatus: error.httpStatus ?? null }, 502, NO_STORE_HEADERS);
   }
   if (error.code === 'YANGMAO_OPEN_V1_BUSINESS_FAILED') {
     // Only the observed numeric upstream code is safe to expose; never leak vendor
     // message, personal data, request bodies, signatures or voucher codes.
-    return c.json({ ...apiError('SUPPLIER_BUSINESS_FAILED', '上力返回业务错误'), vendorCode: error.vendorCode ?? null }, 502, NO_STORE_HEADERS);
+    return c.json({ ...apiError('SUPPLIER_BUSINESS_FAILED', `上力返回业务错误（业务码 ${error.vendorCode ?? '未知'}）`), vendorCode: error.vendorCode ?? null }, 502, NO_STORE_HEADERS);
   }
   return c.json(apiError('SUPPLIER_READ_FAILED', '上力只读查询失败'), 502, NO_STORE_HEADERS);
 }
