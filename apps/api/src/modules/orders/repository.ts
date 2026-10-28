@@ -4,6 +4,8 @@ import type { AppDatabase } from '../../db/client.js';
 import {
   benefitOrders,
   benefitOrderStatusEvents,
+  businessApplicationProducts,
+  businessApplications,
   catalogProducts,
   fulfillmentAttempts,
   supplierProductMappingVersions,
@@ -16,12 +18,14 @@ import {
   normalizeBusinessOrderNo,
   normalizeBusinessSource,
   normalizeUpstreamRef,
+  OrderApplicationDisabledError,
   OrderInputError,
   OrderIntentConflictError,
   OrderMappingUnavailableError,
   OrderNotFoundError,
   OrderProductNotActiveError,
   OrderProductNotFoundError,
+  OrderProductNotAuthorizedError,
   OrderVersionConflictError,
   requireOrderId,
   requireProductId,
@@ -141,10 +145,18 @@ export interface BenefitOrderRepository {
    * Creates the order intent, or returns the existing order for the same
    * `businessSource + businessOrderNo`.
    *
-   * Replay is resolved before any current-state check: an equivalent existing
-   * order is returned with its original frozen product, mode and mapping
-   * version even if the product has since been disabled or the mapping has been
-   * rotated. A different `productId` for the same business identity fails with
+   * A registered application governs its source: a disabled registration fails
+   * before anything else, and a genuinely new order must use a product on the
+   * application's configured allowlist. Those reads happen inside the same
+   * IMMEDIATE transaction as the insert, so a concurrent disable or allowlist
+   * change either commits before this check or waits until after it. Sources
+   * without a registered application keep the legacy compatibility path.
+   *
+   * Replay of an already accepted order is resolved before product-eligibility
+   * checks: an equivalent existing order is returned with its original frozen
+   * product, mode and mapping version even if the product has since been
+   * disabled, removed from the allowlist or its mapping rotated. A different
+   * `productId` for the same business identity fails with
    * `OrderIntentConflictError` instead of overwriting.
    *
    * A genuinely new order requires an existing `active` internal product with a
@@ -304,8 +316,25 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       // activation either commits before this read or waits until after it.
       return db.transaction(
         (tx) => {
-          // Replay is resolved before eligibility: an already accepted order is
-          // never invalidated by a later product disable or mapping rotation.
+          // Registered-application enforcement is part of the same serialized
+          // unit as the insert: a concurrent `disable`/allowlist write cannot
+          // slip between this check and the order row.
+          const application = tx
+            .select({ id: businessApplications.id, status: businessApplications.status })
+            .from(businessApplications)
+            .where(eq(businessApplications.businessSource, businessSource))
+            .limit(1)
+            .get();
+
+          if (application && application.status !== 'enabled') {
+            throw new OrderApplicationDisabledError(
+              `应用已停用，不能创建新订单：${businessSource}`,
+            );
+          }
+
+          // Replay is resolved before product eligibility: an already accepted
+          // order is never invalidated or rewritten by a later allowlist change,
+          // product disable or mapping rotation.
           const existing = tx
             .select()
             .from(benefitOrders)
@@ -326,6 +355,25 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
               );
             }
             return { order, created: false };
+          }
+
+          if (application) {
+            const authorized = tx
+              .select({ productId: businessApplicationProducts.productId })
+              .from(businessApplicationProducts)
+              .where(
+                and(
+                  eq(businessApplicationProducts.applicationId, application.id),
+                  eq(businessApplicationProducts.productId, productId),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!authorized) {
+              throw new OrderProductNotAuthorizedError(
+                `内部商品不在该应用的商品授权范围内，不能创建新订单：${productId}`,
+              );
+            }
           }
 
           const product = tx

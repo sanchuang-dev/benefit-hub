@@ -4,10 +4,9 @@ export const APPLICATION_STATUSES = ['enabled', 'disabled'] as const;
 export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
 
 /**
- * Mirrors the BHB-014-A HTTP DTO. This is configuration only: an application
- * that is enabled with a configured product allowlist has still not obtained a
- * callable machine credential. `runtimeAuthorizationEnforced` is fixed false in
- * this slice and must never be read as effective permission.
+ * Mirrors the application registry HTTP DTO. `activeCredentialCount` is a
+ * non-secret fact; the raw Bearer token never appears in a read model and is
+ * returned only once by the issue operation.
  */
 export interface BusinessApplication {
   id: string;
@@ -17,7 +16,7 @@ export interface BusinessApplication {
   status: ApplicationStatus;
   version: number;
   configuredProductCount: number;
-  runtimeAuthorizationEnforced: false;
+  activeCredentialCount: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -28,6 +27,17 @@ export interface ApplicationProduct {
   name: string;
   status: 'active' | 'disabled';
   configuredAt: number;
+}
+
+export const APPLICATION_CREDENTIAL_STATUSES = ['active', 'revoked'] as const;
+export type ApplicationCredentialStatus = (typeof APPLICATION_CREDENTIAL_STATUSES)[number];
+
+/** Operator-visible credential state. There is no field for the secret. */
+export interface ApplicationCredential {
+  id: string;
+  status: ApplicationCredentialStatus;
+  issuedAt: number;
+  revokedAt: number | null;
 }
 
 export interface ApplicationListParams {
@@ -42,17 +52,24 @@ export interface ApplicationListResponse {
   page: number;
   pageSize: number;
   total: number;
-  runtimeAuthorizationEnforced: false;
+  runtimeAuthorizationEnforced: true;
 }
 
 export interface ApplicationDetailResponse {
   application: BusinessApplication;
   products: ApplicationProduct[];
-  runtimeAuthorizationEnforced: false;
+  credentials: ApplicationCredential[];
+  runtimeAuthorizationEnforced: true;
 }
 
 interface ApplicationResponse {
   application: BusinessApplication;
+}
+
+/** The only response shape that carries a raw token, and only once. */
+export interface IssuedApplicationCredential {
+  credential: ApplicationCredential;
+  secret: string;
 }
 
 export interface CreateApplicationInput {
@@ -116,7 +133,8 @@ export async function updateApplication(
 
 /**
  * Enable and disable are separate, version-guarded configuration actions. They
- * never mint, reveal or revoke a machine token.
+ * never mint or reveal a machine token, but a disabled application cannot call
+ * the machine order API until it is enabled again.
  */
 export async function setApplicationStatus({
   id,
@@ -140,4 +158,26 @@ export function setApplicationProducts({
     method: 'PUT',
     body: { version, productIds },
   });
+}
+
+/**
+ * Issues an additional machine credential. The response secret must stay in the
+ * drawer's local state only: never in the query cache, storage or a log.
+ */
+export function issueApplicationCredential(id: string): Promise<IssuedApplicationCredential> {
+  return apiRequest<IssuedApplicationCredential>(`/api/v1/applications/${id}/credentials`, {
+    method: 'POST',
+  });
+}
+
+/** Revokes one credential; the caller is rejected on its next request. */
+export async function revokeApplicationCredential(
+  id: string,
+  credentialId: string,
+): Promise<ApplicationCredential> {
+  const body = await apiRequest<{ credential: ApplicationCredential }>(
+    `/api/v1/applications/${id}/credentials/${credentialId}/revoke`,
+    { method: 'POST' },
+  );
+  return body.credential;
 }

@@ -4,9 +4,12 @@ import {
   createApplication,
   fetchApplication,
   fetchApplications,
+  issueApplicationCredential,
+  revokeApplicationCredential,
   setApplicationProducts,
   setApplicationStatus,
   updateApplication,
+  type ApplicationCredential,
   type ApplicationListParams,
   type ApplicationListResponse,
   type ApplicationProductsChange,
@@ -14,6 +17,7 @@ import {
   type BusinessApplication,
   type CreateApplicationInput,
   type ApplicationDetailResponse,
+  type IssuedApplicationCredential,
 } from './api';
 
 export const applicationQueryKeys = {
@@ -93,6 +97,34 @@ export function useSetApplicationProductsMutation() {
   const invalidate = useApplicationInvalidation();
   return useMutation<ApplicationDetailResponse, ApiError, ApplicationProductsChange>({
     mutationFn: setApplicationProducts,
+    onSuccess: () => {
+      void invalidate();
+    },
+  });
+}
+
+/**
+ * Issuing returns the raw secret. It is intentionally not cached: the drawer
+ * keeps it in component state and drops it when the one-time view closes.
+ */
+export function useIssueApplicationCredentialMutation() {
+  const invalidate = useApplicationInvalidation();
+  return useMutation<IssuedApplicationCredential, ApiError, string>({
+    mutationFn: issueApplicationCredential,
+    onSuccess: () => {
+      void invalidate();
+    },
+  });
+}
+
+export function useRevokeApplicationCredentialMutation() {
+  const invalidate = useApplicationInvalidation();
+  return useMutation<
+    ApplicationCredential,
+    ApiError,
+    { id: string; credentialId: string }
+  >({
+    mutationFn: ({ id, credentialId }) => revokeApplicationCredential(id, credentialId),
     onSuccess: () => {
       void invalidate();
     },

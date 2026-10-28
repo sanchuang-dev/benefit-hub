@@ -226,6 +226,63 @@ export const businessApplicationEvents = sqliteTable(
 );
 
 /**
+ * One issued machine Bearer credential for a registered application
+ * (BHB-014-B).
+ *
+ * Only a SHA-256 digest of the token is stored, so a database copy cannot be
+ * replayed as a live credential and no read path can return the secret. The
+ * application binding is immutable; revocation is terminal (`revoked_at` is
+ * never cleared) and takes effect on the next request. `issued_by` /
+ * `revoked_by` hold admin account ids, never tokens.
+ */
+export const businessApplicationCredentials = sqliteTable(
+  'business_application_credentials',
+  {
+    id: text('id').primaryKey(),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    tokenSha256: text('token_sha256').notNull().unique(),
+    issuedBy: text('issued_by').notNull(),
+    issuedAt: integer('issued_at').notNull(),
+    revokedBy: text('revoked_by'),
+    revokedAt: integer('revoked_at'),
+  },
+  (table) => [
+    index('idx_business_application_credentials_application').on(
+      table.applicationId,
+      table.issuedAt,
+    ),
+  ],
+);
+
+/**
+ * Append-only audit facts for credential issuance and revocation. No token,
+ * digest, IP or request body is recorded.
+ */
+export const businessApplicationCredentialEvents = sqliteTable(
+  'business_application_credential_events',
+  {
+    id: text('id').primaryKey(),
+    credentialId: text('credential_id')
+      .notNull()
+      .references(() => businessApplicationCredentials.id, { onDelete: 'restrict' }),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    actorAccountId: text('actor_account_id').notNull(),
+    action: text('action').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_business_application_credential_events_credential').on(
+      table.credentialId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
  * One row per business grant intent. `id` is our internal order id and is never
  * derived from a supplier order number. The unique
  * `business_source + business_order_no` index is the idempotency guarantee, so a

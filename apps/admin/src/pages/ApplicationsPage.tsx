@@ -113,13 +113,31 @@ export function ApplicationsPage() {
         status: target,
         version: application.version,
       });
-      message.success(target === 'enabled' ? '应用已启用（仅配置状态）' : '应用已停用（配置保留）');
+      message.success(
+        target === 'enabled'
+          ? '应用已启用；有效凭证可继续调用业务订单接口'
+          : '应用已停用；该来源的机器调用立即被拒绝（订单与配置保留）',
+      );
     } catch (error) {
       message.error(error instanceof Error ? error.message : '状态更新失败，请稍后重试');
       if (error instanceof ApiError && error.code === 'APPLICATION_VERSION_CONFLICT') {
         void listQuery.refetch();
       }
     }
+  };
+
+  const authorizationCell = (application: BusinessApplication) => {
+    if (application.status === 'disabled') {
+      return <Tag color="orange">已停用 · 机器调用被拒</Tag>;
+    }
+    if (application.activeCredentialCount > 0) {
+      return (
+        <Tag color="green">
+          已生效 · {application.activeCredentialCount} 个有效凭证
+        </Tag>
+      );
+    }
+    return <Tag color="gold">未签发有效凭证</Tag>;
   };
 
   const columns: ColumnsType<BusinessApplication> = [
@@ -163,12 +181,10 @@ export function ApplicationsPage() {
     },
     {
       title: '机器调用授权',
-      dataIndex: 'runtimeAuthorizationEnforced',
-      key: 'runtimeAuthorizationEnforced',
-      width: 152,
-      // Fixed false in this slice: a stored registration/allowlist is not an
-      // issued credential and must never be rendered as effective permission.
-      render: () => <Tag>运行时鉴权未接入</Tag>,
+      dataIndex: 'activeCredentialCount',
+      key: 'activeCredentialCount',
+      width: 196,
+      render: (_: number, application: BusinessApplication) => authorizationCell(application),
     },
     {
       title: '更新时间',
@@ -202,7 +218,11 @@ export function ApplicationsPage() {
               </Button>
               <Popconfirm
                 title={application.status === 'enabled' ? '确认停用该应用？' : '确认启用该应用？'}
-                description="只改变配置状态，不会生成或吊销服务凭证。"
+                description={
+                  application.status === 'enabled'
+                    ? '停用立即拒绝该来源的机器调用；凭证与商品配置保留，已有订单不受影响。'
+                    : '启用后持有有效凭证的调用方可再次调用；仍需商品在授权清单内。'
+                }
                 okText="确认"
                 cancelText="取消"
                 onConfirm={() => toggleStatus(application)}
@@ -234,16 +254,16 @@ export function ApplicationsPage() {
       <header className="page-header">
         <Title level={2}>下游应用</Title>
         <Paragraph type="secondary">
-          登记调用方应用并配置拟授权的三创内部商品。当前只保存配置，不发放服务凭证，也不改变任何现有业务订单接口的来源映射。
+          登记调用方应用、配置可下单的三创内部商品并签发机器凭证。服务端在每次调用时校验应用启停、凭证有效性与商品授权。
         </Paragraph>
       </header>
 
       <Space orientation="vertical" size={16} className="page-stack">
         <Alert
-          type="warning"
+          type="success"
           showIcon
-          title="此处为应用登记与商品授权配置，尚未接入运行时鉴权；已登记/启用 ≠ 已取得可调用凭证。"
-          description="现有业务订单 Bearer 凭证仍只由服务器环境 BENEFIT_ORDER_CLIENTS_JSON 管理，本页面既不能查看、生成，也不能改变它。运行时绑定与强制校验属于后续独立切片。"
+          title="运行时授权已生效：应用启停、凭证状态与商品授权都会约束真实机器调用。"
+          description="在应用详情中签发/撤销凭证并维护商品白名单；原始密钥只在签发时显示一次，平台只保存 SHA-256 摘要。已有订单的冻结商品与映射版本不会被后续配置改写。"
         />
 
         {!isAdmin ? (
@@ -251,7 +271,7 @@ export function ApplicationsPage() {
             type="info"
             showIcon
             title="当前为只读身份"
-            description="可以查看应用与商品配置；登记、编辑、启停和修改商品授权需要管理员权限，服务端也会独立拒绝越权写入。"
+            description="可以查看应用、商品授权与凭证状态；登记、编辑、启停、签发/撤销凭证需要管理员权限，服务端也会独立拒绝越权写入。"
           />
         ) : null}
 

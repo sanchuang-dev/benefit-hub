@@ -399,4 +399,72 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0008_business_application_credentials',
+    sql: `
+      -- Machine credentials for a registered downstream application. Only the
+      -- SHA-256 digest of the Bearer token is persisted, so no database or read
+      -- path can reproduce the secret. Revocation is terminal and leaves the row
+      -- (and its audit facts) intact.
+      CREATE TABLE IF NOT EXISTS business_application_credentials (
+        id TEXT PRIMARY KEY NOT NULL,
+        application_id TEXT NOT NULL REFERENCES business_applications(id) ON DELETE RESTRICT,
+        token_sha256 TEXT NOT NULL,
+        issued_by TEXT NOT NULL,
+        issued_at INTEGER NOT NULL,
+        revoked_by TEXT,
+        revoked_at INTEGER,
+        CHECK (length(token_sha256) = 64),
+        CHECK (token_sha256 NOT GLOB '*[^0-9a-f]*'),
+        CHECK (
+          (revoked_at IS NULL AND revoked_by IS NULL)
+          OR (revoked_at IS NOT NULL AND revoked_by IS NOT NULL)
+        ),
+        CHECK (revoked_at IS NULL OR revoked_at >= issued_at)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_business_application_credentials_digest
+        ON business_application_credentials (token_sha256);
+      CREATE INDEX IF NOT EXISTS idx_business_application_credentials_application
+        ON business_application_credentials (application_id, issued_at DESC);
+
+      -- Append-only issuance/revocation audit; no token, digest or request body.
+      CREATE TABLE IF NOT EXISTS business_application_credential_events (
+        id TEXT PRIMARY KEY NOT NULL,
+        credential_id TEXT NOT NULL REFERENCES business_application_credentials(id) ON DELETE RESTRICT,
+        application_id TEXT NOT NULL REFERENCES business_applications(id) ON DELETE RESTRICT,
+        actor_account_id TEXT NOT NULL,
+        action TEXT NOT NULL CHECK (action IN ('issued', 'revoked')),
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_business_application_credential_events_credential
+        ON business_application_credential_events (credential_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_business_application_credential_events_application
+        ON business_application_credential_events (application_id, created_at);
+
+      -- A credential may never be rebound to another application, re-digested or
+      -- back-dated; revocation is the only permitted update.
+      CREATE TRIGGER IF NOT EXISTS trg_business_application_credentials_binding_immutable
+      BEFORE UPDATE OF application_id, token_sha256, issued_by, issued_at
+      ON business_application_credentials
+      BEGIN
+        SELECT RAISE(ABORT, 'application credential binding is immutable');
+      END;
+
+      -- Revocation is terminal: an already revoked credential stays revoked.
+      CREATE TRIGGER IF NOT EXISTS trg_business_application_credentials_revoked_immutable
+      BEFORE UPDATE ON business_application_credentials
+      WHEN OLD.revoked_at IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'revoked application credential is immutable');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_business_application_credentials_no_delete
+      BEFORE DELETE ON business_application_credentials
+      BEGIN
+        SELECT RAISE(ABORT, 'application credentials are never deleted');
+      END;
+    `,
+  },
 ];
