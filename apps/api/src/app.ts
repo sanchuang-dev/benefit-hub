@@ -71,8 +71,6 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
     c.json({
       service: 'benefit-hub',
       phase: 'auth-enabled',
-      // Supplier fulfillment stays disabled until a separately authorized slice.
-      vendorFulfillmentEnabled: false,
       adminEnabled: true,
       authenticationRequired: true,
     }),
