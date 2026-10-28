@@ -100,7 +100,7 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **已有的真实响应形状证据（纠正首次代码审查误判）**：2026-10-27 经授权的 Mac 开发环境只读请求，脱敏输出明确为 HTTP 200、`code=0`、`dataType="array"`、`count=21`；前四项观察到 `productCode`、`name`、`sellPrice`（售价示例 2.22 / 2.20 元）。因此成功列表的 **`data` 直接是数组并非臆测**。`inrice-catalog-client.test.ts` 保存了匿名化的 4 项结构回归夹具，**并非原始供应商响应或第二次实测**。尚缺全部 21 项的完整字段、价格边界与真实运行该包的对照证据；未来授权只读复测仍应核对全部项目是否满足严格解析，不能因此宽松兼容任意容器或宣称已真实接线。
 - **测试证据**：`packages/provider-yangmao/test/inrice-signature.test.ts` 的固定向量由 OpenSSL 独立计算（命令记录在测试注释中）；成功、鉴权失败、业务失败、HTTP 200 + body `code=500`、非法 JSON、超时、取消、重定向与形状不符分别由注入 transport 和本地 loopback HTTP server 覆盖。**这些是隔离网络的契约测试，不是供应商环境实测**。
 - **与 2026-10-27 实测的区别**：当时授权 Mac 的只读请求是一次真实环境先验观察（HTTP 200、`code=0`、21 个商品），仓库此前记录了脱敏的数组结构、前四项字段及测试商品总数，但没有存储完整响应、签名或凭证。本卡不重放真实请求、不在 CI 使用真实凭证，也不证明商品详情、查单、派发、A/B/C 或生产地址可用。
-- **未接线**：当前没有 Hono 路由、环境变量读取、缓存/落库或后台页面；真实接入需后续卡片单独授权并在服务器侧注入凭证。`vendorFulfillmentEnabled` 仍为 `false`。
+- **未接线**：当前没有 Hono 路由、环境变量读取、缓存/落库或后台页面；真实接入需后续卡片单独授权并在服务器侧注入凭证。供应商实际派发链路尚未实现。
 
 ## 10. D 商品详情只读客户端（BHB-011-B）
 
@@ -109,7 +109,7 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **字段边界**：只解析有实证的 `productCode`、`name`、`sellPrice`（按整数分精确转换，规则与列表共用）；返回快照含 `provider: "yangmao"`、`currency: "CNY"`、`observedAt`。响应 `productCode` 必须与请求一致，否则整次读取失败。`name` 按不可信供应商文本原样透传（禁止空值、控制字符、超过 256 字符的防御性上限），消费方必须按文本渲染。`goodsStatus` **不**解析、不输出、不映射为 onSale/available 等平台规则；`details`、`extraJson`、`picture`、`sketch` 等未确认字段被 schema 剥离，供应商富文本/HTML 不会进入平台或前端。
 - **错误边界**：`code=400` 的“不存在”按合同作为通用业务失败 `YANGMAO_INRICE_BUSINESS_FAILED` 处置，仅保留 `vendorCode=400` 数字供调用方区分，**不**把实测 message“趣米商品不存在”固化为永久内部语义；`code=0` 但 `data` 缺失/null/数组或任一字段不符均为 `YANGMAO_INRICE_RESPONSE_INVALID`；超时、取消、非法 JSON、HTTP 状态映射沿用 011-A 稳定错误码。详情读取从不表达派发/履约成功。
 - **测试证据**：`test/inrice-signature.test.ts` 增加详情签名体与 OpenSSL 独立向量；`test/inrice-product-detail.test.ts` 用脱敏虚构 fixture 覆盖成功 object、不存在（200/400/null）、`code!=0`、非法 JSON/空响应体、字段缺失/类型错误/编码回显不符/价格精度、超时、取消与调用方入参边界；`test/inrice-catalog-http.test.ts` 增加 loopback 真实 fetch 的详情签名 GET、重定向不跟随与超时。全部使用固定 fixture 与本地回环地址，**不含真实凭证，也不是供应商环境实测**；维护者的人工探测是本实现的先前证据，不等于本代码已 live 联调。
-- **未接线/不变**：无订单查单、`POST /dispatch`、A/B/C、SQLite、Hono 路由、UI 或真实运维配置改动；`vendorFulfillmentEnabled` 仍为 `false`。
+- **未接线/不变**：无订单查单、`POST /dispatch`、A/B/C、SQLite、Hono 路由、UI 或真实运维配置改动；供应商实际派发链路尚未实现。
 
 ## 11. A/B/C 签名与 purchase-check 只读资格查询（BHB-011-C）
 
@@ -128,4 +128,4 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **公开字段**：浏览器可见字段仅 `provider`、`currency`、`observedAt`、`productCode`、`sellPriceCents`；详情额外返回经适配器校验的 `name`。供应商原始 `details`/`extraJson`/`goodsStatus`、手机号、签名和 AppKey/AppSecret 不进入响应、日志或浏览器包。
 - **服务器配置**：仅使用 `YANGMAO_INRICE_BASE_URL`、`YANGMAO_INRICE_APP_KEY`、`YANGMAO_INRICE_APP_SECRET`，三项必须同时存在且只由服务端读取。缺失或不完整时接口返回 503 `SUPPLIER_NOT_CONFIGURED`，不会改用开发默认值、空列表或假数据。凭证注入、轮换和生产联调需要单独授权，不属于本卡。
 - **失败语义**：鉴权/HTTP/业务失败返回 502，超时返回 504，未配置返回 503；任何失败都不会被显示成“供应商目录为空”。只有供应商真实返回空数组时才是 200 空列表。
-- **前端边界**：商品管理「供应商商品」Tab 以 Ant Design Table/Card 只读展示供货方（上力）、上游编码、报价和获取时间；名称在选中单品时按需读取，不做整页详情 N+1；可用状态显示“待核实”，不根据 `goodsStatus` 猜测可售。`vendorFulfillmentEnabled=false` 保持不变。
+- **前端边界**：商品管理「供应商商品」Tab 以 Ant Design Table/Card 只读展示供货方（上力）、上游编码、报价和获取时间；名称在选中单品时按需读取，不做整页详情 N+1；可用状态显示“待核实”，不根据 `goodsStatus` 猜测可售。不以静态开关冒充供应商履约能力状态。
