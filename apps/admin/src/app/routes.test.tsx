@@ -172,7 +172,7 @@ describe('login flow', () => {
   }, 15_000);
 
 
-  it('opens each platform domain from the first-level sidebar without inventing a backend', async () => {
+  it('opens each platform domain from the first-level sidebar with its real capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
       if (url === '/api/v1/suppliers') return jsonResponse(200, {
@@ -184,6 +184,15 @@ describe('login flow', () => {
         }],
       });
       if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, { provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }] });
+      if (url.startsWith('/api/v1/applications?')) {
+        return jsonResponse(200, {
+          applications: [],
+          page: 1,
+          pageSize: 20,
+          total: 0,
+          runtimeAuthorizationEnforced: false,
+        });
+      }
       if (url === '/api/v1/system/status') {
         return jsonResponse(200, {
           service: 'benefit-hub',
@@ -202,8 +211,16 @@ describe('login flow', () => {
     expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
     expect(await screen.findByRole('button', { name: '查看供应商' })).toBeTruthy();
 
+    fireEvent.click(await screen.findByRole('menuitem', { name: '下游应用' }));
+    expect(await screen.findByRole('heading', { name: '下游应用' })).toBeTruthy();
+    expect(
+      await screen.findByText(
+        '此处为应用登记与商品授权配置，尚未接入运行时鉴权；已登记/启用 ≠ 已取得可调用凭证。',
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /下游应用/ })).toBeTruthy();
+
     for (const [name, notice] of [
-      ['下游应用', '应用登记与授权管理 API 尚未接入'],
       ['价值换算', '价值换算规则服务尚未接入'],
       ['接口管理', '配置驱动的接口生成与发布尚未接入'],
     ]) {
