@@ -65,11 +65,36 @@
 }
 
 .app-brand-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: #1f2937;
   font-size: 14px;
   font-weight: 600;
+}
+
+.app-sidebar-toggle {
+  flex: 0 0 26px;
+  width: 26px !important;
+  height: 26px;
+  padding: 0 !important;
+  border-radius: 6px;
+  color: #64748b;
+}
+
+.app-sidebar-toggle:hover {
+  color: #2563eb !important;
+  background: #edf3ff !important;
+}
+
+.app-brand-collapsed {
+  gap: 4px;
+  padding-inline: 6px;
+}
+
+.app-brand-collapsed .app-brand-text {
+  display: none;
 }
 
 .app-nav {
@@ -204,17 +229,6 @@
 .page-header .ant-typography-secondary {
   margin-bottom: 0 !important;
   font-size: 13px;
-}
-
-@media (max-width: 991px) {
-  .ant-layout-sider-collapsed .app-brand {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .ant-layout-sider-collapsed .app-brand-text {
-    display: none;
-  }
 }
 
 @media (max-width: 900px) {
