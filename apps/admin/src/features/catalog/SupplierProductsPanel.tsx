@@ -133,7 +133,7 @@ function SupplierProductDrawer({
             type="info"
             showIcon
             title="只读来源快照"
-            description="名称来自本次上力只读详情读取；上游未提供可核实的库存、余额或可售状态。真实发放仍未启用。"
+            description="名称来自本次上力详情查询；库存、余额与可售状态以实际供应商数据为准。"
           />
           <Descriptions
             size="small"
@@ -321,7 +321,7 @@ export function SupplierProductsPanel() {
           <Tag>只读来源目录</Tag>
         </Space>
         <Text type="secondary">
-          目录只展示上力已返回的编码与报价；名称在选中单品时读取。真实发放仍未启用，库存、余额和可售状态不以猜测补齐。
+          目录展示上力返回的商品编码与报价；选中单品后可查询名称等详情。
         </Text>
       </div>
 
