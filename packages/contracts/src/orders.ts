@@ -27,6 +27,19 @@ export const ORDER_STATUSES = [
 export type OrderStatus = (typeof ORDER_STATUSES)[number];
 export const orderStatusSchema = z.enum(ORDER_STATUSES);
 
+/** Operations we may record against an order; no supplier-specific action names. */
+export const ATTEMPT_OPERATIONS = ['grant', 'query', 'reissue'] as const;
+export type AttemptOperation = (typeof ATTEMPT_OPERATIONS)[number];
+export const attemptOperationSchema = z.enum(ATTEMPT_OPERATIONS);
+
+/**
+ * What a single attempt observed. `accepted` only means the supplier
+ * acknowledged the request, never that the benefit reached the user.
+ */
+export const ATTEMPT_RESULTS = ['accepted', 'rejected', 'unknown'] as const;
+export type AttemptResult = (typeof ATTEMPT_RESULTS)[number];
+export const attemptResultSchema = z.enum(ATTEMPT_RESULTS);
+
 /**
  * Our own source key (for example `local-life`). It is lower-cased so two
  * callers cannot create parallel identities that differ only by case.

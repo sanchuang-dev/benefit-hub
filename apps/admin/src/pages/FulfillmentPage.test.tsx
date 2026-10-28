@@ -1,0 +1,400 @@
+// @vitest-environment jsdom
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import type {
+  OperationsOrderDetailDto,
+  OperationsOrderListItemDto,
+  OperationsOrderListResponse,
+} from '@sanchuang-dev/benefit-contracts';
+import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+
+const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
+const NOW = Date.UTC(2026, 9, 20, 1, 0, 0);
+
+const ADMIN = {
+  id: 'account-1',
+  username: 'ops.admin',
+  displayName: '运维管理员',
+  role: 'admin' as const,
+};
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function sessionResponse(): Response {
+  return jsonResponse(200, { admin: ADMIN, session: { expiresAt: SESSION_EXPIRES_AT } });
+}
+
+function order(overrides: Partial<OperationsOrderListItemDto> = {}): OperationsOrderListItemDto {
+  return {
+    id: 'order-1',
+    businessSource: 'local-life',
+    businessOrderNo: 'LO-1001',
+    productId: 'product-1',
+    productName: '腾讯出行券 10 元',
+    status: 'pending',
+    version: 1,
+    fulfillmentMode: 'B',
+    mappingVersionId: 'mapping-version-1',
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+
+function listResponse(
+  orders: OperationsOrderListItemDto[],
+  params: URLSearchParams = new URLSearchParams(),
+): OperationsOrderListResponse {
+  return {
+    orders,
+    page: Number(params.get('page') ?? '1'),
+    pageSize: Number(params.get('pageSize') ?? '20') as 10 | 20 | 50,
+    total: orders.length,
+  };
+}
+
+function detail(overrides: Partial<OperationsOrderDetailDto> = {}): OperationsOrderDetailDto {
+  return {
+    id: 'order-1',
+    businessSource: 'local-life',
+    businessOrderNo: 'LO-1001',
+    productId: 'product-1',
+    status: 'pending',
+    version: 1,
+    fulfillmentMode: 'B',
+    mappingVersionId: 'mapping-version-1',
+    createdAt: NOW,
+    updatedAt: NOW,
+    product: {
+      id: 'product-1',
+      code: 'TRAVEL-10',
+      name: '腾讯出行券 10 元',
+      status: 'active',
+    },
+    frozenMapping: {
+      id: 'mapping-version-1',
+      mappingId: 'mapping-1',
+      versionNumber: 1,
+      provider: 'yangmao',
+      productCode: 'YM-TRAVEL-B',
+      fulfillmentMode: 'B',
+      deductionUnit: 'pack',
+      activatedAt: NOW - 60_000,
+    },
+    statusEvents: [{ id: 'event-1', status: 'pending', version: 1, createdAt: NOW }],
+    attempts: [],
+    ...overrides,
+  };
+}
+
+function mockFetch(
+  handler: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
+): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const response = await handler(url, init);
+    if (!response) throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
+    return response;
+  });
+  vi.stubGlobal('fetch', fetchMock);
+  return fetchMock;
+}
+
+function queryParams(url: string): URLSearchParams {
+  return new URL(url, 'http://localhost').searchParams;
+}
+
+function listCalls(fetchMock: ReturnType<typeof vi.fn>): URLSearchParams[] {
+  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
+    .filter(([url]) => url.startsWith('/api/v1/operations/orders?'))
+    .map(([url]) => queryParams(url));
+}
+
+function writeCalls(fetchMock: ReturnType<typeof vi.fn>): string[] {
+  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
+    .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
+    .map(([url, init]) => `${init?.method ?? 'GET'} ${url}`);
+}
+
+function findButtonText(text: string): HTMLElement {
+  const element = screen.getByText((content) => content.replace(/\s/g, '') === text);
+  const button = element.closest('button');
+  if (!button) throw new Error(`No button containing ${text}`);
+  return button;
+}
+
+beforeAll(() => installDomStubs());
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+describe('platform order list', () => {
+  it('lists persisted orders through server-side filters and never sends write requests', { timeout: 60_000 }, async () => {
+    const pending = order();
+    const completed = order({
+      id: 'order-2',
+      businessSource: 'card-doctor',
+      businessOrderNo: 'CD-2002',
+      productId: 'product-2',
+      productName: '咖啡券',
+      status: 'completed',
+      version: 3,
+      fulfillmentMode: 'D',
+      mappingVersionId: null,
+    });
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        const params = queryParams(url);
+        const source = params.get('businessSource');
+        const status = params.get('status');
+        const matched = [pending, completed].filter((item) => {
+          const sourceMatches = !source || item.businessSource === source;
+          const statusMatches = !status || item.status === status;
+          return sourceMatches && statusMatches;
+        });
+        return jsonResponse(200, listResponse(matched, params));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('CD-2002')).toBeTruthy();
+    expect(screen.getByText('腾讯出行券 10 元')).toBeTruthy();
+    expect(screen.getByText('咖啡券')).toBeTruthy();
+    expect(screen.getByText('待处理')).toBeTruthy();
+    expect(screen.getByText('已完成')).toBeTruthy();
+    expect(screen.getByText('共 2 条')).toBeTruthy();
+    // Legacy row exposes the absent frozen mapping instead of guessing a provider.
+    expect(screen.getByText('无冻结映射')).toBeTruthy();
+
+    const initialParams = listCalls(fetchMock).at(-1);
+    expect(initialParams?.get('page')).toBe('1');
+    expect(initialParams?.get('pageSize')).toBe('20');
+    expect(initialParams?.get('businessSource')).toBeNull();
+
+    // Refresh issues a real new query instead of reusing a browser-side copy.
+    const requestsBeforeRefresh = listCalls(fetchMock).length;
+    fireEvent.click(findButtonText('刷新'));
+    await waitFor(() => expect(listCalls(fetchMock).length).toBeGreaterThan(requestsBeforeRefresh));
+
+    fireEvent.change(screen.getByLabelText('业务来源'), { target: { value: 'LOCAL-LIFE' } });
+    fireEvent.click(findButtonText('查询'));
+
+    await waitFor(() =>
+      expect(listCalls(fetchMock).at(-1)?.get('businessSource')).toBe('local-life'),
+    );
+    await waitFor(() => expect(screen.queryByText('CD-2002')).toBeNull());
+    expect(screen.getByText('LO-1001')).toBeTruthy();
+
+    fireEvent.click(findButtonText('重置'));
+    await screen.findByText('CD-2002');
+
+    fireEvent.mouseDown(screen.getByLabelText('平台状态'));
+    fireEvent.click(await screen.findByTitle('已完成'));
+    fireEvent.click(findButtonText('查询'));
+
+    await waitFor(() => expect(listCalls(fetchMock).at(-1)?.get('status')).toBe('completed'));
+    await waitFor(() => expect(screen.queryByText('LO-1001')).toBeNull());
+    expect(screen.getByText('CD-2002')).toBeTruthy();
+
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('distinguishes an empty platform from a filter with no results', { timeout: 60_000 }, async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+
+    expect(await screen.findByText(/平台还没有订单/, undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('业务订单号'), { target: { value: 'NOT-FOUND' } });
+    fireEvent.click(findButtonText('查询'));
+
+    expect(await screen.findByText('没有符合条件的订单')).toBeTruthy();
+    expect(screen.queryByText(/平台还没有订单/)).toBeNull();
+
+    fireEvent.click(findButtonText('清除筛选'));
+    expect(await screen.findByText(/平台还没有订单/)).toBeTruthy();
+  });
+
+  it('shows a load failure, retries, and distinguishes session expiry from an empty list', { timeout: 60_000 }, async () => {
+    let fail = true;
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        if (fail) {
+          return jsonResponse(500, { error: 'INTERNAL_ERROR', message: '订单查询暂时不可用' });
+        }
+        return jsonResponse(200, listResponse([order()]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+
+    expect(await screen.findByText('平台订单加载失败', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('订单查询暂时不可用')).toBeTruthy();
+    expect(screen.queryByText(/平台还没有订单/)).toBeNull();
+
+    fail = false;
+    fireEvent.click(findButtonText('重试'));
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('keeps the page usable and visible when the list API reports an expired session', { timeout: 60_000 }, async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(401, {
+          error: 'SESSION_EXPIRED',
+          message: '登录已过期，请重新登录',
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+
+    expect(await screen.findByText('登录状态已失效', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('请刷新页面并重新登录后再加载订单记录。')).toBeTruthy();
+    expect(screen.queryByText(/平台还没有订单/)).toBeNull();
+  });
+});
+
+describe('platform order detail drawer', () => {
+  it('groups local facts, frozen provenance and recorded attempts without inventing results', { timeout: 60_000 }, async () => {
+    const detailData = detail({
+      status: 'processing',
+      version: 2,
+      statusEvents: [
+        { id: 'event-1', status: 'pending', version: 1, createdAt: NOW },
+        { id: 'event-2', status: 'processing', version: 2, createdAt: NOW + 1_000 },
+      ],
+      attempts: [
+        {
+          id: 'attempt-1',
+          operation: 'query',
+          result: 'accepted',
+          observedStatus: 'processing',
+          upstreamRequestNo: 'REQ-FICTIONAL-1',
+          upstreamOrderNo: 'UPSTREAM-FICTIONAL-1',
+          occurredAt: NOW + 2_000,
+          lastVerifiedAt: NOW + 3_000,
+        },
+      ],
+    });
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, { order: detailData });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order()]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    expect(await screen.findByText('平台订单详情', undefined, { timeout: 5000 })).toBeTruthy();
+    const drawer = await screen.findByRole('dialog');
+
+    expect(within(drawer).getByText('平台订单')).toBeTruthy();
+    expect(within(drawer).getByText('履约来源')).toBeTruthy();
+    expect(within(drawer).getByText('本地状态与尝试记录')).toBeTruthy();
+    expect(within(drawer).getByText(/当前名称，不是下单时的历史快照/)).toBeTruthy();
+    expect(within(drawer).getByText('上力（yangmao）')).toBeTruthy();
+    expect(within(drawer).getByText('YM-TRAVEL-B')).toBeTruthy();
+    expect(within(drawer).getByText('上力（yangmao）模式 B')).toBeTruthy();
+    expect(within(drawer).getByText(/下单时冻结的不可变映射快照/)).toBeTruthy();
+    expect(within(drawer).getByText('状态查询')).toBeTruthy();
+    expect(within(drawer).getByText('供应商已受理')).toBeTruthy();
+    expect(within(drawer).getByText('REQ-FICTIONAL-1')).toBeTruthy();
+    expect(within(drawer).getByText('UPSTREAM-FICTIONAL-1')).toBeTruthy();
+    expect(within(drawer).getByText(/不代表权益已发放到账/)).toBeTruthy();
+
+    // No fabricated supplier-native or financial conclusions.
+    for (const fabricated of ['已派发', '已扣额', '已到账', '扣款成功', 'dispatchStatus']) {
+      expect(within(drawer).queryByText(fabricated)).toBeNull();
+    }
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('shows a legacy order as no frozen mapping and states the absence of local attempt records', { timeout: 60_000 }, async () => {
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, {
+          order: detail({ mappingVersionId: null, frozenMapping: null }),
+        });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order({ mappingVersionId: null })]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('无冻结映射（历史订单）')).toBeTruthy();
+    expect(within(drawer).getByText('平台暂无供应商调用记录')).toBeTruthy();
+    expect(within(drawer).getByText(/不代表供应商一定未处理/)).toBeTruthy();
+    expect(within(drawer).queryByText(/上力/)).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('shows a detail load failure with retry instead of an empty-looking order', { timeout: 60_000 }, async () => {
+    let fail = true;
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        if (fail) {
+          return jsonResponse(404, { error: 'ORDER_NOT_FOUND', message: '订单不存在' });
+        }
+        return jsonResponse(200, { order: detail() });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order()]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('订单不存在')).toBeTruthy();
+    expect(within(drawer).getByText('没有找到该平台订单，可能已被移除或链接不正确。')).toBeTruthy();
+
+    fail = false;
+    fireEvent.click(within(drawer).getByRole('button', { name: /重\s*试/ }));
+    expect(await within(drawer).findByText('平台订单', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+});
