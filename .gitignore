@@ -5,6 +5,8 @@
 **/coverage/
 **/test-results/
 **/playwright-report/
+# Local pnpm content-addressed package store (machine-local cache, not source)
+.pnpm-store/
 
 # Local runtime files and credentials
 .env
