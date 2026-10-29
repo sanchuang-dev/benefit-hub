@@ -222,9 +222,14 @@ export function createDirectTopupRepository(db: AppDatabase) {
           successCount: input.observed.successCount,
           totalCount: input.observed.totalCount,
           // Never store raw supplier messages, voucher keys, or arbitrary fields.
+          // Supplier status is not a safe free-text field. Preserve only a
+          // small recognized vocabulary; never persist arbitrary provider
+          // strings that might contain recipient/card details.
           itemsSummaryJson: JSON.stringify(input.observed.items.map((item) => ({
             ...(item.claimed === undefined ? {} : { claimed: item.claimed }),
-            ...(item.status === undefined ? {} : { status: item.status }),
+            ...(item.status !== undefined &&
+              /^(completed|failed|pending|processing|unknown|rejected)$/i.test(item.status)
+                ? { status: item.status.toLowerCase() } : {}),
           }))),
           lastVerifiedAt: input.occurredAt,
         } : {}),
