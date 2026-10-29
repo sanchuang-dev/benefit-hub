@@ -443,6 +443,35 @@ export const benefitOrderGiftVouchers = sqliteTable(
   ],
 );
 
+
+/**
+ * B-mode direct-topup reservation and sanitized supplier summary.
+ * The phone remains only a keyed HMAC; individual card identifiers and raw
+ * supplier messages never enter this table.
+ */
+export const benefitOrderDirectTopups = sqliteTable(
+  'benefit_order_direct_topups',
+  {
+    orderId: text('order_id').primaryKey().references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    requestId: text('request_id').notNull(),
+    refCode: text('ref_code').notNull(),
+    phoneHmac: text('phone_hmac').notNull(),
+    paymentReference: text('payment_reference').notNull(),
+    state: text('state').notNull(),
+    upstreamOrderNo: text('upstream_order_no'),
+    successCount: integer('success_count'),
+    totalCount: integer('total_count'),
+    itemsSummaryJson: text('items_summary_json'),
+    lastVerifiedAt: integer('last_verified_at'),
+    attemptedAt: integer('attempted_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_direct_topups_request').on(table.requestId),
+    index('idx_benefit_order_direct_topups_state_updated').on(table.state, table.updatedAt),
+  ],
+);
+
 /** Encrypted server-side provider credentials. No plaintext secrets in DB. */
 export const supplierConnections = sqliteTable('supplier_connections', {
   provider: text('provider').primaryKey(),
