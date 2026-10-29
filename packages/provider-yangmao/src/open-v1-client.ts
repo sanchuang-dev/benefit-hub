@@ -6,10 +6,12 @@ import {
   type YangmaoOpenV1PurchaseEligibility,
 } from './open-v1-purchase-check.js';
 import {
+  buildDirectTopupSignedFields,
   buildGiftVoucherSignedFields,
   buildPrepaidOrderSignedFields,
   buildPurchaseCheckSignedFields,
   createOpenV1Signature,
+  OPEN_V1_DIRECT_TOPUP_PATH,
   OPEN_V1_GIFT_VOUCHER_PATH,
   OPEN_V1_PREPAID_ORDER_PATH,
   OPEN_V1_PREPAID_ORDER_QUERY_PATH,
@@ -107,6 +109,27 @@ export interface YangmaoOpenV1GiftVoucherResult {
   balanceAfter?: number;
   idempotentReplay?: boolean;
 }
+/**
+ * B-mode direct topup has no claimUrl. An allClaimed=false response may have
+ * already deducted one pack; the same requestId is the only permitted retry.
+ */
+export interface YangmaoOpenV1DirectTopupInput {
+  phone: string;
+  refCode: string;
+  productCode: string;
+  requestId: string;
+}
+export interface YangmaoOpenV1DirectTopupResult {
+  provider: 'yangmao';
+  observedAt: string;
+  orderNo: string;
+  allClaimed: boolean;
+  successCount: number;
+  totalCount: number;
+  items: Array<{ claimed?: boolean; status?: string; message?: string }>;
+  balanceAfter?: number;
+  idempotentReplay?: boolean;
+}
 export interface YangmaoOpenV1CreateGiftVoucherInput {
   refCode: string;
   /** Number of packs bundled in this voucher; the vendor accepts 1–12. */
@@ -144,6 +167,32 @@ const prepaidOrderResultSchema = z.object({
   claimUrl: safeClaimUrlSchema,
   balanceAfter: z.number().int().min(0).nullish(),
   idempotentReplay: z.boolean().nullish(),
+});
+const directTopupResultSchema = z.object({
+  orderNo: z.string().min(1).max(128),
+  balanceAfter: z.number().int().min(0).nullish(),
+  allClaimed: z.boolean(),
+  successCount: z.number().int().min(0),
+  totalCount: z.number().int().min(1),
+  items: z.array(z.object({
+    claimed: z.boolean().nullish(),
+    status: z.string().min(1).max(128).nullish(),
+    message: z.string().max(500).nullish(),
+  })).max(100),
+  idempotentReplay: z.boolean().nullish(),
+}).superRefine((value, ctx) => {
+  if (value.successCount > value.totalCount || value.items.length !== value.totalCount) {
+    ctx.addIssue({ code: 'custom', message: 'inconsistent direct topup item count' });
+  }
+  const claimed = value.items.filter((item) => item.claimed === true).length;
+  const explicitlyFailed = value.items.some((item) =>
+    item.claimed === false || /^(failed|error|rejected)$/i.test(item.status ?? ''),
+  );
+  if (claimed > value.successCount || (
+    value.allClaimed && (value.successCount !== value.totalCount || explicitlyFailed)
+  )) {
+    ctx.addIssue({ code: 'custom', message: 'contradictory direct topup fulfillment result' });
+  }
 });
 const rawExpiresAtSchema = z
   .union([z.string().min(1).max(128), z.number().finite().nonnegative()])
@@ -198,6 +247,10 @@ export interface YangmaoOpenV1PurchaseReader {
    * fact before invoking this method, and must never invent a fresh
    * `requestId` after an indeterminate result.
    */
+  directTopup(
+    input: YangmaoOpenV1DirectTopupInput,
+    options?: YangmaoOpenV1ReadOptions,
+  ): Promise<YangmaoOpenV1DirectTopupResult>;
   createPrepaidOrder(
     input: YangmaoOpenV1CreatePrepaidOrderInput,
     options?: YangmaoOpenV1ReadOptions,
@@ -404,6 +457,58 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
       ...(parsed.data.idempotentReplay == null
         ? {}
         : { idempotentReplay: parsed.data.idempotentReplay }),
+    };
+  }
+
+  /**
+   * B-mode direct topup. The POST itself consumes quota; never call it
+   * speculatively and never generate a new requestId to rescue a timeout.
+   */
+  async directTopup(
+    input: YangmaoOpenV1DirectTopupInput,
+    options: YangmaoOpenV1ReadOptions = {},
+  ): Promise<YangmaoOpenV1DirectTopupResult> {
+    if (typeof input.phone !== 'string' || !PHONE_PATTERN.test(input.phone)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_PHONE_INVALID');
+    }
+    if (
+      typeof input.refCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.refCode) ||
+      typeof input.productCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.productCode) ||
+      typeof input.requestId !== 'string' || !RECOVERY_ID_PATTERN.test(input.requestId)
+    ) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    const timestamp = String(Math.trunc(this.clock()));
+    const nonce = this.nonceFactory();
+    if (typeof nonce !== 'string' || !NONCE_PATTERN.test(nonce)) throw configError();
+    const signature = createOpenV1Signature(
+      buildDirectTopupSignedFields({ appKey: this.appKey, timestamp, nonce }, input),
+      this.appSecret,
+    );
+    const data = await this.sendSignedRequest({
+      path: OPEN_V1_DIRECT_TOPUP_PATH,
+      method: 'POST',
+      body: JSON.stringify(input),
+      timestamp, nonce, signature, callerSignal: options.signal,
+    });
+    const parsed = directTopupResultSchema.safeParse(data);
+    if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    const value = parsed.data;
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      orderNo: value.orderNo,
+      allClaimed: value.allClaimed,
+      successCount: value.successCount,
+      totalCount: value.totalCount,
+      // Do not return any upstream fields not named in the contract.
+      items: value.items.map((item) => ({
+        ...(item.claimed == null ? {} : { claimed: item.claimed }),
+        ...(item.status == null ? {} : { status: item.status }),
+        ...(item.message == null ? {} : { message: item.message }),
+      })),
+      ...(value.balanceAfter == null ? {} : { balanceAfter: value.balanceAfter }),
+      ...(value.idempotentReplay == null ? {} : { idempotentReplay: value.idempotentReplay }),
     };
   }
 
