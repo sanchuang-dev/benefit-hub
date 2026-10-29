@@ -34,6 +34,47 @@ Benefit Hub 是三创拥有规则主权的权益服务平台，负责内部商�
 - SQLite + Drizzle 单实例；数据库脱离 Docker 镜像持久化。必要时经迁移计划切换 PostgreSQL。
 - 单应用容器提供 API/运营前端；使用宿主机已有 Caddy，CI 侧编译并交付镜像，避免给 2C2G 服务器增加构建压力。
 
+## 本地开发（前后端一起起）
+
+不依赖 Docker，直接跑源码，API 用 `tsx` 监听 TS，前端用 Vite HMR；Vite 把 `/api` 和 `/healthz` 代理到 API，浏览器只需访问一个地址。
+
+```bash
+pnpm install                 # 首次
+pnpm dev                     # 同时启动 API(:4080) 与运营前端(:4081)
+```
+
+然后在浏览器打开 **http://localhost:4081/**（不要开 4080；4080 只提供 API，本地没有 `public/` 时会提示 `serveStatic root not found`）。
+`http://localhost:4081/healthz` 和 `/api/v1/*` 都走代理，所以同源 Cookie / CSRF 行为与生产一致。
+
+只起其中一个：
+
+```bash
+pnpm dev:api                 # 仅后端 http://127.0.0.1:4080
+pnpm dev:admin               # 仅前端 http://localhost:4081（需 API 已在 4080）
+```
+
+前端代理目标默认 `http://127.0.0.1:4080`，需要改端口时用 `BENEFIT_API_ORIGIN`：
+
+```bash
+BENEFIT_API_ORIGIN=http://127.0.0.1:3100 pnpm dev:admin
+```
+
+本地账号与数据：
+
+- 开发库是 `apps/api/.data/dev.sqlite`（已被 `.gitignore` 的 `**/*.sqlite` 覆盖，不会提交），首次启动自动跑迁移。
+- 仓库**不提供**默认账号密码；本地登录前必须先建账号，密码从 stdin 传入：
+
+```bash
+read -rs DEV_PASSWORD
+printf '%s' "$DEV_PASSWORD" | pnpm admin-cli create --username devadmin --role admin --password-stdin
+pnpm admin-cli list
+```
+
+- 本地 `NODE_ENV` 不是 `production`，`COOKIE_SECURE` 自动为 false，因此 `http://localhost` 能正常登录。
+- 供应商只读接口与下游订单接口的可选凭证**默认不配置**，本地不配也能正常启动和登录：未配置时不静默放行，而是稳定返回 503（`SUPPLIER_NOT_CONFIGURED` / `SERVICE_UNAVAILABLE`）。要在本地验证这两块，参考 `docs/integrations/business-order-api.md` 与 `docs/integrations/yangmao.md`；凭证只放服务端环境，**不要写进仓库或前端**。
+
+改完代码后的质量门禁仍是 `pnpm check`（lint + typecheck + build + 全量 Vitest，含 Docker/CI 用到的构建）；`pnpm dev` 只用于人工联调，不能替代验收证据。
+
 ## 2026-10-24 历史快照（以下不代表 2026-10-27 当前实现）
 
 - **已运行**：dev 具备 Node/Hono 与 React/Ant Design 基础占位页、pnpm workspace/lockfile、Docker CI/CD。原型公网入口为 https://benefit.proto.3cgroup.cn/ ，健康检查返回 service=benefit-hub。
