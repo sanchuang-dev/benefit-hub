@@ -27,7 +27,7 @@ const AUTHORISED_BODY = { phone: PHONE, refCode: REF_CODE, paymentReference: PAY
 let app: TestServer | undefined;
 afterEach(() => { app?.close(); app = undefined; });
 
-type ResponseMode = 'completed' | 'partial' | 'malformed' | 'http500' | 'business400' | 'delayed';
+type ResponseMode = 'completed' | 'partial' | 'partial-short' | 'malformed' | 'http500' | 'business400' | 'delayed';
 interface Call { path: string; method: string; body: string; signature?: string; dSignature?: string }
 async function mockVendor() {
   const state: {
@@ -73,14 +73,16 @@ async function mockVendor() {
           } }), 180);
           return;
         }
-        const partial = state.mode === 'partial';
+        const partial = state.mode === 'partial' || state.mode === 'partial-short';
         reply(200, { code: 0, data: {
           orderNo: state.orderNo, allClaimed: !partial,
           successCount: partial ? 1 : 2, totalCount: 2,
-          items: partial
-            ? [{ claimed: true, status: 'completed', cardKey: 'NEVER-STORE-THIS' },
-              { claimed: false, status: 'failed', message: 'SENSITIVE-NEVER-STORE' }]
-            : [{ claimed: true, status: 'completed' }, { claimed: true, status: 'completed' }],
+          items: state.mode === 'partial-short'
+            ? [{ claimed: false, status: 'failed', message: 'NEW-SENSITIVE-ERROR' }]
+            : partial
+              ? [{ claimed: true, status: 'completed', cardKey: 'NEVER-STORE-THIS' },
+                { claimed: false, status: 'failed', message: 'SENSITIVE-NEVER-STORE' }]
+              : [{ claimed: true, status: 'completed' }, { claimed: true, status: 'completed' }],
           balanceAfter: 99, idempotentReplay: !partial,
         } });
         return;
@@ -246,6 +248,102 @@ describe('B-mode direct topup Hono → mock supplier (never real quota)', () => 
       expect(JSON.parse(vendor.writes()[0]!.body).requestId)
         .toBe(JSON.parse(vendor.writes()[1]!.body).requestId);
       expect((await reissue(server, id)).status).toBe(409);
+      expect(vendor.writes()).toHaveLength(2);
+    } finally { server.close(); await vendor.close(); }
+  }, 20_000);
+
+  it('keeps all earlier successful item evidence when reissue returns only one failing item', async () => {
+    const vendor = await mockVendor(); vendor.state.mode = 'partial';
+    const server = startServer(vendor);
+    try {
+      const id = (await order(server, seedOrder(server))).id;
+      expect((await issue(server, id)).status).toBe(200);
+      const original = createDirectTopupRepository(server.database.db).get(id)!;
+      expect(original.observations).toHaveLength(1);
+      expect(original.observations[0]?.items[0]?.claimed).toBe(true);
+      vendor.state.mode = 'partial-short';
+      const repeated = await reissue(server, id);
+      expect(repeated.status).toBe(200);
+      const body = directTopupResponseSchema.parse(await repeated.json());
+      expect(body.order.status).toBe('partially_completed');
+      expect(body.topup.observations).toHaveLength(2);
+      expect(body.topup.observations[0]?.items[0]?.claimed).toBe(true);
+      expect(body.topup.observations[1]?.items).toEqual([
+        { claimed: false, status: 'failed' },
+      ]);
+      expect(JSON.stringify(body)).not.toContain('NEW-SENSITIVE-ERROR');
+      expect(vendor.writes()).toHaveLength(2);
+      const first = JSON.parse(vendor.writes()[0]!.body) as { requestId: string };
+      const second = JSON.parse(vendor.writes()[1]!.body) as { requestId: string };
+      expect(first.requestId).toBe(second.requestId);
+      server.restart();
+      const recovered = createDirectTopupRepository(server.database.db).get(id)!;
+      expect(recovered.observations).toHaveLength(2);
+      expect(recovered.observations[0]?.items[0]?.claimed).toBe(true);
+      expect(recovered.upstreamOrderNo).toBe('PKG-MOCK-B-1');
+      const operator = await detail(server, id);
+      const response = await operator.request('/api/v1/operations/orders/' + id);
+      const parsed = operationsOrderDetailResponseSchema.parse(await response.json());
+      expect(parsed.order.directTopup?.observations).toHaveLength(2);
+      expect(parsed.order.directTopup?.observations[0]?.items[0]?.claimed).toBe(true);
+    } finally { server.close(); await vendor.close(); }
+  }, 20_000);
+
+  it('serializes concurrent initial debits and concurrent partial reissues', async () => {
+    const vendor = await mockVendor(); vendor.state.mode = 'delayed';
+    const server = startServer(vendor);
+    try {
+      const id = (await order(server, seedOrder(server))).id;
+      const attempts = await Promise.all([issue(server, id), issue(server, id)]);
+      expect(attempts.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(vendor.writes()).toHaveLength(1);
+      expect(createDirectTopupRepository(server.database.db).get(id)?.state).toBe('completed');
+    } finally { server.close(); await vendor.close(); }
+  }, 20_000);
+
+  it('serializes simultaneous original-key retries on a partially completed order', async () => {
+    const vendor = await mockVendor(); vendor.state.mode = 'partial';
+    const server = startServer(vendor);
+    try {
+      const id = (await order(server, seedOrder(server))).id;
+      expect((await issue(server, id)).status).toBe(200);
+      vendor.state.mode = 'delayed';
+      const attempts = await Promise.all([reissue(server, id), reissue(server, id)]);
+      expect(attempts.map((response) => response.status).sort()).toEqual([200, 409]);
+      expect(vendor.writes()).toHaveLength(2);
+      expect(createDirectTopupRepository(server.database.db).get(id)?.state).toBe('completed');
+      const first = JSON.parse(vendor.writes()[0]!.body) as { requestId: string };
+      const second = JSON.parse(vendor.writes()[1]!.body) as { requestId: string };
+      expect(first.requestId).toBe(second.requestId);
+    } finally { server.close(); await vendor.close(); }
+  }, 20_000);
+
+  it('blocks unauthenticated, viewer-role and CSRF-less admin reissue without vendor writes', async () => {
+    const vendor = await mockVendor(); vendor.state.mode = 'partial';
+    const server = startServer(vendor);
+    try {
+      const id = (await order(server, seedOrder(server))).id;
+      expect((await issue(server, id)).status).toBe(200);
+      const path = '/api/v1/operations/orders/' + id + '/direct-topup/reissue';
+      expect((await server.app.request(path, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...AUTHORISED_BODY, confirmReissue: true }),
+      })).status).not.toBe(200);
+      await seedAccount(server, { username: 'b.viewer.test', role: 'viewer' });
+      const viewer = new TestClient(server);
+      expect((await viewer.login('b.viewer.test', TEST_PASSWORD)).status).toBe(200);
+      expect((await viewer.post(path, { ...AUTHORISED_BODY, confirmReissue: true })).status).toBe(403);
+      const admin = await detail(server, id);
+      expect((await admin.request(path, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...AUTHORISED_BODY, confirmReissue: true }),
+      })).status).not.toBe(200);
+      expect(vendor.writes()).toHaveLength(1);
+      vendor.state.mode = 'completed';
+      const success = await admin.post(path, { ...AUTHORISED_BODY, confirmReissue: true });
+      expect(success.status).toBe(200);
+      expect(operationsOrderDetailResponseSchema.parse(await success.json()).order.status)
+        .toBe('completed');
       expect(vendor.writes()).toHaveLength(2);
     } finally { server.close(); await vendor.close(); }
   }, 20_000);
