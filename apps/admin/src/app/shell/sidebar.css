@@ -57,8 +57,19 @@
   font-weight: 600;
 }
 
+/*
+ * The search row is exactly as tall as the work-tab strip on the right
+ * (38px) and shares its bottom divider, so the two form one aligned toolbar
+ * band instead of the input floating lower than the tabs.
+ */
 .app-sidebar-search {
-  padding: 10px 12px 4px;
+  display: flex;
+  align-items: center;
+  height: 38px;
+  /* Optical centering: tab labels are 34px tall starting 4px below the top of
+     the tab strip, so this puts the 32px input on the same text line. */
+  padding: 4px 12px 0;
+  border-bottom: 1px solid #e3e6ea;
 }
 
 .app-sidebar-search .ant-input-affix-wrapper {
