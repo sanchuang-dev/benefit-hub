@@ -25,6 +25,7 @@ const environmentSchema = z.object({
   // Only product codes backed by verified supplier evidence may incur a B-mode debit.
   // A missing or invalid configuration fails closed; never derive this from display names.
   BENEFIT_B_TRAVEL_PRODUCTS_JSON: z.string().optional(),
+  BENEFIT_B_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
 });
 
 export interface YangmaoInriceConfig {
@@ -84,6 +85,8 @@ export interface AppConfig {
   businessOrderClients: BusinessOrderClientsConfig | null;
   /** B-mode supplier-verified productCode -> evidence reference (server-only). */
   verifiedBTravelProducts: Readonly<Record<string, string>>;
+  /** Explicit separate permission for the quota-deducting B write. Default false. */
+  bLiveWritesEnabled: boolean;
 }
 
 /**
@@ -214,5 +217,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       : null,
     businessOrderClients: readBusinessOrderClientsConfig(env),
     verifiedBTravelProducts: readVerifiedBTravelProducts(value.BENEFIT_B_TRAVEL_PRODUCTS_JSON),
+    bLiveWritesEnabled: value.BENEFIT_B_LIVE_WRITE_ENABLED === 'true',
   };
 }
