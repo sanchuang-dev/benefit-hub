@@ -87,6 +87,35 @@ describe('B direct-topup contract', () => {
     });
   });
 
+  it('classifies explicit cancellation without assuming B supplier debit failed', async () => {
+    const controller = new AbortController();
+    const stalled: YangmaoOpenV1Transport = async (request) =>
+      new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(new Error('fixture aborted')), {
+          once: true,
+        });
+      });
+    const attempted = client(stalled).directTopup(REQUEST, { signal: controller.signal });
+    controller.abort();
+    await expect(attempted).rejects.toMatchObject({ code: 'YANGMAO_OPEN_V1_CANCELLED' });
+  });
+
+  it('classifies bounded supplier timeout independently from invalid vendor data', async () => {
+    const stalled: YangmaoOpenV1Transport = async (request) =>
+      new Promise<Response>((_resolve, reject) => {
+        request.signal.addEventListener('abort', () => reject(new Error('fixture timeout')), {
+          once: true,
+        });
+      });
+    const c = createYangmaoOpenV1Client({
+      baseUrl: 'https://vendor.example.test', appKey: KEY, appSecret: SECRET,
+      transport: stalled, timeoutMs: 100, clock: () => FIXED_NOW, nonceFactory: () => NONCE,
+    });
+    await expect(c.directTopup(REQUEST)).rejects.toMatchObject({
+      code: 'YANGMAO_OPEN_V1_TIMEOUT',
+    });
+  });
+
   it('never treats HTTP 200 with vendor code 400 as a successful topup', async () => {
     const c = client(async () => response(PARTIAL, 400));
     await expect(c.directTopup(REQUEST)).rejects.toBeInstanceOf(YangmaoOpenV1Error);
