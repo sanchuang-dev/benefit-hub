@@ -3,6 +3,17 @@ import { render } from '@testing-library/react';
 import { App as AntdApp, ConfigProvider } from 'antd';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { routes } from '../app/routes';
+import { useUiPrefs } from '../shared/lib/ui-prefs';
+
+/**
+ * Clears session-scoped UI preferences between tests. The store is a module
+ * singleton, so without this a tab/view chosen in one test would leak into the
+ * next one even though its component tree was unmounted.
+ */
+export function resetUiPrefs(): void {
+  useUiPrefs.getState().reset();
+  sessionStorage.clear();
+}
 
 export function installDomStubs(): void {
   if (!window.matchMedia) {

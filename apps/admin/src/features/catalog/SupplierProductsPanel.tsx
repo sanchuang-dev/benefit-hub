@@ -21,20 +21,27 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Eye, RefreshCw, RotateCcw, Search } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { formatCents } from './money';
 import type { SupplierCatalogProduct } from './api';
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  parseKeyword,
+  parsePage,
+  parsePageSize,
+  setOptionalParam,
+} from './url-state';
 import { useSupplierProductQuery, useSupplierProductsQuery } from './use-catalog';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
+import { useUiPrefs, type CatalogViewMode } from '../../shared/lib/ui-prefs';
 
 const { Text } = Typography;
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
 const SUPPLIER_DISPLAY_NAME = '上力';
 const SUPPLIER_PROVIDER_KEY = 'yangmao';
-
-type CatalogViewMode = 'table' | 'card';
 
 interface FilterFormValues {
   supplierKeyword?: string;
@@ -195,12 +202,22 @@ function SupplierProductDrawer({
  */
 export function SupplierProductsPanel() {
   const listQuery = useSupplierProductsQuery();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [filterForm] = Form.useForm<FilterFormValues>();
-  const [appliedKeyword, setAppliedKeyword] = useState('');
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [view, setView] = useState<CatalogViewMode>('table');
   const [selectedCode, setSelectedCode] = useState<string | null>(null);
+
+  // Tab-scoped URL keys keep the supplier snapshot's own filter and paging, so
+  // switching to 内部商品 and back (or refreshing) does not reset them.
+  const appliedKeyword = parseKeyword(searchParams.get('supplierQ'));
+  const page = parsePage(searchParams.get('supplierPage'));
+  const pageSize = parsePageSize(searchParams.get('supplierPageSize'));
+
+  const supplierView = useUiPrefs((state) => state.supplierView);
+  const setSupplierView = useUiPrefs((state) => state.setSupplierView);
+
+  useEffect(() => {
+    filterForm.setFieldsValue({ supplierKeyword: appliedKeyword });
+  }, [filterForm, appliedKeyword]);
 
   const products = listQuery.data?.products ?? [];
   const normalizedKeyword = appliedKeyword.toLowerCase();
@@ -212,15 +229,41 @@ export function SupplierProductsPanel() {
   const totalPages = Math.max(1, Math.ceil(filteredProducts.length / pageSize));
   const currentPage = Math.min(page, totalPages);
 
+  const updateSearch = (mutate: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mutate(next);
+    setSearchParams(next, { replace: true });
+  };
+
   const applyFilters = (values: FilterFormValues) => {
-    setAppliedKeyword(values.supplierKeyword?.trim() ?? '');
-    setPage(1);
+    const nextKeyword = values.supplierKeyword?.trim() ?? '';
+    updateSearch((next) => {
+      setOptionalParam(next, 'supplierQ', nextKeyword || null);
+      next.delete('supplierPage');
+    });
   };
 
   const resetFilters = () => {
     filterForm.resetFields();
-    setAppliedKeyword('');
-    setPage(1);
+    updateSearch((next) => {
+      next.delete('supplierQ');
+      next.delete('supplierPage');
+    });
+  };
+
+  const changePage = (nextPage: number, nextPageSize: number) => {
+    updateSearch((next) => {
+      if (nextPageSize !== pageSize) {
+        setOptionalParam(
+          next,
+          'supplierPageSize',
+          nextPageSize === DEFAULT_PAGE_SIZE ? null : String(nextPageSize),
+        );
+        next.delete('supplierPage');
+        return;
+      }
+      setOptionalParam(next, 'supplierPage', nextPage === 1 ? null : String(nextPage));
+    });
   };
 
   const refresh = () => {
@@ -329,7 +372,7 @@ export function SupplierProductsPanel() {
         form={filterForm}
         className="catalog-toolbar"
         layout="inline"
-        initialValues={{ supplierKeyword: '' }}
+        initialValues={{ supplierKeyword: appliedKeyword }}
         onFinish={applyFilters}
       >
         <Form.Item name="supplierKeyword" label="上游商品编码">
@@ -354,8 +397,8 @@ export function SupplierProductsPanel() {
         </Form.Item>
         <Form.Item label="视图">
           <Segmented
-            value={view}
-            onChange={(value) => setView(value as CatalogViewMode)}
+            value={supplierView}
+            onChange={(value) => setSupplierView(value as CatalogViewMode)}
             options={[
               { label: '表格', value: 'table' },
               { label: '卡片', value: 'card' },
@@ -378,7 +421,7 @@ export function SupplierProductsPanel() {
             }
           />
         </div>
-      ) : view === 'table' ? (
+      ) : supplierView === 'table' ? (
         <Table<SupplierCatalogProduct>
           rowKey="productCode"
           size="middle"
@@ -394,10 +437,7 @@ export function SupplierProductsPanel() {
             pageSizeOptions: PAGE_SIZE_OPTIONS,
             showSizeChanger: true,
             showTotal: (total) => `共 ${total} 条`,
-            onChange: (nextPage, nextPageSize) => {
-              setPage(nextPage);
-              setPageSize(nextPageSize);
-            },
+            onChange: changePage,
           }}
         />
       ) : (
@@ -454,10 +494,7 @@ export function SupplierProductsPanel() {
                   pageSizeOptions={PAGE_SIZE_OPTIONS}
                   showSizeChanger
                   showTotal={(total) => `共 ${total} 条`}
-                  onChange={(nextPage, nextPageSize) => {
-                    setPage(nextPage);
-                    setPageSize(nextPageSize);
-                  }}
+                  onChange={changePage}
                 />
               </div>
             </>

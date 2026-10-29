@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 import './ProductEditorDrawer.css';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
+import { useUnsavedChangesWarning } from '../../shared/lib/use-unsaved-changes-warning';
 import { MappingPanel } from '../mapping/MappingPanel';
 import { centsToYuan, yuanToCents } from './money';
 import type { CatalogProduct, ProductStatus } from './api';
@@ -98,6 +99,9 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
   const productId = state !== null && state.mode !== 'create' ? state.productId : undefined;
   const isCreate = mode === 'create';
   const readOnly = mode === 'view' || !canWrite;
+
+  // Drawer close is confirmed in-app; this only covers refresh or tab close.
+  useUnsavedChangesWarning(open && !readOnly && (dirty || mappingDirty));
 
   const detail = useProductQuery(open && !isCreate ? productId : undefined);
   const createMutation = useCreateProductMutation();

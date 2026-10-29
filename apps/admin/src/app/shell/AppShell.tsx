@@ -7,10 +7,11 @@ import {
   Settings,
   UserRound,
 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AdminIdentity } from '../../features/auth/api';
 import { useLogoutMutation } from '../../features/auth/use-auth';
+import { useUiPrefs } from '../../shared/lib/ui-prefs';
 import './shell.css';
 
 const { Header, Sider, Content } = Layout;
@@ -21,6 +22,8 @@ const NAV_ITEMS = [
   { key: '/fulfillment', icon: <ReceiptText size={16} />, label: '发放记录' },
   { key: '/settings', icon: <Settings size={16} />, label: '系统设置' },
 ];
+
+const NAV_KEYS = new Set(NAV_ITEMS.map((item) => item.key));
 
 function activeMenuKey(pathname: string): string {
   const match = NAV_ITEMS.filter((item) => item.key !== '/').find((item) =>
@@ -39,13 +42,24 @@ export function AppShell({ admin }: AppShellProps) {
   const logoutMutation = useLogoutMutation();
   const { message } = AntdApp.useApp();
   const activeKey = activeMenuKey(location.pathname);
-  const [openTabKeys, setOpenTabKeys] = useState<string[]>(() => [activeKey]);
+  const persistedTabKeys = useUiPrefs((state) => state.openTabs);
+  const addTab = useUiPrefs((state) => state.addTab);
+  const removeTab = useUiPrefs((state) => state.closeTab);
 
   useEffect(() => {
-    setOpenTabKeys((current) =>
-      current.includes(activeKey) ? current : [...current, activeKey],
-    );
-  }, [activeKey]);
+    addTab(activeKey);
+  }, [activeKey, addTab]);
+
+  /**
+   * The route stays the source of truth for the current page; stored keys only
+   * restore the tab strip. Unknown routes from an older build are dropped and
+   * the 总览 tab is always kept, so a direct refresh on /catalog does not lose it.
+   */
+  const openTabKeys = useMemo(() => {
+    const restored = persistedTabKeys.filter((key) => NAV_KEYS.has(key));
+    const withHome = restored.includes('/') ? restored : ['/', ...restored];
+    return withHome.includes(activeKey) ? withHome : [...withHome, activeKey];
+  }, [activeKey, persistedTabKeys]);
 
   const handleLogout = () => {
     logoutMutation.mutate(undefined, {
@@ -63,7 +77,7 @@ export function AppShell({ admin }: AppShellProps) {
 
     const currentIndex = openTabKeys.indexOf(key);
     const nextKeys = openTabKeys.filter((item) => item !== key);
-    setOpenTabKeys(nextKeys);
+    removeTab(key);
 
     if (key === activeKey) {
       navigate(nextKeys[Math.max(0, currentIndex - 1)] ?? '/');

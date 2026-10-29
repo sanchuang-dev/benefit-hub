@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { CatalogProduct } from '../features/catalog/api';
-import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 24, 2, 0, 0);
@@ -99,6 +99,7 @@ beforeAll(() => installDomStubs());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetUiPrefs();
 });
 
 describe('internal product list', () => {
@@ -166,6 +167,46 @@ describe('internal product list', () => {
     );
     await waitFor(() => expect(screen.queryByText('腾讯出行券 10 元')).toBeNull());
     expect(screen.getByText('咖啡券')).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('restores filters, paging and tab from the URL after a refresh', { timeout: 60_000 }, async () => {
+    const travel = product({ id: 'p-1', code: 'TRAVEL-1', name: '腾讯出行券 10 元' });
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      status: 'disabled',
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([travel, coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    // This is exactly what the browser restores when the operator refreshes.
+    renderRoutes('/catalog?q=%E5%92%96%E5%95%A1&status=disabled&page=2&pageSize=50');
+
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    expect((screen.getByLabelText('关键词') as HTMLInputElement).value).toBe('咖啡');
+    // The status filter is applied from the URL, so the restored request and the
+    // rendered status tag both show 已停用.
+    expect(screen.getAllByText('已停用').length).toBeGreaterThan(0);
+
+    await waitFor(() => {
+      const request = listRequests.at(-1);
+      expect(request?.get('keyword')).toBe('咖啡');
+      expect(request?.get('status')).toBe('disabled');
+      expect(request?.get('page')).toBe('2');
+      expect(request?.get('pageSize')).toBe('50');
+    });
+    // The URL owns the state; no extra write request may be sent.
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 

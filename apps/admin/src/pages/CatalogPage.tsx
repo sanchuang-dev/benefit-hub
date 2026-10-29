@@ -20,7 +20,7 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Plus, RotateCcw, Search } from 'lucide-react';
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router';
 import { useSessionQuery } from '../features/auth/use-auth';
 import type { CatalogProduct, ProductStatus } from '../features/catalog/api';
@@ -30,28 +30,27 @@ import {
   type ProductDrawerState,
 } from '../features/catalog/ProductEditorDrawer';
 import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel';
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  parseKeyword,
+  parsePage,
+  parsePageSize,
+  setOptionalParam,
+} from '../features/catalog/url-state';
 import { useProductsQuery } from '../features/catalog/use-catalog';
 import { formatDateTime } from '../shared/lib/format-date-time';
+import { useUiPrefs, type CatalogViewMode } from '../shared/lib/ui-prefs';
 import './CatalogPage.css';
 
 const { Title, Paragraph, Text } = Typography;
 
-const PAGE_SIZE_OPTIONS = [10, 20, 50];
-
 type CatalogTabKey = 'internal' | 'supplier';
-type CatalogViewMode = 'table' | 'card';
 
 interface FilterFormValues {
   keyword?: string;
   status: ProductStatus | 'all';
 }
-
-interface AppliedFilters {
-  keyword: string;
-  status: ProductStatus | 'all';
-}
-
-const EMPTY_FILTERS: AppliedFilters = { keyword: '', status: 'all' };
 
 function ProductStatusTag({ status }: { status: ProductStatus }) {
   return status === 'active' ? <Tag color="green">已启用</Tag> : <Tag>已停用</Tag>;
@@ -147,44 +146,83 @@ export function CatalogPage() {
   const activeTab: CatalogTabKey =
     searchParams.get('tab') === 'supplier' ? 'supplier' : 'internal';
 
+  // Listing state is URL-owned so refresh, back/forward and shared links all
+  // reproduce the same filtered request instead of resetting to page 1.
+  const keyword = parseKeyword(searchParams.get('q'));
+  const rawStatus = searchParams.get('status');
+  const status: ProductStatus | 'all' =
+    rawStatus === 'active' || rawStatus === 'disabled' ? rawStatus : 'all';
+  const page = parsePage(searchParams.get('page'));
+  const pageSize = parsePageSize(searchParams.get('pageSize'));
+
   const [filterForm] = Form.useForm<FilterFormValues>();
-  const [filters, setFilters] = useState<AppliedFilters>(EMPTY_FILTERS);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [view, setView] = useState<CatalogViewMode>('table');
+  const catalogView = useUiPrefs((state) => state.catalogView);
+  const setCatalogView = useUiPrefs((state) => state.setCatalogView);
   const [drawer, setDrawer] = useState<ProductDrawerState | null>(null);
+
+  // Keep the visible form in sync when the URL changes through back/forward or
+  // a shared link, not only through the submit button.
+  useEffect(() => {
+    filterForm.setFieldsValue({ keyword, status });
+  }, [filterForm, keyword, status]);
 
   const listQuery = useProductsQuery({
     page,
     pageSize,
-    keyword: filters.keyword || undefined,
-    status: filters.status === 'all' ? undefined : filters.status,
+    keyword: keyword || undefined,
+    status: status === 'all' ? undefined : status,
   });
 
-  const hasFilters = filters.keyword !== '' || filters.status !== 'all';
+  const hasFilters = keyword !== '' || status !== 'all';
   const products = listQuery.data?.products ?? [];
 
-  const changeTab = (key: string) => {
+  const updateSearch = (mutate: (next: URLSearchParams) => void) => {
     const next = new URLSearchParams(searchParams);
-    if (key === 'supplier') next.set('tab', 'supplier');
-    else next.delete('tab');
+    mutate(next);
     setSearchParams(next, { replace: true });
+  };
+
+  const changeTab = (key: string) => {
+    updateSearch((next) => {
+      if (key === 'supplier') next.set('tab', 'supplier');
+      else next.delete('tab');
+    });
   };
 
   const openCreate = () => setDrawer({ mode: 'create' });
 
   const applyFilters = (values: FilterFormValues) => {
-    setFilters({
-      keyword: values.keyword?.trim() ?? '',
-      status: values.status ?? 'all',
+    const nextKeyword = values.keyword?.trim() ?? '';
+    const nextStatus = values.status ?? 'all';
+    updateSearch((next) => {
+      setOptionalParam(next, 'q', nextKeyword || null);
+      setOptionalParam(next, 'status', nextStatus === 'all' ? null : nextStatus);
+      next.delete('page');
     });
-    setPage(1);
   };
 
   const resetFilters = () => {
     filterForm.resetFields();
-    setFilters(EMPTY_FILTERS);
-    setPage(1);
+    updateSearch((next) => {
+      next.delete('q');
+      next.delete('status');
+      next.delete('page');
+    });
+  };
+
+  const changePage = (nextPage: number, nextPageSize: number) => {
+    updateSearch((next) => {
+      if (nextPageSize !== pageSize) {
+        setOptionalParam(
+          next,
+          'pageSize',
+          nextPageSize === DEFAULT_PAGE_SIZE ? null : String(nextPageSize),
+        );
+        next.delete('page');
+        return;
+      }
+      setOptionalParam(next, 'page', nextPage === 1 ? null : String(nextPage));
+    });
   };
 
   const columns: ColumnsType<CatalogProduct> = [
@@ -295,8 +333,8 @@ export function CatalogPage() {
   const viewSwitcher = (
     <Form.Item label="视图">
       <Segmented
-        value={view}
-        onChange={(value) => setView(value as CatalogViewMode)}
+        value={catalogView}
+        onChange={(value) => setCatalogView(value as CatalogViewMode)}
         options={[
           { label: '表格', value: 'table' },
           { label: '卡片', value: 'card' },
@@ -321,7 +359,7 @@ export function CatalogPage() {
           form={filterForm}
           className="catalog-toolbar"
           layout="inline"
-          initialValues={{ keyword: '', status: 'all' }}
+          initialValues={{ keyword, status }}
           onFinish={applyFilters}
         >
           <Form.Item name="keyword" label="关键词">
@@ -364,7 +402,7 @@ export function CatalogPage() {
               }
             />
           </div>
-        ) : view === 'table' ? (
+        ) : catalogView === 'table' ? (
           <Table<CatalogProduct>
             rowKey="id"
             size="middle"
@@ -380,10 +418,7 @@ export function CatalogPage() {
               pageSizeOptions: PAGE_SIZE_OPTIONS,
               showSizeChanger: true,
               showTotal: (total) => `共 ${total} 条`,
-              onChange: (nextPage, nextPageSize) => {
-                setPage(nextPage);
-                setPageSize(nextPageSize);
-              },
+              onChange: changePage,
             }}
           />
         ) : (
@@ -405,10 +440,7 @@ export function CatalogPage() {
                   pageSizeOptions={PAGE_SIZE_OPTIONS}
                   showSizeChanger
                   showTotal={(total) => `共 ${total} 条`}
-                  onChange={(nextPage, nextPageSize) => {
-                    setPage(nextPage);
-                    setPageSize(nextPageSize);
-                  }}
+                  onChange={changePage}
                 />
               </div>
             ) : null}

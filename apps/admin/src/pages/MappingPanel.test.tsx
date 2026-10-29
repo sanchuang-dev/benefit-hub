@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { CatalogProduct } from '../features/catalog/api';
-import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 27, 1, 30, 0);
@@ -197,6 +197,7 @@ beforeAll(() => installDomStubs());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetUiPrefs();
 });
 
 describe('read-only supplier mapping panel', () => {

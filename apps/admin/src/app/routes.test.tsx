@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
-import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { UI_PREFS_STORAGE_KEY, useUiPrefs } from '../shared/lib/ui-prefs';
 
 const ADMIN = {
   id: 'account-1',
@@ -38,6 +39,7 @@ beforeAll(() => installDomStubs());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetUiPrefs();
 });
 
 describe('unauthenticated access', () => {
@@ -166,6 +168,72 @@ describe('login flow', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: '总览' }));
     expect(await screen.findByRole('heading', { name: '总览' })).toBeTruthy();
+  }, 15_000);
+
+  it('restores session-local work tabs after a refresh and drops unknown routes', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          vendorFulfillmentEnabled: false,
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    // Simulate a reload after an older build left a route that no longer exists.
+    sessionStorage.setItem(
+      UI_PREFS_STORAGE_KEY,
+      JSON.stringify({
+        state: {
+          openTabs: ['/', '/catalog', '/removed-route'],
+          catalogView: 'table',
+          supplierView: 'table',
+          mappingTab: 'current',
+        },
+        version: 1,
+      }),
+    );
+    await useUiPrefs.persist.rehydrate();
+
+    renderRoutes('/catalog');
+
+    expect(await screen.findByRole('heading', { name: '商品管理' }, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '商品管理' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: '系统设置' })).toBeNull();
+  }, 15_000);
+
+  it('keeps the 总览 tab when the console is opened directly on a module route', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          vendorFulfillmentEnabled: false,
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+
+    expect(await screen.findByRole('heading', { name: '商品管理' }, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '商品管理', selected: true })).toBeTruthy();
   }, 15_000);
 
   it('logs out through the user menu and returns to the login screen', async () => {

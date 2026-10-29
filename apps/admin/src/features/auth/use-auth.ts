@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ApiError } from '../../shared/lib/api-client';
+import { useUiPrefs } from '../../shared/lib/ui-prefs';
 import {
   fetchAccounts,
   fetchSession,
@@ -45,7 +46,10 @@ export function useLogoutMutation() {
   return useMutation<void, ApiError, void>({
     mutationFn: logout,
     onSuccess: () => {
-      queryClient.removeQueries({ queryKey: sessionQueryKey });
+      // A shared operations console must not leak the previous operator's
+      // cached catalogue rows or restored work tabs into the next login.
+      queryClient.removeQueries();
+      useUiPrefs.getState().reset();
     },
   });
 }

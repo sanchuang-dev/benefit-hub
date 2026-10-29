@@ -28,6 +28,7 @@ import {
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
+import { useUnsavedChangesWarning } from '../../shared/lib/use-unsaved-changes-warning';
 import { MappingContractError } from './api';
 import { useSaveMappingDraftMutation, useValidateMappingDraftMutation, useActivateMappingDraftMutation } from './use-mapping';
 
@@ -207,6 +208,10 @@ export function MappingDraftEditor({
   const [confirmOpen, setConfirmOpen] = useState(false);
   // Guards same-tick double clicks before React re-renders the disabled state.
   const requestInFlight = useRef(false);
+
+  // Draft content is never persisted locally (a stale draft could collide with
+  // the server version); refresh/tab-close gets a native warning instead.
+  useUnsavedChangesWarning(dirty || conflicted !== null);
 
   const saveMutation = useSaveMappingDraftMutation(productId);
   const validateMutation = useValidateMappingDraftMutation(productId);
