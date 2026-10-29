@@ -33,6 +33,7 @@ export class TestServer {
       yangmaoInrice: null,
       supplierMasterKey: null,
       businessOrderClients: null,
+      verifiedBTravelProducts: {},
       ...overrides,
     };
     this.database = openDatabase(this.file);
