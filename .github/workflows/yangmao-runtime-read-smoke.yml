@@ -57,7 +57,7 @@ jobs:
           import * as schema from './dist/db/schema.js';
           import { loadConfig } from './dist/config.js';
           import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
-          import { createYangmaoInriceCatalogClient } from '@sanchuang-dev/provider-yangmao';
+          import { createYangmaoInriceCatalogClient, createYangmaoOpenV1Client } from '@sanchuang-dev/provider-yangmao';
 
           const config = loadConfig(process.env);
           const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
@@ -88,6 +88,41 @@ jobs:
                 if (Number.isInteger(error?.vendorCode)) console.log('upstream_vendor_code=' + error.vendorCode);
                 if (Number.isInteger(error?.httpStatus)) console.log('upstream_http_status=' + error.httpStatus);
                 process.exitCode = 3;
+              }
+              const abc = createYangmaoOpenV1Client(supplier);
+              // The sample mobile appears in the supplier's published Open API
+              // documentation. The operation is explicitly read-only.
+              try {
+                const eligibility = await abc.checkPurchase('13800138000');
+                console.log('upstream_AB_purchase_check=success');
+                console.log('eligibility_shape_valid=' + (
+                  typeof eligibility.purchaseRestricted === 'boolean' &&
+                  typeof eligibility.giftUnclaimed === 'boolean' &&
+                  typeof eligibility.lotteryUnbet === 'boolean'
+                ));
+              } catch (error) {
+                const code = typeof error?.code === 'string' && /^[A-Z0-9_]{4,80}$/.test(error.code) ? error.code : 'UNKNOWN';
+                console.log('upstream_AB_purchase_check=failure');
+                console.log('upstream_AB_error_code=' + code);
+                if (Number.isInteger(error?.vendorCode)) console.log('upstream_AB_vendor_code=' + error.vendorCode);
+                if (Number.isInteger(error?.httpStatus)) console.log('upstream_AB_http_status=' + error.httpStatus);
+                process.exitCode = 4;
+              }
+              // Known-absent identifiers: negative contract probes only, not
+              // claims of successful order/voucher recovery.
+              for (const [label, operation] of [
+                ['A_order_lookup_negative', () => abc.queryPrepaidOrder('benefit-smoke-read-missing-20261029')],
+                ['C_voucher_lookup_negative', () => abc.queryGiftVoucher('READSMOKE20261029')],
+              ]) {
+                try {
+                  await operation();
+                  console.log(label + '=parsed_response');
+                } catch (error) {
+                  const code = typeof error?.code === 'string' && /^[A-Z0-9_]{4,80}$/.test(error.code) ? error.code : 'UNKNOWN';
+                  console.log(label + '=error_' + code);
+                  if (Number.isInteger(error?.vendorCode)) console.log(label + '_vendor_code=' + error.vendorCode);
+                  if (Number.isInteger(error?.httpStatus)) console.log(label + '_http_status=' + error.httpStatus);
+                }
               }
             }
           } finally {
