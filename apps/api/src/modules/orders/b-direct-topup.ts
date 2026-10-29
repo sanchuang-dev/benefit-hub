@@ -229,7 +229,10 @@ export function createDirectTopupService(deps: {
       if (existing.state !== 'partial') {
         throw new DirectTopupConflictError('只能对有明确部分成功证据的原单补发');
       }
-      await requireLiveEligibility(client, command);
+      // This is NOT a new purchase: it is the vendor-documented continuation
+      // of an already checked and potentially charged requestId. A new
+      // purchase-check could see unclaimed items from the very same partial
+      // order and incorrectly block compensating their failed siblings.
       const lease = topups.beginReissue({
         order, credentialId: command.applicationCredentialId, occurredAt: now(),
       });
