@@ -14,6 +14,7 @@ const config: AppConfig = {
   supplierMasterKey: null,
   businessOrderClients: null,
   verifiedBTravelProducts: {},
+      bLiveWritesEnabled: false,
 };
 
 function createBootstrapApp() {
