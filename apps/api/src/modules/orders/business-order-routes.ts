@@ -2,6 +2,9 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   createBusinessOrderRequestSchema,
+  directTopupRequestSchema,
+  directTopupReissueRequestSchema,
+  type DirectTopupResponse,
   createPrepaidGrantRequestSchema,
   businessOrderNoSchema,
   createGiftVoucherRequestSchema,
@@ -27,6 +30,18 @@ import {
   type GiftVoucherOutcome,
 } from './c-gift-voucher.js';
 import { GiftVoucherVaultUnavailableError } from './gift-voucher-vault.js';
+import {
+  createDirectTopupService,
+  DirectTopupProductUnverifiedError,
+  DirectTopupPurchaseIneligibleError,
+  DirectTopupInputConflictError,
+  type DirectTopupOutcome,
+} from './b-direct-topup.js';
+import {
+  DirectTopupConflictError,
+  DirectTopupInProgressError,
+  DirectTopupUnknownError,
+} from './b-direct-topup-repository.js';
 import {
   GiftVoucherInProgressError,
   GiftVoucherInputConflictError,
@@ -70,7 +85,7 @@ export const BUSINESS_ORDER_COLLECTION_PATH = '/api/v1/business/orders';
 
 /** A/C-mode grant, recovery and C issuance subpaths are Bearer-authenticated machine writes. */
 const BUSINESS_ORDER_GRANT_PATH =
-  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover|gift-voucher|gift-voucher\/recover)$/;
+  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover|gift-voucher|gift-voucher\/recover|direct-topup|direct-topup\/reissue)$/;
 
 /**
  * Exact machine POST paths exempt from the browser double-submit CSRF token.
@@ -287,6 +302,53 @@ function handleGrantError(c: Context<AppEnv>, error: unknown) {
   return handleOrderError(c, error);
 }
 
+function toDirectTopupResponse(outcome: DirectTopupOutcome): DirectTopupResponse {
+  const { topup } = outcome;
+  return {
+    order: toBusinessOrderDto(outcome.order),
+    topup: {
+      state: topup.state,
+      requestId: topup.requestId,
+      upstreamOrderNo: topup.upstreamOrderNo,
+      successCount: topup.successCount,
+      totalCount: topup.totalCount,
+      items: topup.items,
+      lastVerifiedAt: topup.lastVerifiedAt,
+      attemptedAt: topup.attemptedAt,
+      updatedAt: topup.updatedAt,
+    },
+    ...(outcome.observedAt === undefined ? {} : { observedAt: outcome.observedAt }),
+  };
+}
+
+function handleDirectTopupError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof DirectTopupProductUnverifiedError) {
+    return c.json(apiError('DIRECT_TOPUP_PRODUCT_UNVERIFIED',
+      '缺少供应商纯出行礼包的可信核验依据，未请求直充'), 409, NO_STORE_HEADERS);
+  }
+  if (error instanceof DirectTopupPurchaseIneligibleError) {
+    return c.json(apiError('PURCHASE_NOT_ELIGIBLE',
+      '当前手机号限领或有未领取权益，未请求直充'), 409, NO_STORE_HEADERS);
+  }
+  if (error instanceof DirectTopupInputConflictError) {
+    return c.json(apiError('DIRECT_TOPUP_INPUT_CONFLICT',
+      '重复调用与原始手机号、推广码或支付凭据不同'), 409, NO_STORE_HEADERS);
+  }
+  if (error instanceof DirectTopupInProgressError) {
+    return c.json(apiError('DIRECT_TOPUP_IN_PROGRESS',
+      '原单正在执行，未重复扣除礼包'), 409, NO_STORE_HEADERS);
+  }
+  if (error instanceof DirectTopupUnknownError) {
+    return c.json(apiError('DIRECT_TOPUP_OUTCOME_UNKNOWN',
+      '原单签发结果不明，须人工核实，禁止盲目重发'), 409, NO_STORE_HEADERS);
+  }
+  if (error instanceof DirectTopupConflictError) {
+    return c.json(apiError('DIRECT_TOPUP_STATE_CONFLICT',
+      '直充订单状态或结果发生冲突，禁止重复发券'), 409, NO_STORE_HEADERS);
+  }
+  return handleGrantError(c, error);
+}
+
 function toPrepaidGrantResponse(outcome: PrepaidGrantOutcome): PrepaidGrantResponse {
   return {
     order: toBusinessOrderDto(outcome.order),
@@ -444,6 +506,7 @@ export function createBusinessOrderRoutes(deps: {
   const router = new Hono<AppEnv>();
   const repository = createBenefitOrderRepository(deps.db);
   const grantService = createPrepaidGrantService(deps);
+  const directTopupService = createDirectTopupService(deps);
   const giftVoucherService = createGiftVoucherService(deps);
 
   // Machine credential first: no admin cookie/session is consulted at all.
@@ -554,6 +617,66 @@ export function createBusinessOrderRoutes(deps: {
       return c.json(toPrepaidGrantResponse(outcome), 200, NO_STORE_HEADERS);
     } catch (error) {
       return handleGrantError(c, error);
+    }
+  });
+
+  /**
+   * BHB-012-D: one explicit direct topup for an authorized paid B-mode intent.
+   * The supplier deducts one pack; this is never a read-only operation.
+   */
+  router.post('/:orderId/direct-topup', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    const body = await readJson(c);
+    if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    const parsed = directTopupRequestSchema.safeParse(body.value);
+    if (!parsed.success) return c.json(invalidRequest('直充参数不正确', issueFields(parsed.error)), 400, NO_STORE_HEADERS);
+    try {
+      const output = await directTopupService.issue({
+        businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
+        orderId, ...parsed.data, signal: c.req.raw.signal,
+      });
+      return c.json(toDirectTopupResponse(output), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleDirectTopupError(c, error);
+    }
+  });
+
+  /**
+   * B-mode manual reissue requires an explicit boolean acknowledgment and
+   * the original recipient/payment identity; NEVER retries an unknown outcome.
+   */
+  router.post('/:orderId/direct-topup/reissue', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    const body = await readJson(c);
+    if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    const parsed = directTopupReissueRequestSchema.safeParse(body.value);
+    if (!parsed.success) return c.json(invalidRequest('补发参数不正确', issueFields(parsed.error)), 400, NO_STORE_HEADERS);
+    try {
+      const output = await directTopupService.reissue({
+        businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
+        orderId, phone: parsed.data.phone, refCode: parsed.data.refCode,
+        paymentReference: parsed.data.paymentReference, signal: c.req.raw.signal,
+      });
+      return c.json(toDirectTopupResponse(output), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleDirectTopupError(c, error);
+    }
+  });
+
+  /** Local read of persisted B evidence. No supplier write or repeated debit. */
+  router.get('/:orderId/direct-topup', (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    try {
+      const output = directTopupService.get(c.get('businessSource'), orderId);
+      if (!output) return c.json(apiError('ORDER_NOT_FOUND', '尚无 B 直充记录'), 404, NO_STORE_HEADERS);
+      return c.json(toDirectTopupResponse(output), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleDirectTopupError(c, error);
     }
   });
 
