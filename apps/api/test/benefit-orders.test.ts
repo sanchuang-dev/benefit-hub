@@ -1160,6 +1160,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0008_business_application_credentials',
         '0009_benefit_order_grants',
         '0010_benefit_order_gift_vouchers',
+        '0011_benefit_order_direct_topups',
       ]);
 
       // Every pre-existing fact survives the additive migration.
@@ -1327,6 +1328,7 @@ describe('benefit order mapping version migration (0005)', () => {
         { id: '0008_business_application_credentials' },
         { id: '0009_benefit_order_grants' },
         { id: '0010_benefit_order_gift_vouchers' },
+        { id: '0011_benefit_order_direct_topups' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
@@ -1339,6 +1341,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0008_business_application_credentials',
         '0009_benefit_order_grants',
         '0010_benefit_order_gift_vouchers',
+        '0011_benefit_order_direct_topups',
       ]);
     } finally {
       handle.close();
