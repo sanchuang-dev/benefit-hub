@@ -456,7 +456,7 @@ export function OrderDetailDrawer({
             </section>
           ) : null}
 
-          {detail.fulfillmentMode === 'B' ? (
+          {detail.fulfillmentMode === 'B' && detail.frozenMapping ? (
             <section aria-label="上力 B 直充履约">
               <Title level={5}>上力 B · 纯腾讯出行礼包直充</Title>
               {detail.directTopup ? (
