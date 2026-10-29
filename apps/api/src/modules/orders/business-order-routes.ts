@@ -33,6 +33,7 @@ import { GiftVoucherVaultUnavailableError } from './gift-voucher-vault.js';
 import {
   createDirectTopupService,
   DirectTopupProductUnverifiedError,
+  DirectTopupWriteDisabledError,
   DirectTopupPurchaseIneligibleError,
   DirectTopupInputConflictError,
   type DirectTopupOutcome,
@@ -322,6 +323,10 @@ function toDirectTopupResponse(outcome: DirectTopupOutcome): DirectTopupResponse
 }
 
 function handleDirectTopupError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof DirectTopupWriteDisabledError) {
+    return c.json(apiError('DIRECT_TOPUP_WRITE_DISABLED',
+      'B 真实扣额未被维护者单独启用'), 503, NO_STORE_HEADERS);
+  }
   if (error instanceof DirectTopupProductUnverifiedError) {
     return c.json(apiError('DIRECT_TOPUP_PRODUCT_UNVERIFIED',
       '缺少供应商纯出行礼包的可信核验依据，未请求直充'), 409, NO_STORE_HEADERS);
