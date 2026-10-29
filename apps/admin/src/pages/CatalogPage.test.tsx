@@ -41,7 +41,6 @@ function product(overrides: Partial<CatalogProduct> & Pick<CatalogProduct, 'id' 
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
-    vendorFulfillmentEnabled: false,
     ...overrides,
   };
 }
@@ -142,8 +141,8 @@ describe('internal product list', () => {
     expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText('COFFEE-1')).toBeTruthy();
     expect(screen.getByText('¥12.50')).toBeTruthy();
-    expect(screen.getAllByText('未启用')).toHaveLength(2);
-    expect(screen.getAllByText('映射见详情')).toHaveLength(2);
+    expect(screen.queryByRole('columnheader', { name: '真实发放' })).toBeNull();
+    expect(screen.queryByText('未启用')).toBeNull();
 
     // Keyword filter is sent to the API, not applied to a local fake array.
     fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '咖啡' } });

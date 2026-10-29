@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import {
   benefitOrders,
   benefitOrderStatusEvents,
+  businessApplicationCredentials,
+  businessApplicationProducts,
+  businessApplications,
   catalogProducts,
   fulfillmentAttempts,
   supplierProductMappingVersions,
@@ -16,12 +19,15 @@ import {
   normalizeBusinessOrderNo,
   normalizeBusinessSource,
   normalizeUpstreamRef,
+  OrderApplicationDisabledError,
+  OrderCredentialRevokedError,
   OrderInputError,
   OrderIntentConflictError,
   OrderMappingUnavailableError,
   OrderNotFoundError,
   OrderProductNotActiveError,
   OrderProductNotFoundError,
+  OrderProductNotAuthorizedError,
   OrderVersionConflictError,
   requireOrderId,
   requireProductId,
@@ -34,6 +40,7 @@ import {
   type AttemptResult,
   type BenefitOrder,
   type FulfillmentAttempt,
+  type FulfillmentMode,
   type OrderStatus,
   type OrderStatusEvent,
 } from './benefit-orders.js';
@@ -45,6 +52,8 @@ import {
  */
 export interface CreateOrderIntentInput {
   businessSource: string;
+  /** Present only for a DB-issued Bearer verified by machine auth, never supplied by the caller. */
+  applicationCredentialId?: string | null;
   businessOrderNo: string;
   productId: string;
 }
@@ -73,6 +82,60 @@ export interface AppendFulfillmentAttemptInput {
 }
 
 /**
+ * Operator list query. Every filter is independent and already validated at the
+ * HTTP boundary; the repository only applies exact, index-friendly predicates.
+ * `createdFrom`/`createdTo` are inclusive UTC epoch-millisecond bounds.
+ */
+export interface ListOrdersForOperationsQuery {
+  page: number;
+  pageSize: number;
+  businessSource?: string;
+  businessOrderNo?: string;
+  status?: OrderStatus;
+  createdFrom?: number;
+  createdTo?: number;
+}
+
+export interface OperationsOrderListRow {
+  order: BenefitOrder;
+  /** Current internal product name, not a creation-time historical snapshot. */
+  currentProductName: string;
+}
+
+export interface OperationsOrderListResult {
+  orders: OperationsOrderListRow[];
+  total: number;
+}
+
+/** Current internal product row; deliberately separate from frozen provenance. */
+export interface OperationsOrderProduct {
+  id: string;
+  code: string;
+  name: string;
+  status: 'active' | 'disabled';
+}
+
+/** Immutable mapping snapshot referenced by the order's own `mappingVersionId`. */
+export interface OperationsOrderFrozenMapping {
+  id: string;
+  mappingId: string;
+  versionNumber: number;
+  provider: string;
+  productCode: string;
+  fulfillmentMode: FulfillmentMode;
+  deductionUnit: 'pack' | 'amount';
+  activatedAt: number;
+}
+
+export interface OperationsOrderDetail {
+  order: BenefitOrder;
+  currentProduct: OperationsOrderProduct;
+  frozenMapping: OperationsOrderFrozenMapping | null;
+  statusEvents: OrderStatusEvent[];
+  attempts: FulfillmentAttempt[];
+}
+
+/**
  * Persistence boundary for benefit orders. Business code depends on this
  * interface rather than on Drizzle or SQLite, so supplier calls and future
  * storage changes stay outside the domain rules.
@@ -86,10 +149,18 @@ export interface BenefitOrderRepository {
    * Creates the order intent, or returns the existing order for the same
    * `businessSource + businessOrderNo`.
    *
-   * Replay is resolved before any current-state check: an equivalent existing
-   * order is returned with its original frozen product, mode and mapping
-   * version even if the product has since been disabled or the mapping has been
-   * rotated. A different `productId` for the same business identity fails with
+   * A registered application governs its source: a disabled registration fails
+   * before anything else, and a genuinely new order must use a product on the
+   * application's configured allowlist. Those reads happen inside the same
+   * IMMEDIATE transaction as the insert, so a concurrent disable or allowlist
+   * change either commits before this check or waits until after it. Sources
+   * without a registered application keep the legacy compatibility path.
+   *
+   * Replay of an already accepted order is resolved before product-eligibility
+   * checks: an equivalent existing order is returned with its original frozen
+   * product, mode and mapping version even if the product has since been
+   * disabled, removed from the allowlist or its mapping rotated. A different
+   * `productId` for the same business identity fails with
    * `OrderIntentConflictError` instead of overwriting.
    *
    * A genuinely new order requires an existing `active` internal product with a
@@ -111,6 +182,16 @@ export interface BenefitOrderRepository {
   listStatusEvents(orderId: string): OrderStatusEvent[];
   appendAttempt(input: AppendFulfillmentAttemptInput): FulfillmentAttempt;
   listAttempts(orderId: string): FulfillmentAttempt[];
+  /**
+   * Operator-only paginated listing across all business sources. Ordered by
+   * `createdAt DESC, id DESC` so equal timestamps still page deterministically.
+   */
+  listForOperations(query: ListOrdersForOperationsQuery): OperationsOrderListResult;
+  /**
+   * Operator-only detail assembled from persisted local facts. The product row
+   * is current; supplier provenance comes only from the order's frozen snapshot.
+   */
+  getForOperations(orderId: string): OperationsOrderDetail | null;
 }
 
 interface OrderRow {
@@ -185,6 +266,41 @@ function toFulfillmentAttempt(row: AttemptRow): FulfillmentAttempt {
   };
 }
 
+/**
+ * Stored enum columns are constrained by SQLite CHECKs. Reading anything else
+ * is data corruption, not a reason to render a guessed operator-facing value.
+ */
+function toStoredProductStatus(value: string): 'active' | 'disabled' {
+  if (value === 'active' || value === 'disabled') return value;
+  throw new Error(`Unknown catalog product status stored in database: ${value}`);
+}
+
+function toStoredDeductionUnit(value: string): 'pack' | 'amount' {
+  if (value === 'pack' || value === 'amount') return value;
+  throw new Error(`Unknown deduction unit stored in database: ${value}`);
+}
+
+function loadStatusEvents(db: AppDatabase, orderId: string): OrderStatusEvent[] {
+  const rows = db
+    .select()
+    .from(benefitOrderStatusEvents)
+    .where(eq(benefitOrderStatusEvents.orderId, orderId))
+    .orderBy(asc(benefitOrderStatusEvents.version))
+    .all();
+  return rows.map(toOrderStatusEvent);
+}
+
+function loadAttempts(db: AppDatabase, orderId: string): FulfillmentAttempt[] {
+  const rows = db
+    .select()
+    .from(fulfillmentAttempts)
+    .where(eq(fulfillmentAttempts.orderId, orderId))
+    .orderBy(asc(fulfillmentAttempts.occurredAt), asc(fulfillmentAttempts.id))
+    .all();
+  return rows.map(toFulfillmentAttempt);
+}
+
+
 function isForeignKeyViolation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('FOREIGN KEY constraint failed');
 }
@@ -204,8 +320,47 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       // activation either commits before this read or waits until after it.
       return db.transaction(
         (tx) => {
-          // Replay is resolved before eligibility: an already accepted order is
-          // never invalidated by a later product disable or mapping rotation.
+          // Registered-application enforcement is part of the same serialized
+          // unit as the insert: a concurrent `disable`/allowlist write cannot
+          // slip between this check and the order row.
+          const application = tx
+            .select({ id: businessApplications.id, status: businessApplications.status })
+            .from(businessApplications)
+            .where(eq(businessApplications.businessSource, businessSource))
+            .limit(1)
+            .get();
+
+          // Authentication happens before async request-body parsing. A credential
+          // can be revoked while the request waits for its body, so re-check the
+          // exact verified credential under the same write lock as the order insert.
+          // Legacy environment clients have no DB credential id and retain their
+          // existing application-status/allowlist checks below.
+          if (input.applicationCredentialId != null) {
+            const credential = tx
+              .select({ applicationId: businessApplicationCredentials.applicationId })
+              .from(businessApplicationCredentials)
+              .where(
+                and(
+                  eq(businessApplicationCredentials.id, input.applicationCredentialId),
+                  isNull(businessApplicationCredentials.revokedAt),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!application || !credential || credential.applicationId !== application.id) {
+              throw new OrderCredentialRevokedError('应用服务凭证已失效');
+            }
+          }
+
+          if (application && application.status !== 'enabled') {
+            throw new OrderApplicationDisabledError(
+              `应用已停用，不能创建新订单：${businessSource}`,
+            );
+          }
+
+          // Replay is resolved before product eligibility: an already accepted
+          // order is never invalidated or rewritten by a later allowlist change,
+          // product disable or mapping rotation.
           const existing = tx
             .select()
             .from(benefitOrders)
@@ -226,6 +381,25 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
               );
             }
             return { order, created: false };
+          }
+
+          if (application) {
+            const authorized = tx
+              .select({ productId: businessApplicationProducts.productId })
+              .from(businessApplicationProducts)
+              .where(
+                and(
+                  eq(businessApplicationProducts.applicationId, application.id),
+                  eq(businessApplicationProducts.productId, productId),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!authorized) {
+              throw new OrderProductNotAuthorizedError(
+                `内部商品不在该应用的商品授权范围内，不能创建新订单：${productId}`,
+              );
+            }
           }
 
           const product = tx
@@ -378,13 +552,7 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
     },
 
     listStatusEvents(orderId) {
-      const rows = db
-        .select()
-        .from(benefitOrderStatusEvents)
-        .where(eq(benefitOrderStatusEvents.orderId, requireOrderId(orderId)))
-        .orderBy(asc(benefitOrderStatusEvents.version))
-        .all();
-      return rows.map(toOrderStatusEvent);
+      return loadStatusEvents(db, requireOrderId(orderId));
     },
 
     appendAttempt(input) {
@@ -423,13 +591,123 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
     },
 
     listAttempts(orderId) {
+      return loadAttempts(db, requireOrderId(orderId));
+    },
+
+    listForOperations(query) {
+      const conditions = [];
+      if (query.businessSource !== undefined) {
+        conditions.push(eq(benefitOrders.businessSource, query.businessSource));
+      }
+      if (query.businessOrderNo !== undefined) {
+        conditions.push(eq(benefitOrders.businessOrderNo, query.businessOrderNo));
+      }
+      if (query.status !== undefined) {
+        conditions.push(eq(benefitOrders.status, query.status));
+      }
+      if (query.createdFrom !== undefined) {
+        conditions.push(gte(benefitOrders.createdAt, query.createdFrom));
+      }
+      if (query.createdTo !== undefined) {
+        conditions.push(lte(benefitOrders.createdAt, query.createdTo));
+      }
+      const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+      // The count is a separate bounded aggregate over the same predicates, so
+      // the UI total is the real filtered total rather than the current page.
+      const total =
+        db.select({ value: count() }).from(benefitOrders).where(where).get()?.value ?? 0;
+
+      // Existing indexes cover the source/identity and status+creation filters.
+      // There is deliberately no new `created_at` index in this slice, so the
+      // unfiltered ordering still needs SQLite's sort; that remains a separate
+      // migration decision rather than being smuggled into a read-only card.
       const rows = db
-        .select()
-        .from(fulfillmentAttempts)
-        .where(eq(fulfillmentAttempts.orderId, requireOrderId(orderId)))
-        .orderBy(asc(fulfillmentAttempts.occurredAt), asc(fulfillmentAttempts.id))
+        .select({ order: benefitOrders, currentProductName: catalogProducts.name })
+        .from(benefitOrders)
+        .innerJoin(catalogProducts, eq(catalogProducts.id, benefitOrders.productId))
+        .where(where)
+        .orderBy(desc(benefitOrders.createdAt), desc(benefitOrders.id))
+        .limit(query.pageSize)
+        .offset((query.page - 1) * query.pageSize)
         .all();
-      return rows.map(toFulfillmentAttempt);
+
+      return {
+        orders: rows.map((row) => ({
+          order: toBenefitOrder(row.order),
+          currentProductName: row.currentProductName,
+        })),
+        total,
+      };
+    },
+
+    getForOperations(orderId) {
+      const row = db
+        .select()
+        .from(benefitOrders)
+        .where(eq(benefitOrders.id, requireOrderId(orderId)))
+        .limit(1)
+        .get();
+      if (!row) return null;
+      const order = toBenefitOrder(row);
+
+      const productRow = db
+        .select({
+          id: catalogProducts.id,
+          code: catalogProducts.code,
+          name: catalogProducts.name,
+          status: catalogProducts.status,
+        })
+        .from(catalogProducts)
+        .where(eq(catalogProducts.id, order.productId))
+        .limit(1)
+        .get();
+      if (!productRow) {
+        // The foreign key makes this unreachable; a fabricated product name
+        // would be worse than an explicit server-side failure.
+        throw new Error(`Order ${order.id} references a missing catalog product`);
+      }
+
+      const frozenRow =
+        order.mappingVersionId === null
+          ? undefined
+          : db
+              .select({
+                id: supplierProductMappingVersions.id,
+                mappingId: supplierProductMappingVersions.mappingId,
+                versionNumber: supplierProductMappingVersions.versionNumber,
+                provider: supplierProductMappingVersions.provider,
+                productCode: supplierProductMappingVersions.productCode,
+                fulfillmentMode: supplierProductMappingVersions.fulfillmentMode,
+                deductionUnit: supplierProductMappingVersions.deductionUnit,
+                activatedAt: supplierProductMappingVersions.activatedAt,
+              })
+              .from(supplierProductMappingVersions)
+              .where(eq(supplierProductMappingVersions.id, order.mappingVersionId))
+              .limit(1)
+              .get();
+      if (order.mappingVersionId !== null && !frozenRow) {
+        // The frozen reference is a foreign key; never fall back to the current
+        // active mapping, because that would rewrite history.
+        throw new Error(`Order ${order.id} references a missing mapping version`);
+      }
+
+      return {
+        order,
+        currentProduct: {
+          ...productRow,
+          status: toStoredProductStatus(productRow.status),
+        },
+        frozenMapping: frozenRow
+          ? {
+              ...frozenRow,
+              fulfillmentMode: toFulfillmentMode(frozenRow.fulfillmentMode),
+              deductionUnit: toStoredDeductionUnit(frozenRow.deductionUnit),
+            }
+          : null,
+        statusEvents: loadStatusEvents(db, order.id),
+        attempts: loadAttempts(db, order.id),
+      };
     },
   };
 }

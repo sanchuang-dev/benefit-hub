@@ -1,0 +1,52 @@
+.application-drawer-alert {
+  margin-bottom: 12px;
+}
+
+.application-form-section {
+  margin: 4px 0 16px;
+}
+
+.application-drawer-meta {
+  display: block;
+  margin-top: -4px;
+  margin-bottom: 4px;
+}
+
+.application-products-section {
+  margin-top: 20px;
+}
+
+.application-credentials-section {
+  margin-top: 20px;
+}
+
+.application-secret-value {
+  margin-bottom: 0;
+  word-break: break-all;
+}
+
+.application-selected-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.application-selected-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-height: 108px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid #f0f0f0;
+  border-radius: 6px;
+}
+
+.application-product-search {
+  width: 100%;
+  max-width: 360px;
+}
+
+.application-product-picker {
+  width: 100%;
+}

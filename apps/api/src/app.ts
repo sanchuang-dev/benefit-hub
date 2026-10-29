@@ -6,16 +6,20 @@ import type { AppDatabase } from './db/client.js';
 import { logEvent } from './log.js';
 import type { AppEnv } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
+import { createApplicationRoutes } from './modules/applications/routes.js';
 import { createAdminAccountRoutes } from './modules/auth/admin-routes.js';
 import { apiError, NO_STORE_HEADERS } from './modules/auth/http.js';
 import { createAuthRoutes } from './modules/auth/routes.js';
 import { createCatalogMappingRoutes } from './modules/catalog/mapping-routes.js';
 import { createCatalogRoutes } from './modules/catalog/routes.js';
 import { createSupplierCatalogRoutes } from './modules/catalog/supplier-catalog-routes.js';
+import { createSupplierManagementRoutes } from './modules/suppliers/routes.js';
+import { createSupplierReadOperationRoutes } from './modules/suppliers/read-operations-routes.js';
 import {
   BUSINESS_ORDER_COLLECTION_PATH,
   createBusinessOrderRoutes,
 } from './modules/orders/business-order-routes.js';
+import { createOperationsOrderRoutes } from './modules/operations/order-routes.js';
 
 export interface AppDependencies {
   db: AppDatabase;
@@ -69,8 +73,6 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
     c.json({
       service: 'benefit-hub',
       phase: 'auth-enabled',
-      // Supplier fulfillment stays disabled until a separately authorized slice.
-      vendorFulfillmentEnabled: false,
       adminEnabled: true,
       authenticationRequired: true,
     }),
@@ -78,10 +80,14 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
 
   app.route('/api/v1/auth', createAuthRoutes(deps));
   app.route('/api/v1/admin', createAdminAccountRoutes(deps));
+  app.route('/api/v1/applications', createApplicationRoutes(deps));
   app.route('/api/v1/catalog', createCatalogRoutes(deps));
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
   app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));
+  app.route('/api/v1/suppliers', createSupplierManagementRoutes(deps));
+  app.route('/api/v1/suppliers', createSupplierReadOperationRoutes(deps));
   app.route('/api/v1/business/orders', createBusinessOrderRoutes(deps));
+  app.route('/api/v1/operations', createOperationsOrderRoutes(deps));
 
   app.all('/api/*', (c) => c.json(apiError('NOT_FOUND', '接口不存在'), 404));
 

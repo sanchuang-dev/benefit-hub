@@ -53,7 +53,6 @@ describe('internal product catalogue API', () => {
       displayPriceCents: 1000,
       estimatedCostCents: 900,
       version: 1,
-      vendorFulfillmentEnabled: false,
     });
     // The internal identifier is our own and is not derived from any supplier code.
     expect(product.id).not.toBe(product.code);
@@ -226,15 +225,15 @@ describe('internal product catalogue API', () => {
     expect(((await reread.json()) as ProductResponse).product.code).toBe('B-1');
   });
 
-  it('never reports an internal product as vendor-fulfilable', async () => {
+  it('does not expose a fictitious fulfillment switch or accept one from callers', async () => {
     const created = await createProduct(admin, { code: 'NO-MAPPING', name: '无映射商品' });
-    expect(created.vendorFulfillmentEnabled).toBe(false);
+    expect(created).not.toHaveProperty('vendorFulfillmentEnabled');
 
     const list = await admin.request('/api/v1/catalog/products');
     const body = (await list.json()) as ProductListResponse;
-    expect(body.products.every((product) => product.vendorFulfillmentEnabled === false)).toBe(true);
+    expect(body.products.every((product) => !('vendorFulfillmentEnabled' in product))).toBe(true);
 
-    // Unmapped products cannot be made fulfilable by sending a vendor flag.
+    // A caller cannot force supplier dispatch behavior through a product field.
     const rejected = await admin.post('/api/v1/catalog/products', {
       code: 'FORGED-MAPPING',
       name: '伪造映射',

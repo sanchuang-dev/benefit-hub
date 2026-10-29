@@ -89,9 +89,40 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 | `COOKIE_SECURE` | `NODE_ENV=production` 时为 true | 生产必须保持 true；本地 http 联调才可关闭 |
 | `TRUST_PROXY` | `false`（compose 为 `true`） | 仅当宿主机 Caddy 在容器前时才信任 `X-Forwarded-For` |
 | `YANGMAO_INRICE_BASE_URL` / `YANGMAO_INRICE_APP_KEY` / `YANGMAO_INRICE_APP_SECRET` | 未设置 | 可选的上力 D 商品只读凭证，三项必须同时由服务器侧安全注入；缺失时只读入口明确返回 503，不回退默认值或假数据 |
-| `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 可选的下游业务订单服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。缺失时订单接口返回 503 且零写入；格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
+| `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 兼容用的旧版下游服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。已登记应用的 `businessSource` 即使仍用环境凭证，也必须服从该应用的启停与商品授权；未登记来源保持兼容。格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
 
 登录限速（同一账号 15 分钟 5 次失败、同一来源 15 分钟 20 次）保存在进程内存，重启只会解除锁定，不会放行凭据。
+
+### 下游应用机器凭证（2026-10-28）
+
+- 凭证由管理员在 **下游应用 → 详情 → 机器凭证** 中签发，服务端随机生成并在响应中**只显示一次**；SQLite（migration `0008_business_application_credentials`）只保存 SHA-256 摘要、应用绑定、签发/撤销人与时间，以及最小审计。数据库、日志和任何读取接口都不能还原原文。
+- 同一应用最多保留 5 个有效凭证，便于轮换：**先签发新凭证并更新调用方服务器配置 → 验证可用 → 再撤销旧凭证**。撤销立即生效且不可恢复；重复撤销是幂等的。
+- 材料丢失（未保存原始密钥）时无法找回，只能签发新凭证并撤销旧凭证；不要尝试从数据库或备份中"恢复"明文。
+- 应用被停用后，该 `businessSource` 的所有机器调用返回 403 `APPLICATION_DISABLED`（包括旧环境凭证）；数据库中已有订单保留，管理员仍可在后台查看。重新启用并保持凭证/商品授权有效后可继续调用。
+- 应用页签发的凭证与 `BENEFIT_ORDER_CLIENTS_JSON` 环境凭证是两种来源；已登记来源受同一套启停/商品授权约束，环境变量不会成为绕过数据库配置的后门。
+
+### 上力 D 商品只读凭证注入（2026-10-28）
+
+当前 `compose.yaml` 已将三个可选的 `YANGMAO_INRICE_*` 环境变量传给容器；**代码变更不等于测试 Key 已被安装**。凭证必须由运维通过服务端受控配置注入，不得进入 GitHub、构建日志、浏览器请求或镜像。
+
+- 开发测试只读 API 来源是 `https://dev-api.isunpow.com`；`https://dev-admin.isunpow.com` 的网页登录会话并不等于 D Open API 的 AppKey/AppSecret。
+- 若使用 Docker Compose 主机私有 `.env`（部署目录 `/srv/benefit-hub`），只允许在授权的服务器终端录入三项凭证；文件只授权部署用户读取（`0600`）。不在仓库、Issue、PR、示例文件或日志中保存真实值。
+- 可使用 `docker compose config -q` 静态检查；不要把打印插值配置的 `docker compose config`、`docker inspect` 输出到公开日志。缺失凭证时，供应商商品读取仍返回 `SUPPLIER_NOT_CONFIGURED`，页面绝不呈现假空目录。
+- 现有目录接口是经过鉴权的 D 商品列表/详情 **GET**。实际供应商派发与扣额须由对应已实现的业务接口负责；联通验收在后台确认商品数据与时间戳，不以凭证存在冒充连接成功。
+
+
+### 数据库存储供应商接入信息（2026-10-28）
+
+供应商连接不再必须逐个通过环境变量注入：管理员可以在 **供应商管理 → 上力 → 接入与规则 → 编辑接入配置** 中录入测试 Open API 地址、AppKey 和 AppSecret，API 将凭证使用 AES-256-GCM（每次写入随机 nonce + 认证 tag）加密后保存到现有的持久化 SQLite（migration `0006_supplier_connections`），与修改者和版本审计一起持久化。已有凭证不会向客户端回显；仅服务器执行签名查询时读取和解密，修改后无需重启。
+
+**部署配置保留规则（重要）**：旧版 `dev` 发布流程每次重建服务器 `/srv/benefit-hub/.env`，导致手工添加的供应商密钥会在下一次发布时消失。新的部署脚本仅更新镜像 SHA、验证既有端口/数据目录，不再覆盖其他字段；在该修复合并并成功发布之前，**不要初始化主密钥**。部署仍必须保证 `.env` 是非符号链接、权限 `0600`，绝不能把密钥值输出到 GitHub Actions 日志。
+
+**一次性主密钥准备**：需要在受控服务器配置中设置 `BENEFIT_SUPPLIER_MASTER_KEY`（32 字节随机密钥，以 64 位十六进制编码），经 Compose 传入应用容器。密钥本身**不存入 SQLite、不提交仓库、不显示在后台，也不在 CI 日志中输出**。所有供应商共用一项独立的主密钥管理配置，并非每加一家供应商都改服务器。主密钥应与 SQLite 备份分别保管；若丢失或变更，将无法解密已存凭证，必须进行正式密钥轮换/恢复或让管理员重新录入，不得静默回退为其它凭证。
+
+- **灰度兼容**：数据库尚无凭证时，原有 `YANGMAO_INRICE_*` 环境配置仍可只读使用；保存 DB 配置后以数据库记录为准。数据库有记录但主密钥不可用时返回明确错误，不回退到旧环境变量以免错用身份。
+- **安全限制**：本切片只允许将 D 测试连接地址保存为 `https://dev-api.isunpow.com`，不接受任意上游 URL、HTTP、内部网目标或非审核生产地址；正式生产上力地址须另行核实。管理员身份、CSRF 和乐观版本保护写入，普通只读运营账号禁止修改。
+- **接口职责**：供应商连接配置服务于目录查询与凭证管理；发放、扣额与结果核实由实际订单履约实现负责，不用行政式禁用开关代替能力实现。
+- **真实验收**：合并部署与一次性密钥配置后，由管理员通过页面保存测试凭证，再点击「验证目录读取」与商品详情；如果未真正保存凭证或未读回上力数据，不得声称联通完成。不得将实际 AppKey/AppSecret 贴入 Issue/PR、日志或聊天作为调试方式。
 
 ## 5. SQLite 数据安全
 
@@ -105,7 +136,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 
 ## 6. 发布门槛与验收证据
 
-- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，供应商商品、发放记录等页面仍待实现。
+- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，BHB-013-B1 已实现「发放记录」的平台本地订单只读页（真实供应商履约与发放仍未实现）。
 - [x] 公司原型服务器 Docker/Compose、端口占用及 Caddy/原型服务已读检查（后续变更须复核）。
 - [x] SSH 凭证链路和主机指纹已在 CI 实测通过；不得回显 Secret。
 - [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在（BHB-002 仅在本地临时 SQLite 验证迁移/重启，未在服务器复核）。

@@ -1,4 +1,4 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { index, integer, primaryKey, sqliteTable, text, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 /**
  * Admin accounts are intentionally minimal for the first slice: password login
@@ -158,6 +158,131 @@ export const supplierProductMappingVersions = sqliteTable(
 );
 
 /**
+ * Downstream business application registry (BHB-014-A).
+ *
+ * This is the operator configuration plane only. Rows never hold a token,
+ * secret, supplier credential or runtime authorization decision:
+ * `business_source` is the stable normalized identity shared with the existing
+ * machine order contract, and the unique index prevents two applications from
+ * claiming the same source. `version` guards operator edits. Disabled rows stay
+ * readable and re-enableable; there is no delete path.
+ */
+export const businessApplications = sqliteTable('business_applications', {
+  id: text('id').primaryKey(),
+  businessSource: text('business_source').notNull().unique(),
+  name: text('name').notNull(),
+  note: text('note').notNull(),
+  status: text('status').notNull(),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+/**
+ * Configured internal-product allowlist for one application. The composite
+ * primary key makes a duplicate pair unrepresentable, and both foreign keys
+ * keep the pair pointed at persisted rows. This is configuration data for a
+ * future runtime binding; nothing here grants a machine caller access today.
+ */
+export const businessApplicationProducts = sqliteTable(
+  'business_application_products',
+  {
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    productId: text('product_id')
+      .notNull()
+      .references(() => catalogProducts.id, { onDelete: 'restrict' }),
+    configuredAt: integer('configured_at').notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.applicationId, table.productId] }),
+    index('idx_business_application_products_product').on(table.productId),
+  ],
+);
+
+/**
+ * Minimal operator audit facts for application configuration writes: who
+ * changed which application and what kind of action occurred. No request
+ * bodies, tokens, product codes or secrets are recorded here.
+ */
+export const businessApplicationEvents = sqliteTable(
+  'business_application_events',
+  {
+    id: text('id').primaryKey(),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    actorAccountId: text('actor_account_id').notNull(),
+    action: text('action').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_business_application_events_application').on(
+      table.applicationId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
+ * One issued machine Bearer credential for a registered application
+ * (BHB-014-B).
+ *
+ * Only a SHA-256 digest of the token is stored, so a database copy cannot be
+ * replayed as a live credential and no read path can return the secret. The
+ * application binding is immutable; revocation is terminal (`revoked_at` is
+ * never cleared) and takes effect on the next request. `issued_by` /
+ * `revoked_by` hold admin account ids, never tokens.
+ */
+export const businessApplicationCredentials = sqliteTable(
+  'business_application_credentials',
+  {
+    id: text('id').primaryKey(),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    tokenSha256: text('token_sha256').notNull().unique(),
+    issuedBy: text('issued_by').notNull(),
+    issuedAt: integer('issued_at').notNull(),
+    revokedBy: text('revoked_by'),
+    revokedAt: integer('revoked_at'),
+  },
+  (table) => [
+    index('idx_business_application_credentials_application').on(
+      table.applicationId,
+      table.issuedAt,
+    ),
+  ],
+);
+
+/**
+ * Append-only audit facts for credential issuance and revocation. No token,
+ * digest, IP or request body is recorded.
+ */
+export const businessApplicationCredentialEvents = sqliteTable(
+  'business_application_credential_events',
+  {
+    id: text('id').primaryKey(),
+    credentialId: text('credential_id')
+      .notNull()
+      .references(() => businessApplicationCredentials.id, { onDelete: 'restrict' }),
+    applicationId: text('application_id')
+      .notNull()
+      .references(() => businessApplications.id, { onDelete: 'restrict' }),
+    actorAccountId: text('actor_account_id').notNull(),
+    action: text('action').notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => [
+    index('idx_business_application_credential_events_credential').on(
+      table.credentialId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
  * One row per business grant intent. `id` is our internal order id and is never
  * derived from a supplier order number. The unique
  * `business_source + business_order_no` index is the idempotency guarantee, so a
@@ -250,3 +375,22 @@ export const fulfillmentAttempts = sqliteTable(
   },
   (table) => [index('idx_fulfillment_attempts_order').on(table.orderId, table.occurredAt)],
 );
+
+/** Encrypted server-side provider credentials. No plaintext secrets in DB. */
+export const supplierConnections = sqliteTable('supplier_connections', {
+  provider: text('provider').primaryKey(),
+  baseUrl: text('base_url').notNull(),
+  encryptedCredentials: text('encrypted_credentials').notNull(),
+  version: integer('version').notNull(),
+  updatedBy: text('updated_by').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const supplierConnectionEvents = sqliteTable('supplier_connection_events', {
+  id: text('id').primaryKey(),
+  provider: text('provider').notNull(),
+  actorAccountId: text('actor_account_id').notNull(),
+  action: text('action').notNull(),
+  version: integer('version').notNull(),
+  createdAt: integer('created_at').notNull(),
+});

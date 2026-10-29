@@ -85,7 +85,7 @@ describe('supplier catalogue read API', () => {
       const body = (await response.json()) as Record<string, unknown>;
       expect(body).toEqual({
         error: 'SUPPLIER_NOT_CONFIGURED',
-        message: '上力供应商商品读取尚未配置；请在服务器侧配置只读凭证后重试',
+        message: '上力商品查询尚未配置；请在供应商管理中保存接入凭证后重试',
       });
       expect(body).not.toHaveProperty('products');
     } finally {

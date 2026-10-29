@@ -622,6 +622,6 @@ describe('existing human API security is unchanged', () => {
     expect(((await withoutCsrf.json()) as { error: string }).error).toBe('CSRF_TOKEN_INVALID');
 
     const status = await testServer.app.request('/api/v1/system/status');
-    expect(await status.json()).toMatchObject({ vendorFulfillmentEnabled: false });
+    expect(await status.json()).not.toHaveProperty('vendorFulfillmentEnabled');
   });
 });

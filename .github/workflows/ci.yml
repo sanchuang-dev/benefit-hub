@@ -28,7 +28,7 @@ jobs:
         run: pnpm check
       - name: Build production Docker image
         run: docker build --tag benefit-hub:ci .
-      - name: Verify runtime health and disabled fulfillment
+      - name: Verify runtime health and system status
         shell: bash
         run: |
           set -euo pipefail
@@ -45,7 +45,7 @@ jobs:
           test "$ready" = "1" || { docker logs benefit-hub-ci; exit 1; }
           grep -q '"status":"ok"' /tmp/benefit-health.json
           curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
-            grep -q '"vendorFulfillmentEnabled":false'
+            grep -q '"adminEnabled":true'
           curl --fail --silent http://127.0.0.1:18081/ |
             grep -q '<title>Benefit Hub'
 
@@ -132,13 +132,29 @@ jobs:
           cd /srv/benefit-hub
           gzip -dc "/srv/benefit-hub/releases/$DEPLOY_SHA.tar.gz" | docker load
           docker image inspect "benefit-hub:$DEPLOY_SHA" >/dev/null
+          # Never overwrite host-owned secrets on a release. The Compose .env
+          # is a persistent root-only configuration, not a generated release file.
+          test ! -L .env || { echo "Refusing symlinked .env"; exit 1; }
           prev=""
           if test -f .env; then
             prev="$(sed -n 's/^BENEFIT_IMAGE_TAG=//p' .env | head -1)"
+          else
+            : > .env
           fi
-          echo "BENEFIT_IMAGE_TAG=$DEPLOY_SHA" > .env
-          echo "BENEFIT_HTTP_PORT=18080" >> .env
-          echo "BENEFIT_DATA_DIR=/srv/benefit-hub/data" >> .env
+          chmod 600 .env
+          if grep -q '^BENEFIT_IMAGE_TAG=' .env; then
+            sed -i "s/^BENEFIT_IMAGE_TAG=.*/BENEFIT_IMAGE_TAG=$DEPLOY_SHA/" .env
+          else
+            printf 'BENEFIT_IMAGE_TAG=%s\n' "$DEPLOY_SHA" >> .env
+          fi
+          for setting in 'BENEFIT_HTTP_PORT=18080' 'BENEFIT_DATA_DIR=/srv/benefit-hub/data'; do
+            name="${setting%%=*}"
+            if grep -q "^${name}=" .env; then
+              grep -qx "$setting" .env || { echo "Unexpected Benefit Hub deployment path/port"; exit 1; }
+            else
+              printf '%s\n' "$setting" >> .env
+            fi
+          done
           chmod 600 .env
           docker compose --project-name benefit-hub -f compose.yaml config -q
           if ! docker compose --project-name benefit-hub -f compose.yaml up -d --no-build; then

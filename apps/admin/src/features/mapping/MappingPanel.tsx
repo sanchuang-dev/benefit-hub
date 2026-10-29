@@ -226,10 +226,10 @@ function MappingOverview({
     <>
       <Alert
         className="mapping-upstream-alert"
-        type="warning"
+        type="info"
         showIcon
-        title="上游尚未验证，真实权益发放仍禁用"
-        description="validationScope 为 local、upstreamVerified 为 false：本地结构校验只检查字段与模式规则，不代表羊毛上游已受理该商品；映射已激活也不代表可以真实发券。"
+        title="仅完成本地映射校验"
+        description="当前校验范围为本地结构与模式规则；供应商商品能力和订单履约结果按实际接口记录核实。"
       />
 
       <Tabs

@@ -275,7 +275,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
                 description={
                   status === 'active'
                     ? '停用后该内部商品不可再用于后续发放，历史数据不会被删除。'
-                    : '启用只代表内部配置可用；供应商映射与真实发放状态以下方映射面板为准。'
+                    : '启用仅改变商品状态；创建订单还需要有效的供应商映射。'
                 }
                 okText="确认"
                 cancelText="取消"
@@ -323,15 +323,7 @@ export function ProductEditorDrawer({ state, canWrite, onClose }: ProductEditorD
           type="info"
           showIcon
           title="新建商品不包含供应商映射"
-          description="创建成功后可在商品编辑抽屉中保存映射草稿、执行本地校验并显式激活；激活只影响此后新建订单，真实发放仍禁用。"
-        />
-      ) : detail.data ? (
-        <Alert
-          className="product-drawer-alert"
-          type="info"
-          showIcon
-          title="真实权益发放仍禁用"
-          description="供应商映射以下方面板为准；保存、本地校验与显式激活只改变此后新建订单的映射绑定，本版本不会请求羊毛上游或发放真实权益。"
+          description="创建商品后可在编辑抽屉中配置、校验并激活供应商映射，激活版本供后续订单引用。"
         />
       ) : null}
 

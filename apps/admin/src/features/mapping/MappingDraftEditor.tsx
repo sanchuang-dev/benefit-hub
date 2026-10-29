@@ -742,7 +742,7 @@ export function MappingDraftEditor({
             <ul className="mapping-modal-list">
               <li>只影响此后新建订单；旧订单已绑定原映射版本，保持不变。</li>
               <li>本次仅基于本地结构校验，未进行上游验证（upstreamVerified: false）。</li>
-              <li>真实权益发放仍禁用：激活映射不会调用供应商，也不代表可以发券。</li>
+              <li>激活映射只绑定订单使用的供货关系；具体派发与到账状态由订单履约记录确定。</li>
             </ul>
           }
         />

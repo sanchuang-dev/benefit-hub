@@ -1,0 +1,132 @@
+name: Verify Live Yangmao Read Connection
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths:
+      - .github/workflows/yangmao-runtime-read-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  verify-supplier:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Inspect deployed credential state and perform signed D catalogue read
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SSHPASS" && test -n "$TARGET_USER" && test -n "$TARGET_PORT"
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Unexpected host"; exit 1 ;;
+          esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
+          mkdir -m 700 -p "$RUNNER_TEMP/bhb_ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          test -s "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/bhb_ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' || {
+            echo "::error::SSH host fingerprint mismatch"
+            exit 1
+          }
+          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/bhb_ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -o ConnectTimeout=15             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          test "$(id -u)" -eq 0 || { echo 'Expected root deploy identity'; exit 1; }
+          cd /srv/benefit-hub
+          cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
+          test -n "$cid" || { echo 'Benefit Hub container missing'; exit 1; }
+          docker exec -i "$cid" node --input-type=module - <<'NODE'
+          import Database from 'better-sqlite3';
+          import { drizzle } from 'drizzle-orm/better-sqlite3';
+          import * as schema from './dist/db/schema.js';
+          import { loadConfig } from './dist/config.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import { createYangmaoInriceCatalogClient, createYangmaoOpenV1Client } from '@sanchuang-dev/provider-yangmao';
+
+          const config = loadConfig(process.env);
+          const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
+          try {
+            const db = drizzle(sqlite, { schema });
+            console.log('master_key_ready=' + Boolean(config.supplierMasterKey));
+            let supplier;
+            try {
+              supplier = activeYangmaoReadConfig(db, config);
+            } catch {
+              console.log('provider_config=stored_but_unreadable');
+              process.exitCode = 2;
+            }
+            if (!process.exitCode && !supplier) {
+              console.log('provider_config=missing');
+              process.exitCode = 2;
+            }
+            if (!process.exitCode && supplier) {
+              console.log('provider_config=readable');
+              try {
+                const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
+                console.log('upstream_D_products=success');
+                console.log('upstream_D_product_count=' + catalog.products.length);
+              } catch (error) {
+                const code = typeof error?.code === 'string' && /^[A-Z0-9_]{4,80}$/.test(error.code) ? error.code : 'UNKNOWN';
+                console.log('upstream_D_products=failure');
+                console.log('upstream_error_code=' + code);
+                if (Number.isInteger(error?.vendorCode)) console.log('upstream_vendor_code=' + error.vendorCode);
+                if (Number.isInteger(error?.httpStatus)) console.log('upstream_http_status=' + error.httpStatus);
+                process.exitCode = 3;
+              }
+              const abc = createYangmaoOpenV1Client(supplier);
+              // The sample mobile appears in the supplier's published Open API
+              // documentation. The operation is explicitly read-only.
+              try {
+                const eligibility = await abc.checkPurchase('13800138000');
+                console.log('upstream_AB_purchase_check=success');
+                console.log('eligibility_shape_valid=' + (
+                  typeof eligibility.purchaseRestricted === 'boolean' &&
+                  typeof eligibility.giftUnclaimed === 'boolean' &&
+                  typeof eligibility.lotteryUnbet === 'boolean'
+                ));
+              } catch (error) {
+                const code = typeof error?.code === 'string' && /^[A-Z0-9_]{4,80}$/.test(error.code) ? error.code : 'UNKNOWN';
+                console.log('upstream_AB_purchase_check=failure');
+                console.log('upstream_AB_error_code=' + code);
+                if (Number.isInteger(error?.vendorCode)) console.log('upstream_AB_vendor_code=' + error.vendorCode);
+                if (Number.isInteger(error?.httpStatus)) console.log('upstream_AB_http_status=' + error.httpStatus);
+                process.exitCode = 4;
+              }
+              // Known-absent identifiers: negative contract probes only, not
+              // claims of successful order/voucher recovery.
+              for (const [label, operation] of [
+                ['A_order_lookup_negative', () => abc.queryPrepaidOrder('benefit-smoke-read-missing-20261029')],
+                ['C_voucher_lookup_negative', () => abc.queryGiftVoucher('READSMOKE20261029')],
+              ]) {
+                try {
+                  await operation();
+                  console.log(label + '=parsed_response');
+                } catch (error) {
+                  const code = typeof error?.code === 'string' && /^[A-Z0-9_]{4,80}$/.test(error.code) ? error.code : 'UNKNOWN';
+                  console.log(label + '=error_' + code);
+                  if (Number.isInteger(error?.vendorCode)) console.log(label + '_vendor_code=' + error.vendorCode);
+                  if (Number.isInteger(error?.httpStatus)) console.log(label + '_http_status=' + error.httpStatus);
+                }
+              }
+            }
+          } finally {
+            sqlite.close();
+          }
+          NODE
+          REMOTE
