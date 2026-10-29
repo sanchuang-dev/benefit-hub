@@ -168,3 +168,92 @@ describe('A/B/C purchase-check over a controlled loopback HTTP server', () => {
     expect(server.requests).toHaveLength(1);
   });
 });
+
+describe('C-mode gift-voucher issuance over a controlled loopback HTTP server', () => {
+  it('performs the signed issue POST and a later signed GET by code', async () => {
+    const server = await startVendorServer((request, response) => {
+      if (request.method === 'POST' && request.url === '/open/v1/gift-vouchers') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            code: 0,
+            data: {
+              voucherCode: 'GV-LOOPBACK-1',
+              claimUrl: 'https://h5.example.test/voucher?code=GV-LOOPBACK-1',
+              packTotal: 2,
+              packRemaining: 2,
+            },
+          }),
+        );
+        return;
+      }
+      if (request.method === 'GET' && request.url === '/open/v1/gift-vouchers/GV-LOOPBACK-1') {
+        response.writeHead(200, { 'content-type': 'application/json' });
+        response.end(
+          JSON.stringify({
+            code: 0,
+            data: {
+              claimUrl: 'https://h5.example.test/voucher?code=GV-LOOPBACK-1',
+              packTotal: 2,
+              packRemaining: 1,
+            },
+          }),
+        );
+        return;
+      }
+      response.writeHead(404);
+      response.end();
+    });
+    openServers.push(server);
+
+    const client = createClient(server.origin);
+    const issued = await client.createGiftVoucher({
+      refCode: 'ref_loopback',
+      packCount: 2,
+      requestId: 'bhC-loopback-request-1',
+      phone: PHONE,
+      productCode: 'YM-PACK-C',
+    });
+    expect(issued.voucherCode).toBe('GV-LOOPBACK-1');
+    expect(issued.packRemaining).toBe(2);
+
+    const lookup = await client.queryGiftVoucher('GV-LOOPBACK-1');
+    expect(lookup.packRemaining).toBe(1);
+
+    expect(server.requests).toHaveLength(2);
+    const issue = server.requests[0]!;
+    expect(issue.method).toBe('POST');
+    expect(issue.url).toBe('/open/v1/gift-vouchers');
+    expect(issue.headers['x-sign']).toMatch(/^[0-9A-F]{64}$/);
+    expect(issue.headers['x-signature']).toBeUndefined();
+    expect(JSON.parse(issue.body)).toEqual({
+      refCode: 'ref_loopback',
+      packCount: 2,
+      requestId: 'bhC-loopback-request-1',
+      phone: PHONE,
+      productCode: 'YM-PACK-C',
+    });
+    expect(issue.url).not.toContain(PHONE);
+
+    const query = server.requests[1]!;
+    expect(query.method).toBe('GET');
+    expect(query.url).toBe('/open/v1/gift-vouchers/GV-LOOPBACK-1');
+    expect(query.headers['x-sign']).toMatch(/^[0-9A-F]{64}$/);
+  });
+
+  it('aborts a non-responsive C issuance with a timeout error', async () => {
+    const server = await startVendorServer(() => undefined);
+    openServers.push(server);
+
+    const error = await captureError(
+      createClient(server.origin, 100).createGiftVoucher({
+        refCode: 'ref_loopback',
+        packCount: 1,
+        requestId: 'bhC-loopback-timeout-1',
+      }),
+    );
+
+    expect(error.code).toBe('YANGMAO_OPEN_V1_TIMEOUT');
+    expect(server.requests).toHaveLength(1);
+  });
+});

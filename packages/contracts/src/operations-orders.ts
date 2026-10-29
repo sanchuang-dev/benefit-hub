@@ -14,6 +14,7 @@
 
 import { z } from 'zod';
 import { deductionUnitSchema, fulfillmentModeSchema } from './mapping.js';
+import { giftVoucherSchema } from './gift-voucher.js';
 import {
   attemptOperationSchema,
   attemptResultSchema,
@@ -139,6 +140,12 @@ export const operationsOrderDetailSchema = z
      * admin-only supplier read API using the surfaced `requestId`.
      */
     grant: prepaidGrantSchema.nullable(),
+    /**
+     * C-mode operation identity and vendor-observed quota facts. It carries no
+     * voucher code, claim link, phone digest, promotion code or payload; those
+     * remain encrypted and are returned only to the authenticated owning app.
+     */
+    giftVoucher: giftVoucherSchema.nullable(),
     statusEvents: z.array(operationsOrderStatusEventSchema),
     attempts: z.array(operationsOrderAttemptSchema),
   })

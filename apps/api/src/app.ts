@@ -50,11 +50,11 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.use(
     '/api/v1/*',
     csrfProtection({
-      // Only the machine-to-machine order POSTs (create intent, A-mode grant and
-      // link recovery) are exempt: each is authenticated by a server-side Bearer
-      // service credential on every request and has no browser cookie flow to
-      // protect. Every other API write, including all admin/cookie mutations,
-      // keeps the CSRF gate.
+      // Only the machine-to-machine order POSTs (create intent, A-mode grant
+      // and link recovery, C-mode issuance and recovery) are exempt: each is
+      // authenticated by a server-side Bearer service credential on every
+      // request and has no browser cookie flow to protect. Every other API
+      // write, including all admin/cookie mutations, keeps the CSRF gate.
       isExempt: (c) => c.req.method === 'POST' && isBusinessMachinePostPath(c.req.path),
     }),
   );

@@ -514,4 +514,59 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0010_benefit_order_gift_vouchers',
+    sql: `
+      -- Durable C-mode voucher identity, inserted before the signed supplier
+      -- POST. C issuance pre-deducts packCount packs, so the intent and the
+      -- unknown outcome must survive a crash or lost response. The voucher
+      -- code, claim URL and raw expiry scalar live only in the AES-GCM envelope;
+      -- phone_hmac is a keyed digest, never a phone number.
+      CREATE TABLE IF NOT EXISTS benefit_order_gift_vouchers (
+        order_id TEXT PRIMARY KEY NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        request_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('reserved', 'issued', 'unknown', 'rejected')),
+        pack_count INTEGER NOT NULL CHECK (pack_count BETWEEN 1 AND 12),
+        ref_code TEXT NOT NULL,
+        phone_hmac TEXT,
+        encrypted_voucher TEXT,
+        pack_total INTEGER,
+        pack_remaining INTEGER,
+        last_observed_at INTEGER,
+        attempted_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (length(request_id) BETWEEN 1 AND 64),
+        CHECK (length(ref_code) BETWEEN 1 AND 64),
+        CHECK (phone_hmac IS NULL OR (
+          length(phone_hmac) = 64 AND phone_hmac NOT GLOB '*[^0-9a-f]*'
+        )),
+        CHECK (pack_total IS NULL OR pack_total >= 1),
+        CHECK (pack_remaining IS NULL OR pack_remaining >= 0),
+        CHECK (last_observed_at IS NULL OR last_observed_at >= 0),
+        -- An issued voucher must be recoverable: the protected envelope is what
+        -- lets a later read find the same supplier voucher without re-issuing.
+        CHECK (state != 'issued' OR encrypted_voucher IS NOT NULL)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_benefit_order_gift_vouchers_request
+        ON benefit_order_gift_vouchers (request_id);
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_gift_vouchers_state_updated
+        ON benefit_order_gift_vouchers (state, updated_at);
+
+      -- Operation identity is immutable once reserved; only observed state and
+      -- quota facts may be settled by a later issuance result or recovery read.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_gift_vouchers_identity_immutable
+      BEFORE UPDATE OF order_id, request_id, pack_count, ref_code, phone_hmac
+      ON benefit_order_gift_vouchers
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order gift voucher identity is immutable');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_gift_vouchers_no_delete
+      BEFORE DELETE ON benefit_order_gift_vouchers
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order gift vouchers are never deleted');
+      END;
+    `,
+  },
 ];

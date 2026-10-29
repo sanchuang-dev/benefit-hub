@@ -44,6 +44,10 @@ export type { AttemptOperation, AttemptResult };
 export { PREPAID_GRANT_STATES };
 export type { PrepaidGrantState };
 
+/** C-mode operation states; owned by the shared wire contract. */
+export { GIFT_VOUCHER_STATES } from '@sanchuang-dev/benefit-contracts';
+export type { GiftVoucherState } from '@sanchuang-dev/benefit-contracts';
+
 /**
  * A persisted business grant intent. `businessSource + businessOrderNo` is the
  * caller-provided upstream identity; `id` is our stable internal order id.
@@ -143,6 +147,21 @@ export class GrantNotRetryableError extends Error {}
 export class GrantNotFoundError extends Error {}
 /** The persisted grant state no longer permits the requested transition. */
 export class GrantStateConflictError extends Error {}
+
+/** A repeated C-mode issuance for the same order carried different inputs. */
+export class GiftVoucherInputConflictError extends Error {}
+/** A C-mode reservation is still within its in-flight window; do not race it. */
+export class GiftVoucherInProgressError extends Error {}
+/** A previously rejected C-mode issuance must not be retried blindly. */
+export class GiftVoucherNotRetryableError extends Error {}
+/** No durable C-mode operation exists for this order. */
+export class GiftVoucherNotFoundError extends Error {}
+/** The issuance outcome cannot be recovered automatically; keep it unknown. */
+export class GiftVoucherOutcomeUnknownError extends Error {}
+/** Only a frozen C-mode Yangmao snapshot can be executed by this slice. */
+export class GiftVoucherModeUnsupportedError extends Error {}
+/** The persisted C-mode state no longer permits the requested transition. */
+export class GiftVoucherStateConflictError extends Error {}
 
 /**
  * `BUSINESS_SOURCE_PATTERN` and `BUSINESS_ORDER_NO_PATTERN` are owned by the

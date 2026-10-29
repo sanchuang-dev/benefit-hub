@@ -1,12 +1,13 @@
-# Benefit Hub · 下游业务订单 HTTP 入站（BHB-012-A / BHB-014-B / BHB-012-C）
+# Benefit Hub · 下游业务订单 HTTP 入站（BHB-012-A / BHB-014-B / BHB-012-C / BHB-012-E）
 
-> **状态（2026-10-29）：创建意图 + 应用级运行时授权 + A 模式下单代码。**
+> **状态（2026-10-29）：创建意图 + 应用级运行时授权 + A 模式下单 / C 模式发券代码。**
 >
 > - `POST /api/v1/business/orders`（BHB-012-A）仍只创建/重放**本地业务意图**：新订单固定为 `pending`，不调用上力/羊毛供应商，不扣额度、不派发、不产生任何上游 HTTP 副作用。
-> - `POST /api/v1/business/orders/:orderId/grant` 与 `/recover`（BHB-012-C，§6）是单独的 A 模式副作用入口：前者在显式付款声明与实时资格检查后扣 1 个礼包额度，后者只读找回链接。代码与隔离测试已实现，但**未执行真实上力扣额，也未完成 live 验收**。
-> - 平台不提供始终为 false 的虚构履约开关字段。BHB-014-B 起，凭证可在管理后台按应用签发，应用启停与内部商品白名单会真实约束机器调用；Draft PR 合入、CI 绿灯或本文件存在都不代表真实履约上线。
+> - `POST /api/v1/business/orders/:orderId/grant` 与 `/recover`（BHB-012-C，§6）是单独的 A 模式副作用入口：前者在显式付款声明与实时资格检查后扣 1 个礼包额度，后者只读找回链接。
+> - `POST /api/v1/business/orders/:orderId/gift-voucher` 与 `/gift-voucher/recover`（BHB-012-E，§7）是 C 模式入口：C 对领取人免费，但供应商在签发时即预扣 `packCount`（1–12）个礼包；恢复只读使用已加密保存的券码。
+> - 以上代码与隔离测试已实现，但**未执行真实上力扣额/发券，也未完成 live 验收**。平台不提供始终为 false 的虚构履约开关字段。BHB-014-B 起，凭证可在管理后台按应用签发，应用启停与内部商品白名单会真实约束机器调用；Draft PR 合入、CI 绿灯或本文件存在都不代表真实履约上线。
 
-范围为机器对机器接口，与管理后台的人类 Cookie 登录是两套独立身份边界。实现归属 `apps/api/src/modules/orders/business-order-routes.ts`、`a-prepaid-grant.ts`、`service-auth.ts` 与 `apps/api/src/modules/applications/credentials.ts`。
+范围为机器对机器接口，与管理后台的人类 Cookie 登录是两套独立身份边界。实现归属 `apps/api/src/modules/orders/business-order-routes.ts`、`a-prepaid-grant.ts`、`c-gift-voucher.ts`、`service-auth.ts` 与 `apps/api/src/modules/applications/credentials.ts`。
 
 ## 1. 身份与服务凭证
 
@@ -214,3 +215,82 @@ A 模式在既有业务订单之上增加两个机器接口，仍只接受 `Auth
 - 单元/集成测试覆盖：A 签名字段与独立 OpenSSL 向量、D `X-Signature` 不复用、响应 schema、HTTP 状态与 body `code` 双层判断、超时/取消/传输失败、手机号本地校验、并发唯一预约、映射冻结、租户隔离、未知结果与同 `requestId` 恢复、明确拒绝不重试、master key/供应商未配置、CSRF 窄豁免与 Bearer 边界。
 - API 集成测试通过**真实 Hono app → 本机 loopback 假供应商 HTTP 服务**执行，不 Mock 订单数据库或幂等约束；假供应商只存在于测试进程，夹具明确标注为虚构。
 - `pnpm check`、Docker 镜像构建与真实容器健康检查需要在提交/CI 环境另行执行。**真实上力 A 扣额、真实 claimUrl 与平台状态证据尚未取得**；没有维护者单独批准、测试额度与收件手机号时，不得用本文或 CI 绿灯宣称 live 验收。
+
+## 7. C 免费礼包券签发与恢复（BHB-012-E）
+
+> **状态（2026-10-29）：代码与隔离测试已实现；未执行任何真实上力 C 签发或券码查询。** C 面向领取人免费，但供应商在签发时即预扣 `packCount` 个礼包额度，因此真实测试仍需维护者单独批准、可用测试额度和明确领取意图。
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| `POST` | `/api/v1/business/orders/:orderId/gift-voucher` | 对已创建的业务订单签发 C 模式礼包券；成功后返回 `voucherCode`、`claimUrl` 与供应商报告的礼包额度，订单进入 `awaiting_claim`。 |
+| `POST` | `/api/v1/business/orders/:orderId/gift-voucher/recover` | 用已加密保存的券码只读查询上力，刷新 `packRemaining`/`packTotal`/`expiresAt`；不重新签发。 |
+
+### 7.1 发起签发
+
+请求体为 strict JSON，只允许三个字段：
+
+```json
+{ "packCount": 3, "refCode": "ref_abc123", "phone": "13800138000" }
+```
+
+- `packCount`：必填整数 1–12；供应商**签发即预扣**该数量礼包，不是领取时才扣。
+- `refCode`：必填，1–64 位可见 ASCII 子分销推广码。
+- `phone`：可选，`^1\d{10}$`；不传则由领取人在 H5 首次填写并绑定该券。平台不持久化明文手机号，只保存主密钥 HMAC 摘要用于拒绝冲突输入。
+- 不接受 `paymentReference`、供应商、履约模式、上游 `productCode`、`requestId`、券码或状态；C 不上付款门槛，供应商与上游商品编码只来自订单创建时冻结的 **C** 映射。
+
+执行顺序：
+
+1. 校验订单属于当前凭证绑定的 `businessSource`；否则 404，不区分“不存在”和“他人订单”。
+2. 已登记应用必须 `enabled` 且内部商品仍在白名单；未登记来源沿用既有兼容路径。
+3. 订单冻结映射必须是 `yangmao` + `C`；上游商品编码取冻结快照，不取当前映射。
+4. 必须配置服务器主密钥；否则 503 `SUPPLIER_KEY_UNAVAILABLE`，不发起供应商请求。
+5. 在同一短事务内持久化幂等身份、`packCount`/推广码/手机号摘要并追加 `grant/unknown` 尝试，把订单从 `pending` 改为 `processing`；事务提交后才发起签名 `POST /open/v1/gift-vouchers`，**网络调用期间不持有 SQLite 事务**。
+6. 供应商 `code=0` 且同时返回合法 `voucherCode` 与 `claimUrl` 才记为签发：订单进入 `awaiting_claim`。**签发不是核销，也不是 `completed`；用户仍需打开链接领取。**
+7. `voucherCode`、`claimUrl` 和原始 `expiresAt` 只加密保存（既有主密钥派生的 AES-256-GCM），只在认证响应中返回给调用方；不写日志、列表或前端 bundle。
+
+`requestId` 由平台订单 ID 确定性派生（前缀 `bhC` + SHA-256 摘要，共 63 字符），数据库唯一。重复签发若 `packCount`、`refCode` 或手机号（含“未提供”）与首次不同，409 `GIFT_VOUCHER_INPUT_CONFLICT`，不会覆盖或重发。
+
+成功响应（摘录）：
+
+```json
+{
+  "order": { "status": "awaiting_claim", "fulfillmentMode": "C", "...": "同业务订单 DTO" },
+  "voucher": {
+    "state": "issued",
+    "requestId": "bhC0123456789abcdef...",
+    "packCount": 3,
+    "packTotal": 3,
+    "packRemaining": 2,
+    "attemptedAt": 1760000000000,
+    "updatedAt": 1760000000100,
+    "lastObservedAt": 1760000000100
+  },
+  "voucherCode": "GV...",
+  "claimUrl": "https://h5.example.test/voucher?code=GV...",
+  "expiresAt": "2026-11-28 00:00:00",
+  "balanceAfter": 97,
+  "idempotentReplay": false,
+  "observedAt": 1760000000100
+}
+```
+
+### 7.2 重复、未知与恢复
+
+- **完全相同输入重复签发**：返回已签发事实，不再请求供应商；原请求仍在处理中时 409 `GIFT_VOUCHER_IN_PROGRESS`。
+- **超时、网络失败、HTTP 5xx、`code=0` 但字段缺失/非法**：记录保持 `unknown`，订单 `unknown`；**没有已存券码时不允许自动重签**，重复签发或恢复均返回 409 `GIFT_VOUCHER_OUTCOME_UNKNOWN`，只能凭已记录 `requestId` 人工核实。
+- **上力明确业务拒绝（400/401/403）**：记录 `rejected`、订单 `failed`；后续 409 `GIFT_VOUCHER_NOT_RETRYABLE`，不盲重试。
+- **恢复**：只读 `GET /open/v1/gift-vouchers/{code}`，使用签发返回的**大写券码**。成功只更新供应商报告的额度/有效期并保持 `awaiting_claim`；业务 400、字段缺失、鉴权失败或超时都按查询失败处理，**不推断已核销、到期或额度退回**。恢复请求体为 `{}`；没有发券记录时 404 `GIFT_VOUCHER_NOT_FOUND`。
+
+### 7.3 运营可见性
+
+「发放记录 → 订单详情」对 C 模式订单展示发券状态、上游请求号、`packCount`、供应商报告的 `packTotal`/`packRemaining`、最近观察时间与发起/更新时间；不展示券码、领取链接、手机号、摘要、密文或供应商原始报文。剩余礼包数只是供应商最近一次观察，不是平台退款推断。
+
+### 7.4 新增稳定错误码
+
+`GIFT_VOUCHER_INPUT_CONFLICT`、`GIFT_VOUCHER_IN_PROGRESS`、`GIFT_VOUCHER_NOT_RETRYABLE`、`GIFT_VOUCHER_NOT_FOUND`、`GIFT_VOUCHER_OUTCOME_UNKNOWN`；其余复用 `ORDER_MODE_UNSUPPORTED`、`ORDER_NOT_GRANTABLE`、`SUPPLIER_*` 与既有订单错误。错误体只额外携带数字 `vendorCode` / `httpStatus`，不回显券码、链接、手机号、签名或供应商 message。
+
+### 7.5 证据边界
+
+- provider 单测覆盖 C 签名字段、`packCount` 字符串化、可选 `phone`/`productCode`、成功/未知字段剥离/非法成功/400/401/403/malformed envelope/超时/取消；loopback HTTP 覆盖默认 fetch 的签发 POST、按券码 GET 与超时。
+- API 集成测试通过真实 Hono → loopback 假供应商覆盖真实签名、冻结 C 映射、并发唯一预约、幂等、冲突、未知不重发、查询 400 不回退额度、密文落库与运营详情脱敏、跨业务隔离。
+- **未执行真实 C 签发、真实券码或真实额度查询**；CI 绿灯不等于 live 验收。真实测试需维护者批准并另行提供脱敏证据。

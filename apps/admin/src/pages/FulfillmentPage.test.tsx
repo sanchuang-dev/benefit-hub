@@ -87,6 +87,7 @@ function detail(overrides: Partial<OperationsOrderDetailDto> = {}): OperationsOr
       activatedAt: NOW - 60_000,
     },
     grant: null,
+    giftVoucher: null,
     statusEvents: [{ id: 'event-1', status: 'pending', version: 1, createdAt: NOW }],
     attempts: [],
     ...overrides,
@@ -395,6 +396,69 @@ describe('platform order detail drawer', () => {
     expect(within(drawer).getByText(/领取链接不落库/)).toBeTruthy();
     expect(within(drawer).getByText(/不代表用户已领取到账/)).toBeTruthy();
     // No claim URL, phone or supplier payload is present in the operator detail.
+    expect(within(drawer).queryByText(/claimUrl=/)).toBeNull();
+    expect(within(drawer).queryByText(/13800138000/)).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('shows C voucher issuance state and vendor-observed quota without exposing the code', { timeout: 60_000 }, async () => {
+    const detailData = detail({
+      fulfillmentMode: 'C',
+      status: 'awaiting_claim',
+      version: 3,
+      statusEvents: [
+        { id: 'event-1', status: 'pending', version: 1, createdAt: NOW },
+        { id: 'event-2', status: 'processing', version: 2, createdAt: NOW + 1_000 },
+        { id: 'event-3', status: 'awaiting_claim', version: 3, createdAt: NOW + 2_000 },
+      ],
+      frozenMapping: {
+        id: 'mapping-version-c',
+        mappingId: 'mapping-c',
+        versionNumber: 1,
+        provider: 'yangmao',
+        productCode: 'YM-VOUCHER-C',
+        fulfillmentMode: 'C',
+        deductionUnit: 'pack',
+        activatedAt: NOW - 60_000,
+      },
+      giftVoucher: {
+        state: 'issued',
+        requestId: 'bhC0123456789abcdef',
+        packCount: 3,
+        packTotal: 3,
+        packRemaining: 2,
+        attemptedAt: NOW + 1_000,
+        updatedAt: NOW + 2_000,
+        lastObservedAt: NOW + 2_000,
+      },
+    });
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, { order: detailData });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order({ fulfillmentMode: 'C' })]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('上力 C 公众号礼包券')).toBeTruthy();
+    expect(within(drawer).getByText('上力已签发（待用户领取）')).toBeTruthy();
+    expect(within(drawer).getByText('bhC0123456789abcdef')).toBeTruthy();
+    // Both the issuance pack count and the vendor-reported total are 3.
+    expect(within(drawer).getAllByText('3 个')).toHaveLength(2);
+    expect(within(drawer).getByText('2 个')).toBeTruthy();
+    expect(within(drawer).getByText(/签发时预扣礼包额度/)).toBeTruthy();
+    expect(within(drawer).getByText(/不因券码查询不到或到期而推断额度退回/)).toBeTruthy();
+    // The voucher code and claim link are never shown in the operator detail.
+    expect(within(drawer).queryByText(/GV-FICTIONAL/)).toBeNull();
     expect(within(drawer).queryByText(/claimUrl=/)).toBeNull();
     expect(within(drawer).queryByText(/13800138000/)).toBeNull();
     expect(writeCalls(fetchMock)).toEqual([]);

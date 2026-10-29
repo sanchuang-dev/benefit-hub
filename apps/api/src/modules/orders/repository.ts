@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import {
+  benefitOrderGiftVouchers,
   benefitOrderGrants,
   benefitOrders,
   benefitOrderStatusEvents,
@@ -19,6 +20,8 @@ import {
   assertOrderStatus,
   GrantNotFoundError,
   GrantStateConflictError,
+  GiftVoucherNotFoundError,
+  GiftVoucherStateConflictError,
   normalizeBusinessOrderNo,
   normalizeBusinessSource,
   normalizeUpstreamRef,
@@ -45,6 +48,7 @@ import {
   type BenefitOrder,
   type FulfillmentAttempt,
   type FulfillmentMode,
+  type GiftVoucherState,
   type OrderStatus,
   type OrderStatusEvent,
   type PrepaidGrantState,
@@ -133,6 +137,77 @@ export interface SettleGrantResult {
 }
 
 /**
+ * Durable C-mode voucher operation. `phoneHmac` is a keyed digest, never a
+ * phone number; `encryptedVoucher` is an AES-GCM envelope containing the issued
+ * voucher code, claim link and raw expiry scalar. This object is server-only:
+ * build an explicit safe DTO instead of serializing the last two fields.
+ */
+export interface GiftVoucherOperation {
+  orderId: string;
+  requestId: string;
+  state: GiftVoucherState;
+  packCount: number;
+  refCode: string;
+  phoneHmac: string | null;
+  encryptedVoucher: string | null;
+  packTotal: number | null;
+  packRemaining: number | null;
+  lastObservedAt: number | null;
+  attemptedAt: number;
+  updatedAt: number;
+}
+
+export interface ReserveGiftVoucherInput {
+  orderId: string;
+  /** Recheck the authenticated DB credential under the same write lock. */
+  applicationCredentialId?: string | null;
+  /** Version observed before the reservation; a concurrent change fails. */
+  expectedVersion: number;
+  requestId: string;
+  packCount: number;
+  refCode: string;
+  /** Null when the caller did not supply a recipient phone. */
+  phoneHmac: string | null;
+  occurredAt: number;
+}
+
+export interface ReserveGiftVoucherResult {
+  voucher: GiftVoucherOperation;
+  order: BenefitOrder;
+  /** False when another reservation already existed for this order. */
+  created: boolean;
+}
+
+/**
+ * Settles a durable C-mode operation. `attempt` settles the signed supplier
+ * POST and requires a still-`reserved` row; `recovery` records a read-only
+ * query and may confirm `issued` facts, but never rewrites an explicit
+ * rejection or downgrades an issued voucher.
+ */
+export interface SettleGiftVoucherInput {
+  orderId: string;
+  /** Current order version; ignored when the status is unchanged. */
+  expectedVersion: number;
+  kind: 'attempt' | 'recovery';
+  state: 'issued' | 'unknown' | 'rejected';
+  /** New protected envelope; omitted to keep the previously stored facts. */
+  encryptedVoucher?: string;
+  packTotal?: number;
+  packRemaining?: number;
+  lastObservedAt?: number;
+  orderStatus: OrderStatus;
+  operation: AttemptOperation;
+  result: AttemptResult;
+  occurredAt: number;
+  lastVerifiedAt: number | null;
+}
+
+export interface SettleGiftVoucherResult {
+  voucher: GiftVoucherOperation;
+  order: BenefitOrder;
+}
+
+/**
  * Operator list query. Every filter is independent and already validated at the
  * HTTP boundary; the repository only applies exact, index-friendly predicates.
  * `createdFrom`/`createdTo` are inclusive UTC epoch-millisecond bounds.
@@ -184,6 +259,8 @@ export interface OperationsOrderDetail {
   frozenMapping: OperationsOrderFrozenMapping | null;
   /** A-mode operation identity, when one was ever reserved. */
   grant: PrepaidOrderGrant | null;
+  /** C-mode operation identity, when one was ever reserved. */
+  giftVoucher: GiftVoucherOperation | null;
   statusEvents: OrderStatusEvent[];
   attempts: FulfillmentAttempt[];
 }
@@ -242,6 +319,22 @@ export interface BenefitOrderRepository {
    * A terminal `accepted`/`rejected` operation is never rewritten.
    */
   settleGrant(input: SettleGrantInput): SettleGrantResult;
+  /**
+   * Reads the one durable C-mode voucher operation for an order, if any.
+   * Local read only; it never contacts the supplier.
+   */
+  getGiftVoucher(orderId: string): GiftVoucherOperation | null;
+  /**
+   * Persists the C-mode operation identity and flips the order to `processing`
+   * before any supplier call, in one short IMMEDIATE transaction. Re-reserving
+   * an existing operation returns it unchanged (`created: false`).
+   */
+  reserveGiftVoucher(input: ReserveGiftVoucherInput): ReserveGiftVoucherResult;
+  /**
+   * Atomically settles the C-mode operation, order status and one attempt fact.
+   * An `issued`/`rejected` operation is never rewritten by a recovery read.
+   */
+  settleGiftVoucher(input: SettleGiftVoucherInput): SettleGiftVoucherResult;
   /**
    * Optimistic status change; a stale `expectedVersion` fails stably.
    *
@@ -310,6 +403,21 @@ interface GrantRow {
   updatedAt: number;
 }
 
+interface GiftVoucherRow {
+  orderId: string;
+  requestId: string;
+  state: string;
+  packCount: number;
+  refCode: string;
+  phoneHmac: string | null;
+  encryptedVoucher: string | null;
+  packTotal: number | null;
+  packRemaining: number | null;
+  lastObservedAt: number | null;
+  attemptedAt: number;
+  updatedAt: number;
+}
+
 function toBenefitOrder(row: OrderRow): BenefitOrder {
   return {
     id: row.id,
@@ -358,7 +466,6 @@ function toPrepaidGrantState(value: string): PrepaidGrantState {
   if (GRANT_STATE_SET.has(value)) return value as PrepaidGrantState;
   throw new Error(`Unknown benefit order grant state stored in database: ${value}`);
 }
-
 function toPrepaidGrant(row: GrantRow): PrepaidOrderGrant {
   return {
     orderId: row.orderId,
@@ -378,6 +485,38 @@ function loadGrantRow(db: AppDatabase, orderId: string): GrantRow | undefined {
     .select()
     .from(benefitOrderGrants)
     .where(eq(benefitOrderGrants.orderId, orderId))
+    .limit(1)
+    .get();
+}
+
+const GIFT_VOUCHER_STATE_SET = new Set(['reserved', 'issued', 'unknown', 'rejected']);
+function toGiftVoucherState(value: string): GiftVoucherState {
+  if (GIFT_VOUCHER_STATE_SET.has(value)) return value as GiftVoucherState;
+  throw new Error(`Unknown benefit order gift voucher state stored in database: ${value}`);
+}
+
+function toGiftVoucherOperation(row: GiftVoucherRow): GiftVoucherOperation {
+  return {
+    orderId: row.orderId,
+    requestId: row.requestId,
+    state: toGiftVoucherState(row.state),
+    packCount: row.packCount,
+    refCode: row.refCode,
+    phoneHmac: row.phoneHmac,
+    encryptedVoucher: row.encryptedVoucher,
+    packTotal: row.packTotal,
+    packRemaining: row.packRemaining,
+    lastObservedAt: row.lastObservedAt,
+    attemptedAt: row.attemptedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function loadGiftVoucherRow(db: AppDatabase, orderId: string): GiftVoucherRow | undefined {
+  return db
+    .select()
+    .from(benefitOrderGiftVouchers)
+    .where(eq(benefitOrderGiftVouchers.orderId, orderId))
     .limit(1)
     .get();
 }
@@ -422,6 +561,68 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 const GRANT_SUCCESS_STATUSES = new Set<string>(['awaiting_claim', 'partially_completed', 'completed']);
+
+/** Same bounded visible-ASCII shape the supplier accepts for C identifiers. */
+const GIFT_VOUCHER_REQUEST_ID_PATTERN = /^[!-~]{1,64}$/;
+
+type OrderWriteTransaction = Parameters<Parameters<AppDatabase['transaction']>[0]>[0];
+
+/**
+ * Re-verifies the authenticated application credential, enabled state and
+ * product allowlist inside the same IMMEDIATE transaction that records a
+ * potentially billable supplier attempt. Reused by every mode so a revocation
+ * or allowlist change can never be bypassed by a between-request gap.
+ */
+function assertApplicationWriteAccess(
+  tx: OrderWriteTransaction,
+  input: {
+    businessSource: string;
+    productId: string;
+    applicationCredentialId?: string | null;
+  },
+): void {
+  const application = tx
+    .select({ id: businessApplications.id, status: businessApplications.status })
+    .from(businessApplications)
+    .where(eq(businessApplications.businessSource, input.businessSource))
+    .limit(1)
+    .get();
+  if (input.applicationCredentialId != null) {
+    const credential = tx
+      .select({ applicationId: businessApplicationCredentials.applicationId })
+      .from(businessApplicationCredentials)
+      .where(
+        and(
+          eq(businessApplicationCredentials.id, input.applicationCredentialId),
+          isNull(businessApplicationCredentials.revokedAt),
+        ),
+      )
+      .limit(1)
+      .get();
+    if (!application || !credential || credential.applicationId !== application.id) {
+      throw new OrderCredentialRevokedError('应用服务凭证已失效');
+    }
+  }
+  if (application && application.status !== 'enabled') {
+    throw new OrderApplicationDisabledError('应用已停用，不能发起上力下单');
+  }
+  if (application) {
+    const permitted = tx
+      .select({ productId: businessApplicationProducts.productId })
+      .from(businessApplicationProducts)
+      .where(
+        and(
+          eq(businessApplicationProducts.applicationId, application.id),
+          eq(businessApplicationProducts.productId, input.productId),
+        ),
+      )
+      .limit(1)
+      .get();
+    if (!permitted) {
+      throw new OrderProductNotAuthorizedError('该应用未被授权使用此内部商品');
+    }
+  }
+}
 
 export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepository {
   return {
@@ -646,47 +847,11 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           // transaction, immediately before recording any potentially billable
           // supplier attempt. The operator's revocation/disable/allowlist write
           // and this reservation cannot cross each other.
-          const application = tx
-            .select({ id: businessApplications.id, status: businessApplications.status })
-            .from(businessApplications)
-            .where(eq(businessApplications.businessSource, orderRow.businessSource))
-            .limit(1)
-            .get();
-          if (input.applicationCredentialId != null) {
-            const credential = tx
-              .select({ applicationId: businessApplicationCredentials.applicationId })
-              .from(businessApplicationCredentials)
-              .where(
-                and(
-                  eq(businessApplicationCredentials.id, input.applicationCredentialId),
-                  isNull(businessApplicationCredentials.revokedAt),
-                ),
-              )
-              .limit(1)
-              .get();
-            if (!application || !credential || credential.applicationId !== application.id) {
-              throw new OrderCredentialRevokedError('应用服务凭证已失效');
-            }
-          }
-          if (application && application.status !== 'enabled') {
-            throw new OrderApplicationDisabledError('应用已停用，不能发起上力下单');
-          }
-          if (application) {
-            const permitted = tx
-              .select({ productId: businessApplicationProducts.productId })
-              .from(businessApplicationProducts)
-              .where(
-                and(
-                  eq(businessApplicationProducts.applicationId, application.id),
-                  eq(businessApplicationProducts.productId, orderRow.productId),
-                ),
-              )
-              .limit(1)
-              .get();
-            if (!permitted) {
-              throw new OrderProductNotAuthorizedError('该应用未被授权使用此内部商品');
-            }
-          }
+          assertApplicationWriteAccess(tx, {
+            businessSource: orderRow.businessSource,
+            productId: orderRow.productId,
+            applicationCredentialId: input.applicationCredentialId,
+          });
 
           const existing = tx
             .select()
@@ -945,9 +1110,345 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       );
     },
 
-    updateStatus(input) {
+    getGiftVoucher(orderId) {
+      const row = loadGiftVoucherRow(db, requireOrderId(orderId));
+      return row ? toGiftVoucherOperation(row) : null;
+    },
+
+    reserveGiftVoucher(input) {
       const orderId = requireOrderId(input.orderId);
-      const status = assertOrderStatus(input.status);
+      if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
+        throw new OrderInputError('订单版本号需为大于 0 的整数');
+      }
+      const occurredAt = requireTimestamp(input.occurredAt, '发生时间');
+      if (!GIFT_VOUCHER_REQUEST_ID_PATTERN.test(input.requestId)) {
+        throw new OrderInputError('上游请求号需为 1-64 位可见 ASCII 字符');
+      }
+      if (!Number.isInteger(input.packCount) || input.packCount < 1 || input.packCount > 12) {
+        throw new OrderInputError('礼包个数需为 1-12 的整数');
+      }
+      if (!GIFT_VOUCHER_REQUEST_ID_PATTERN.test(input.refCode)) {
+        throw new OrderInputError('推广码需为 1-64 位可见 ASCII 字符');
+      }
+      if (input.phoneHmac !== null && !/^[0-9a-f]{64}$/.test(input.phoneHmac)) {
+        throw new OrderInputError('手机号摘要格式不正确');
+      }
+
+      return db.transaction(
+        (tx) => {
+          const orderRow = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!orderRow) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          // Same write-lock recheck as A mode: a revocation, disable or
+          // allowlist change must be visible before a supplier write is recorded.
+          assertApplicationWriteAccess(tx, {
+            businessSource: orderRow.businessSource,
+            productId: orderRow.productId,
+            applicationCredentialId: input.applicationCredentialId,
+          });
+
+          const existing = tx
+            .select()
+            .from(benefitOrderGiftVouchers)
+            .where(eq(benefitOrderGiftVouchers.orderId, orderId))
+            .limit(1)
+            .get();
+          if (existing) {
+            return {
+              voucher: toGiftVoucherOperation(existing),
+              order: toBenefitOrder(orderRow),
+              created: false,
+            };
+          }
+
+          if (orderRow.version !== input.expectedVersion) {
+            throw new OrderVersionConflictError(
+              `订单版本已变化（当前版本 ${orderRow.version}，提交版本 ${input.expectedVersion}）`,
+            );
+          }
+          if (orderRow.status !== 'pending') {
+            throw new OrderNotGrantableError(`订单当前状态不允许发起上力发券：${orderRow.status}`);
+          }
+
+          const row: GiftVoucherRow = {
+            orderId,
+            requestId: input.requestId,
+            state: 'reserved',
+            packCount: input.packCount,
+            refCode: input.refCode,
+            phoneHmac: input.phoneHmac,
+            encryptedVoucher: null,
+            packTotal: null,
+            packRemaining: null,
+            lastObservedAt: null,
+            attemptedAt: occurredAt,
+            updatedAt: occurredAt,
+          };
+
+          try {
+            tx.insert(benefitOrderGiftVouchers).values(row).run();
+          } catch (error) {
+            if (isUniqueViolation(error)) {
+              const raced = tx
+                .select()
+                .from(benefitOrderGiftVouchers)
+                .where(eq(benefitOrderGiftVouchers.orderId, orderId))
+                .limit(1)
+                .get();
+              if (raced) {
+                return {
+                  voucher: toGiftVoucherOperation(raced),
+                  order: toBenefitOrder(orderRow),
+                  created: false,
+                };
+              }
+            }
+            throw error;
+          }
+
+          const updated = tx
+            .update(benefitOrders)
+            .set({ status: 'processing', version: input.expectedVersion + 1, updatedAt: occurredAt })
+            .where(
+              and(
+                eq(benefitOrders.id, orderId),
+                eq(benefitOrders.version, input.expectedVersion),
+              ),
+            )
+            .run();
+          if (updated.changes === 0) {
+            throw new OrderVersionConflictError('订单版本已变化，未发起上力发券');
+          }
+
+          tx.insert(benefitOrderStatusEvents)
+            .values({
+              id: randomUUID(),
+              orderId,
+              status: 'processing',
+              version: input.expectedVersion + 1,
+              createdAt: occurredAt,
+            })
+            .run();
+
+          // Pre-send durable fact: a crash before the response still leaves an
+          // explicit unknown attempt tied to the stable requestId.
+          tx.insert(fulfillmentAttempts)
+            .values({
+              id: randomUUID(),
+              orderId,
+              operation: 'grant',
+              upstreamRequestNo: row.requestId,
+              upstreamOrderNo: null,
+              result: 'unknown',
+              observedStatus: 'processing',
+              occurredAt,
+              lastVerifiedAt: null,
+            })
+            .run();
+
+          const refreshed = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!refreshed) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          return { voucher: toGiftVoucherOperation(row), order: toBenefitOrder(refreshed), created: true };
+        },
+        { behavior: 'immediate' },
+      );
+    },
+
+    settleGiftVoucher(input) {
+      const orderId = requireOrderId(input.orderId);
+      const orderStatus = assertOrderStatus(input.orderStatus);
+      const operation = assertAttemptOperation(input.operation);
+      const result = assertAttemptResult(input.result);
+      const occurredAt = requireTimestamp(input.occurredAt, '发生时间');
+      const lastVerifiedAt =
+        input.lastVerifiedAt === null
+          ? null
+          : requireTimestamp(input.lastVerifiedAt, '最近核实时间');
+      if (
+        input.packTotal !== undefined &&
+        (!Number.isInteger(input.packTotal) || input.packTotal < 1)
+      ) {
+        throw new OrderInputError('礼包总个数需为大于 0 的整数');
+      }
+      if (
+        input.packRemaining !== undefined &&
+        (!Number.isInteger(input.packRemaining) || input.packRemaining < 0)
+      ) {
+        throw new OrderInputError('礼包剩余个数需为非负整数');
+      }
+      if (input.lastObservedAt !== undefined) {
+        requireTimestamp(input.lastObservedAt, '供应商观察时间');
+      }
+
+      return db.transaction(
+        (tx) => {
+          const orderRow = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!orderRow) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          const voucherRow = tx
+            .select()
+            .from(benefitOrderGiftVouchers)
+            .where(eq(benefitOrderGiftVouchers.orderId, orderId))
+            .limit(1)
+            .get();
+          if (!voucherRow) {
+            throw new GiftVoucherNotFoundError(`订单没有上力发券记录：${orderId}`);
+          }
+
+          const currentState = toGiftVoucherState(voucherRow.state);
+          let nextState: GiftVoucherState = currentState;
+
+          if (input.kind === 'attempt') {
+            if (currentState !== 'reserved') {
+              throw new GiftVoucherStateConflictError(
+                `上力发券记录已处于 ${currentState}，不能再次结算原始请求`,
+              );
+            }
+            nextState = input.state;
+          } else {
+            // A recovery read may only confirm an indeterminate operation. It
+            // never rewrites a rejection or downgrades an issued voucher.
+            if (currentState === 'rejected') {
+              throw new GiftVoucherStateConflictError('上力发券记录已明确拒绝，不再执行查询恢复');
+            }
+            nextState = currentState === 'issued'
+              ? 'issued'
+              : input.state === 'issued' ? 'issued' : 'unknown';
+          }
+
+          const encryptedVoucher = input.encryptedVoucher ?? voucherRow.encryptedVoucher;
+          if (nextState === 'issued' && encryptedVoucher === null) {
+            throw new GiftVoucherStateConflictError('已签发的礼包券缺少受保护数据，拒绝记录成功');
+          }
+
+          const packTotal = input.packTotal ?? voucherRow.packTotal;
+          const packRemaining = input.packRemaining ?? voucherRow.packRemaining;
+          const lastObservedAt = input.lastObservedAt ?? voucherRow.lastObservedAt;
+
+          if (
+            nextState !== currentState ||
+            encryptedVoucher !== voucherRow.encryptedVoucher ||
+            packTotal !== voucherRow.packTotal ||
+            packRemaining !== voucherRow.packRemaining ||
+            lastObservedAt !== voucherRow.lastObservedAt
+          ) {
+            tx.update(benefitOrderGiftVouchers)
+              .set({
+                state: nextState,
+                encryptedVoucher,
+                packTotal,
+                packRemaining,
+                lastObservedAt,
+                updatedAt: occurredAt,
+              })
+              .where(eq(benefitOrderGiftVouchers.orderId, orderId))
+              .run();
+          }
+
+          let settledOrder = toBenefitOrder(orderRow);
+          if (settledOrder.status !== orderStatus) {
+            if (
+              GRANT_SUCCESS_STATUSES.has(settledOrder.status) &&
+              (orderStatus === 'unknown' || orderStatus === 'failed')
+            ) {
+              throw new GiftVoucherStateConflictError(
+                '已签发的订单不能被查询结果降级为未知或失败',
+              );
+            }
+            if (settledOrder.version !== input.expectedVersion) {
+              throw new OrderVersionConflictError(
+                `订单版本已变化（当前版本 ${settledOrder.version}，提交版本 ${input.expectedVersion}）`,
+              );
+            }
+            const updated = tx
+              .update(benefitOrders)
+              .set({
+                status: orderStatus,
+                version: input.expectedVersion + 1,
+                updatedAt: occurredAt,
+              })
+              .where(
+                and(
+                  eq(benefitOrders.id, orderId),
+                  eq(benefitOrders.version, input.expectedVersion),
+                ),
+              )
+              .run();
+            if (updated.changes === 0) {
+              throw new OrderVersionConflictError('订单版本已变化，未记录上力发券结果');
+            }
+            tx.insert(benefitOrderStatusEvents)
+              .values({
+                id: randomUUID(),
+                orderId,
+                status: orderStatus,
+                version: input.expectedVersion + 1,
+                createdAt: occurredAt,
+              })
+              .run();
+
+            const refreshed = tx
+              .select()
+              .from(benefitOrders)
+              .where(eq(benefitOrders.id, orderId))
+              .limit(1)
+              .get();
+            if (!refreshed) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+            settledOrder = toBenefitOrder(refreshed);
+          }
+
+          tx.insert(fulfillmentAttempts)
+            .values({
+              id: randomUUID(),
+              orderId,
+              operation,
+              upstreamRequestNo: voucherRow.requestId,
+              // C issuance has no separate upstream order number.
+              upstreamOrderNo: null,
+              result,
+              observedStatus: orderStatus,
+              occurredAt,
+              lastVerifiedAt,
+            })
+            .run();
+
+          const refreshedVoucher = tx
+            .select()
+            .from(benefitOrderGiftVouchers)
+            .where(eq(benefitOrderGiftVouchers.orderId, orderId))
+            .limit(1)
+            .get();
+          if (!refreshedVoucher) {
+            throw new GiftVoucherNotFoundError(`订单没有上力发券记录：${orderId}`);
+          }
+
+          return {
+            voucher: toGiftVoucherOperation(refreshedVoucher),
+            order: settledOrder,
+          };
+        },
+        { behavior: 'immediate' },
+      );
+    },
+
+    updateStatus(input) {
+      const orderId = requireOrderId(input.orderId);      const status = assertOrderStatus(input.status);
       if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
         throw new OrderInputError('订单版本号需为大于 0 的整数');
       }
@@ -1138,6 +1639,7 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       }
 
       const grantRow = loadGrantRow(db, order.id);
+      const giftVoucherRow = loadGiftVoucherRow(db, order.id);
 
       return {
         order,
@@ -1153,6 +1655,7 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
             }
           : null,
         grant: grantRow ? toPrepaidGrant(grantRow) : null,
+        giftVoucher: giftVoucherRow ? toGiftVoucherOperation(giftVoucherRow) : null,
         statusEvents: loadStatusEvents(db, order.id),
         attempts: loadAttempts(db, order.id),
       };

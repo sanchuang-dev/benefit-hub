@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildGiftVoucherSignedFields,
   buildOpenV1StringToSign,
   buildPurchaseCheckSignedFields,
   createOpenV1Signature,
@@ -149,5 +150,85 @@ describe('A/B/C (X-Sign) signing', () => {
         '',
       ),
     ).toThrowError(TypeError);
+  });
+});
+
+describe('C-mode gift-voucher signing', () => {
+  const REF_CODE = 'ref_abc123';
+  const REQUEST_ID = 'bhC-fixed-request-0001';
+  const PRODUCT_CODE = 'YM-VOUCHER-C';
+  const FULL_STRING =
+    'appKey=fixture-app-key&nonce=abc123def456&packCount=3&productCode=YM-VOUCHER-C' +
+    '&refCode=ref_abc123&requestId=bhC-fixed-request-0001&timestamp=1793059200000' +
+    '&appSecret=test-secret-do-not-use';
+  /** OpenSSL-derived: printf '%s' '<FULL_STRING>' | openssl dgst -sha256 | tr a-f A-F */
+  const FULL_VECTOR = '548CB3E6A2AEBFF13E4F16F52A52646CC5FD63543EDDD0E5D123E435392D62D0';
+  const PHONE_FREE_STRING =
+    'appKey=fixture-app-key&nonce=abc123def456&packCount=3&refCode=ref_abc123' +
+    '&requestId=bhC-fixed-request-0001&timestamp=1793059200000&appSecret=test-secret-do-not-use';
+  const PHONE_FREE_VECTOR = '281849D82A77E0896371E0BDF4E6816CB8B45AB34507E2A8D0D37430AFAA898A';
+
+  it('signs the documented C fields and stringifies the integer packCount', () => {
+    const fields = buildGiftVoucherSignedFields(
+      { appKey: APP_KEY, timestamp: FIXED_TIMESTAMP, nonce: NONCE },
+      {
+        refCode: REF_CODE,
+        packCount: 3,
+        requestId: REQUEST_ID,
+        productCode: PRODUCT_CODE,
+      },
+    );
+
+    expect(buildOpenV1StringToSign(fields, FIXTURE_SECRET)).toBe(FULL_STRING);
+    expect(createOpenV1Signature(fields, FIXTURE_SECRET)).toBe(FULL_VECTOR);
+    // The numeric canonical form is byte-identical to the documented string.
+    expect(
+      buildOpenV1StringToSign(
+        { ...fields, packCount: '3' },
+        FIXTURE_SECRET,
+      ),
+    ).toBe(FULL_STRING);
+  });
+
+  it('omits absent phone/productCode and includes them only when non-empty', () => {
+    const withoutOptionals = buildGiftVoucherSignedFields(
+      { appKey: APP_KEY, timestamp: FIXED_TIMESTAMP, nonce: NONCE },
+      { refCode: REF_CODE, packCount: 3, requestId: REQUEST_ID },
+    );
+    expect(buildOpenV1StringToSign(withoutOptionals, FIXTURE_SECRET)).toBe(PHONE_FREE_STRING);
+    expect(createOpenV1Signature(withoutOptionals, FIXTURE_SECRET)).toBe(PHONE_FREE_VECTOR);
+
+    const withEmpty = buildGiftVoucherSignedFields(
+      { appKey: APP_KEY, timestamp: FIXED_TIMESTAMP, nonce: NONCE },
+      { refCode: REF_CODE, packCount: 3, requestId: REQUEST_ID, phone: '', productCode: '' },
+    );
+    expect(buildOpenV1StringToSign(withEmpty, FIXTURE_SECRET)).toBe(PHONE_FREE_STRING);
+  });
+
+  it('participates the recipient phone only when supplied', () => {
+    const withPhone = buildGiftVoucherSignedFields(
+      { appKey: APP_KEY, timestamp: FIXED_TIMESTAMP, nonce: NONCE },
+      { refCode: REF_CODE, packCount: 3, requestId: REQUEST_ID, phone: PHONE },
+    );
+    const canonical = buildOpenV1StringToSign(withPhone, FIXTURE_SECRET);
+    expect(canonical).toContain(`phone=${PHONE}`);
+    expect(canonical).not.toContain('productCode');
+    expect(createOpenV1Signature(withPhone, FIXTURE_SECRET)).not.toBe(PHONE_FREE_VECTOR);
+  });
+
+  it('keeps the C field set explicit rather than walking a request body', () => {
+    const fields = buildGiftVoucherSignedFields(
+      { appKey: APP_KEY, timestamp: FIXED_TIMESTAMP, nonce: NONCE },
+      { refCode: REF_CODE, packCount: 3, requestId: REQUEST_ID, phone: PHONE },
+    );
+    expect(Object.keys(fields).sort()).toEqual([
+      'appKey',
+      'nonce',
+      'packCount',
+      'phone',
+      'refCode',
+      'requestId',
+      'timestamp',
+    ]);
   });
 });

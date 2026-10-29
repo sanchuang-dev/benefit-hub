@@ -6,9 +6,11 @@ import {
   type YangmaoOpenV1PurchaseEligibility,
 } from './open-v1-purchase-check.js';
 import {
+  buildGiftVoucherSignedFields,
   buildPrepaidOrderSignedFields,
   buildPurchaseCheckSignedFields,
   createOpenV1Signature,
+  OPEN_V1_GIFT_VOUCHER_PATH,
   OPEN_V1_PREPAID_ORDER_PATH,
   OPEN_V1_PREPAID_ORDER_QUERY_PATH,
   OPEN_V1_PURCHASE_CHECK_PATH,
@@ -88,8 +90,39 @@ export interface YangmaoOpenV1CreatePrepaidOrderInput {
   /** Stable idempotency key shared by the caller and its recovery read. */
   requestId: string;
 }
+/**
+ * Accepted C-mode voucher issuance. Issuance pre-deducts `packCount` pack
+ * quota at the supplier; `packRemaining` is the vendor-observed remainder for
+ * that voucher and is never a platform refund or monetary balance.
+ */
+export interface YangmaoOpenV1GiftVoucherResult {
+  provider: 'yangmao';
+  observedAt: string;
+  voucherCode: string;
+  claimUrl: string;
+  packTotal?: number;
+  packRemaining?: number;
+  /** Raw vendor scalar; the timestamp format is not yet confirmed. */
+  expiresAt?: string | number;
+  balanceAfter?: number;
+  idempotentReplay?: boolean;
+}
+export interface YangmaoOpenV1CreateGiftVoucherInput {
+  refCode: string;
+  /** Number of packs bundled in this voucher; the vendor accepts 1–12. */
+  packCount: number;
+  /** Stable idempotency key; the same value must be used for any investigation. */
+  requestId: string;
+  /** Optional per the vendor contract; omitted when falsy. */
+  phone?: string;
+  /** Optional per the vendor contract; omitted when falsy. */
+  productCode?: string;
+}
 const RECOVERY_ID_PATTERN = /^[!-~]{1,64}$/;
 const VOUCHER_CODE_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/;
+/** Vendor-documented C-mode pack bounds; also enforced at the platform boundary. */
+export const GIFT_VOUCHER_PACK_COUNT_MIN = 1;
+export const GIFT_VOUCHER_PACK_COUNT_MAX = 12;
 const safeClaimUrlSchema = z.string().min(1).max(2048).refine((value) => {
   try {
     const url = new URL(value);
@@ -112,13 +145,28 @@ const prepaidOrderResultSchema = z.object({
   balanceAfter: z.number().int().min(0).nullish(),
   idempotentReplay: z.boolean().nullish(),
 });
+const rawExpiresAtSchema = z
+  .union([z.string().min(1).max(128), z.number().finite().nonnegative()])
+  .nullish();
 const giftVoucherLookupSchema = z.object({
   claimUrl: safeClaimUrlSchema.nullish(),
   packTotal: z.number().int().min(0).nullish(),
   packRemaining: z.number().int().min(0).nullish(),
   // Vendor has not yet confirmed timestamp unit/encoding. Preserve the raw
   // bounded scalar without guessing ISO/Unix seconds/milliseconds.
-  expiresAt: z.union([z.string().min(1).max(128), z.number().finite().nonnegative()]).nullish(),
+  expiresAt: rawExpiresAtSchema,
+});
+const issuedVoucherSchema = z.object({
+  // The vendor documents the issued code as uppercase; accepting any bounded
+  // identifier here avoids inventing a stricter shape than the contract states.
+  voucherCode: z.string().regex(/^[A-Za-z0-9._-]{1,128}$/),
+  // A code without a usable H5 link is not an accepted issuance.
+  claimUrl: safeClaimUrlSchema,
+  packTotal: z.number().int().min(1).nullish(),
+  packRemaining: z.number().int().min(0).nullish(),
+  expiresAt: rawExpiresAtSchema,
+  balanceAfter: z.number().int().min(0).nullish(),
+  idempotentReplay: z.boolean().nullish(),
 });
 
 export interface YangmaoOpenV1PurchaseReader {
@@ -145,6 +193,17 @@ export interface YangmaoOpenV1PurchaseReader {
     input: YangmaoOpenV1CreatePrepaidOrderInput,
     options?: YangmaoOpenV1ReadOptions,
   ): Promise<YangmaoOpenV1PrepaidOrderResult>;
+  /**
+   * C-mode `POST /gift-vouchers`: pre-deducts `packCount` packs (1–12) at
+   * issuance, not at redemption, and returns the voucher code plus H5 link.
+   * `requestId` is the vendor idempotency key; a caller must persist it and the
+   * unknown outcome before invoking this method and must never invent a new
+   * value after an indeterminate result.
+   */
+  createGiftVoucher(
+    input: YangmaoOpenV1CreateGiftVoucherInput,
+    options?: YangmaoOpenV1ReadOptions,
+  ): Promise<YangmaoOpenV1GiftVoucherResult>;
 }
 
 export const DEFAULT_OPEN_V1_TIMEOUT_MS = 10_000;
@@ -339,9 +398,92 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
     };
   }
 
+  /**
+   * C-mode voucher issuance. The vendor pre-deducts `packCount` packs here, so
+   * this method is a write even though the recipient pays nothing. Both the
+   * voucher code and the H5 link must be present before the response is
+   * accepted; a `code=0` envelope without them is not an issuance.
+   */
+  async createGiftVoucher(
+    input: YangmaoOpenV1CreateGiftVoucherInput,
+    options: YangmaoOpenV1ReadOptions = {},
+  ): Promise<YangmaoOpenV1GiftVoucherResult> {
+    if (
+      input.phone !== undefined &&
+      (typeof input.phone !== 'string' || !PHONE_PATTERN.test(input.phone))
+    ) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_PHONE_INVALID');
+    }
+    if (typeof input.refCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.refCode)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    if (typeof input.requestId !== 'string' || !RECOVERY_ID_PATTERN.test(input.requestId)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    if (
+      !Number.isInteger(input.packCount) ||
+      input.packCount < GIFT_VOUCHER_PACK_COUNT_MIN ||
+      input.packCount > GIFT_VOUCHER_PACK_COUNT_MAX
+    ) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    if (
+      input.productCode !== undefined &&
+      (typeof input.productCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.productCode))
+    ) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+
+    const timestamp = String(Math.trunc(this.clock()));
+    const nonce = this.nonceFactory();
+    if (typeof nonce !== 'string' || !NONCE_PATTERN.test(nonce)) throw configError();
+
+    const signature = createOpenV1Signature(
+      buildGiftVoucherSignedFields({ appKey: this.appKey, timestamp, nonce }, input),
+      this.appSecret,
+    );
+
+    // `packCount` stays a JSON number; the canonicalizer stringifies it for the
+    // signature. Empty optional values are omitted from both sides.
+    const body: Record<string, string | number> = {
+      refCode: input.refCode,
+      packCount: input.packCount,
+      requestId: input.requestId,
+    };
+    if (input.phone) body.phone = input.phone;
+    if (input.productCode) body.productCode = input.productCode;
+
+    const data = await this.sendSignedRequest({
+      path: OPEN_V1_GIFT_VOUCHER_PATH,
+      method: 'POST',
+      body: JSON.stringify(body),
+      timestamp,
+      nonce,
+      signature,
+      callerSignal: options.signal,
+    });
+
+    const parsed = issuedVoucherSchema.safeParse(data);
+    if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      voucherCode: parsed.data.voucherCode,
+      claimUrl: parsed.data.claimUrl,
+      ...(parsed.data.packTotal == null ? {} : { packTotal: parsed.data.packTotal }),
+      ...(parsed.data.packRemaining == null
+        ? {}
+        : { packRemaining: parsed.data.packRemaining }),
+      ...(parsed.data.expiresAt == null ? {} : { expiresAt: parsed.data.expiresAt }),
+      ...(parsed.data.balanceAfter == null ? {} : { balanceAfter: parsed.data.balanceAfter }),
+      ...(parsed.data.idempotentReplay == null
+        ? {}
+        : { idempotentReplay: parsed.data.idempotentReplay }),
+    };
+  }
+
   /** A-mode link recovery. This POST is a read-only vendor business action. */
-  async queryPrepaidOrder(
-    requestId: string,
+  async queryPrepaidOrder(    requestId: string,
     options: YangmaoOpenV1ReadOptions = {},
   ): Promise<YangmaoOpenV1PrepaidOrderLookup> {
     if (!RECOVERY_ID_PATTERN.test(requestId)) {

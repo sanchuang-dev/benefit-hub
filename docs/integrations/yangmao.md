@@ -137,3 +137,14 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **结果语义**：上力受理后订单为 `awaiting_claim`，`claimUrl` 只在已认证响应中返回、不落库；用户仍需在供应商 H5 领取，因此绝不记为 `completed`。超时/5xx/畸形成功保持 `unknown`；重复调用只用同一 `requestId` 走 `orders/query`，不重发扣额；上力明确业务拒绝记为 `rejected`/`failed`，不再自动重试。
 - **数据边界**：不保存明文手机号，只保存主密钥 HMAC 摘要（拒绝冲突的重复输入）；不保存 claimUrl、供应商原始报文、密钥或签名。运营在既有订单详情看到 requestId/上游订单号/状态，使用既有管理员只读查询取回链接。
 - **证据边界**：provider 单测使用 OpenSSL 独立向量与虚构 transport；API 集成测试通过真实 Hono → loopback 假供应商 HTTP 服务覆盖真实签名、冻结映射、并发唯一预约、未知/恢复与拒绝路径。**未执行任何真实 A 扣额**；真实下单、真实 claimUrl 与平台状态仍需维护者单独批准、测试额度与收件手机号后的脱敏证据。
+
+## 14. C 免费礼包券签发与查询恢复（BHB-012-E）
+
+- **代码归属**：供应商协议仍在 `packages/provider-yangmao`，新增 `createGiftVoucher()`（`POST /open/v1/gift-vouchers`）与既有 `queryGiftVoucher()`（`GET /open/v1/gift-vouchers/{code}`）。C 与 A/B 共用 A/B/C `X-Sign`（SHA-256 大写 hex），**不使用** D `X-Signature`；签名字段严格为 `appKey`、`timestamp`、`nonce`、`refCode`、`packCount`、`requestId` 及非空 `phone` / `productCode`，`packCount` 在 JSON body 中保持数字、在签名中按供应商规则字符串化。
+- **签发语义**：C 对领取人免费，平台**没有**虚构的预付款前置条件，也不调用 A 的 `purchase-check`；但供应商在**签发时**即预扣 `packCount`（1–12）个礼包，而非领取时。响应必须同时具备合法 `voucherCode` 与无内嵌凭证的 http(s) `claimUrl` 才算成功；`packTotal`、`packRemaining`、原始 `expiresAt` 标量、`balanceAfter`、`idempotentReplay` 只在类型合法时保留，未知字段一律丢弃。`code=0` 但字段缺失/非法、超时、取消、传输失败都不表达“已领取/已核销”。
+- **平台接线**：新增 `POST /api/v1/business/orders/:orderId/gift-voucher` 与 `POST /api/v1/business/orders/:orderId/gift-voucher/recover`，复用既有订单 Repository、应用凭证/启停/商品白名单、冻结映射与主密钥。供应商、模式与上游 `productCode` 只来自订单创建时冻结的 **C** 映射；请求体只允许 `packCount`、`refCode`、可选 `phone`，拒绝调用方自报供应商/模式/商品编码/付款凭据。
+- **幂等与持久化**：`requestId` 由平台订单 ID 确定性派生（前缀 `bhC`，共 63 字符）且数据库唯一。`packCount`、`refCode` 与手机号摘要属于稳定操作身份；重复签发若任一输入不同即 409 `GIFT_VOUCHER_INPUT_CONFLICT`。发券记录与预发 `unknown` 尝试、订单 `processing` 状态在同一短事务持久化，签名 HTTP 调用期间不持有 SQLite 事务。
+- **受保护数据**：`voucherCode`、`claimUrl` 与原始 `expiresAt` 只存在于既有主密钥派生出的 AES-256-GCM 信封中，SQLite 无明文列；不保存手机号（只保存 HMAC 摘要）、推广码以外的请求体、供应商原始报文、密钥或签名。券码/链接只返回给持有该业务凭证的调用方，不写日志、不进普通列表、前端 bundle 或其他业务读取。
+- **重复、未知与恢复**：完全相同输入重复调用只返回已签发事实，不再发券；原请求仍在处理中返回 409 `GIFT_VOUCHER_IN_PROGRESS`。成功签发后订单为 `awaiting_claim`，**不是** `completed`/redeemed。超时、网络失败、HTTP 5xx、`code=0` 但响应非法保持 `unknown`；由于供应商没有按 `requestId` 的 C 查单证据，**没有已存券码时不允许自动重签**，只能凭已记录的上游请求号人工核实（409 `GIFT_VOUCHER_OUTCOME_UNKNOWN`）。恢复只读使用**签发返回的大写券码**；业务 400、字段缺失、鉴权失败或查询超时都不会被当作成功，也不会因券码查询不到或到期就推断礼包额度退回。上力明确业务拒绝（400/401/403）记录为 `rejected`、订单 `failed`，后续不自动重试。
+- **运营可见性**：订单详情对 C 模式展示发券状态、上游请求号、`packCount`、供应商报告的 `packTotal`/`packRemaining`、最近观察时间与发起/更新时间；**不展示券码、领取链接、手机号、手机号摘要或密文**。运营需人工核实时使用上游请求号走供应商侧流程，而不是在平台内重复签发。
+- **测试与证据**：provider 固定 OpenSSL 向量覆盖 C 签名字段与 `packCount` 字符串化；隔离 transport 与 loopback HTTP 覆盖成功、可选 phone、未知字段、非法成功、400/401/403、超时、取消与 malformed envelope；API 集成测试通过真实 Hono → loopback 假供应商覆盖真实签名、冻结 C 映射、并发唯一预约、幂等、冲突、未知/恢复、明文不落库、跨业务隔离与运营详情脱敏。**尚未执行任何真实 C 签发或真实券码查询**；真实证据需要维护者单独批准、可用测试礼包额度与领取意图后另行提供，不得用 CI 绿灯冒充 live 验收。
