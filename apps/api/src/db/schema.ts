@@ -408,6 +408,41 @@ export const benefitOrderGrants = sqliteTable(
   ],
 );
 
+/**
+ * One durable C-mode voucher operation per benefit order (BHB-012-E).
+ *
+ * The row is inserted *before* the signed `POST /open/v1/gift-vouchers` call,
+ * so a crash or timeout can never lose the fact that the supplier may have
+ * pre-deducted `packCount` packs. `request_id` is derived deterministically from
+ * the platform order and is unique. The issued voucher code, claim link and raw
+ * expiry scalar are stored only inside an AES-256-GCM envelope under the
+ * existing master key: no column holds them in plaintext, and no phone number is
+ * stored (only a keyed digest used to reject conflicting repeated input).
+ */
+export const benefitOrderGiftVouchers = sqliteTable(
+  'benefit_order_gift_vouchers',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    requestId: text('request_id').notNull(),
+    state: text('state').notNull(),
+    packCount: integer('pack_count').notNull(),
+    refCode: text('ref_code').notNull(),
+    phoneHmac: text('phone_hmac'),
+    encryptedVoucher: text('encrypted_voucher'),
+    packTotal: integer('pack_total'),
+    packRemaining: integer('pack_remaining'),
+    lastObservedAt: integer('last_observed_at'),
+    attemptedAt: integer('attempted_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_gift_vouchers_request').on(table.requestId),
+    index('idx_benefit_order_gift_vouchers_state_updated').on(table.state, table.updatedAt),
+  ],
+);
+
 /** Encrypted server-side provider credentials. No plaintext secrets in DB. */
 export const supplierConnections = sqliteTable('supplier_connections', {
   provider: text('provider').primaryKey(),

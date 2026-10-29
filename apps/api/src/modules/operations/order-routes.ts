@@ -124,6 +124,18 @@ function toDetailDto(detail: OperationsOrderDetail): OperationsOrderDetailDto {
           updatedAt: detail.grant.updatedAt,
         }
       : null,
+    giftVoucher: detail.giftVoucher
+      ? {
+          state: detail.giftVoucher.state,
+          requestId: detail.giftVoucher.requestId,
+          packCount: detail.giftVoucher.packCount,
+          packTotal: detail.giftVoucher.packTotal,
+          packRemaining: detail.giftVoucher.packRemaining,
+          attemptedAt: detail.giftVoucher.attemptedAt,
+          updatedAt: detail.giftVoucher.updatedAt,
+          lastObservedAt: detail.giftVoucher.lastObservedAt,
+        }
+      : null,
     statusEvents: detail.statusEvents.map((event) => ({
       id: event.id,
       status: event.status,

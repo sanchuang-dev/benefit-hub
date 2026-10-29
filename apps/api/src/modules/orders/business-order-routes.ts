@@ -4,8 +4,11 @@ import {
   createBusinessOrderRequestSchema,
   createPrepaidGrantRequestSchema,
   businessOrderNoSchema,
+  createGiftVoucherRequestSchema,
+  recoverGiftVoucherRequestSchema,
   recoverPrepaidGrantRequestSchema,
   type BusinessOrderDto,
+  type GiftVoucherResponse,
   type PrepaidGrantResponse,
 } from '@sanchuang-dev/benefit-contracts';
 import { YangmaoOpenV1Error } from '@sanchuang-dev/provider-yangmao';
@@ -17,11 +20,21 @@ import { invalidRequest, issueFields, readJson } from '../http.js';
 import {
   createPrepaidGrantService,
   PurchaseNotEligibleError,
-  SupplierKeyUnavailableError,
-  SupplierNotConfiguredError,
   type PrepaidGrantOutcome,
 } from './a-prepaid-grant.js';
 import {
+  createGiftVoucherService,
+  type GiftVoucherOutcome,
+} from './c-gift-voucher.js';
+import { GiftVoucherVaultUnavailableError } from './gift-voucher-vault.js';
+import {
+  GiftVoucherInProgressError,
+  GiftVoucherInputConflictError,
+  GiftVoucherModeUnsupportedError,
+  GiftVoucherNotFoundError,
+  GiftVoucherNotRetryableError,
+  GiftVoucherOutcomeUnknownError,
+  GiftVoucherStateConflictError,
   GrantInProgressError,
   GrantInputConflictError,
   GrantNotFoundError,
@@ -43,6 +56,10 @@ import {
 } from './benefit-orders.js';
 import { createBenefitOrderRepository } from './repository.js';
 import { requireBusinessClient } from './service-auth.js';
+import {
+  SupplierKeyUnavailableError,
+  SupplierNotConfiguredError,
+} from './supplier-access.js';
 
 /**
  * Exact path whose Bearer-authenticated POST is exempt from the browser
@@ -51,9 +68,9 @@ import { requireBusinessClient } from './service-auth.js';
  */
 export const BUSINESS_ORDER_COLLECTION_PATH = '/api/v1/business/orders';
 
-/** A-mode grant/recover subpaths are Bearer-authenticated machine writes. */
+/** A/C-mode grant, recovery and C issuance subpaths are Bearer-authenticated machine writes. */
 const BUSINESS_ORDER_GRANT_PATH =
-  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover)$/;
+  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover|gift-voucher|gift-voucher\/recover)$/;
 
 /**
  * Exact machine POST paths exempt from the browser double-submit CSRF token.
@@ -285,6 +302,98 @@ function toPrepaidGrantResponse(outcome: PrepaidGrantOutcome): PrepaidGrantRespo
   };
 }
 
+function toGiftVoucherResponse(outcome: GiftVoucherOutcome): GiftVoucherResponse {
+  const { voucher } = outcome;
+  return {
+    order: toBusinessOrderDto(outcome.order),
+    voucher: {
+      state: voucher.state,
+      requestId: voucher.requestId,
+      packCount: voucher.packCount,
+      packTotal: voucher.packTotal,
+      packRemaining: voucher.packRemaining,
+      attemptedAt: voucher.attemptedAt,
+      updatedAt: voucher.updatedAt,
+      lastObservedAt: voucher.lastObservedAt,
+    },
+    ...(outcome.voucherCode === undefined ? {} : { voucherCode: outcome.voucherCode }),
+    ...(outcome.claimUrl === undefined ? {} : { claimUrl: outcome.claimUrl }),
+    ...(outcome.expiresAt === undefined ? {} : { expiresAt: outcome.expiresAt }),
+    ...(outcome.balanceAfter === undefined ? {} : { balanceAfter: outcome.balanceAfter }),
+    ...(outcome.idempotentReplay === undefined
+      ? {}
+      : { idempotentReplay: outcome.idempotentReplay }),
+    ...(outcome.observedAt === undefined ? {} : { observedAt: outcome.observedAt }),
+  };
+}
+
+/**
+ * C-mode failures. Supplier and order failures fall through to the existing
+ * mappings so a second copy of those semantics cannot drift.
+ */
+function handleGiftVoucherError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof GiftVoucherInputConflictError) {
+    return c.json(
+      apiError('GIFT_VOUCHER_INPUT_CONFLICT', '相同订单的礼包个数、推广码或收件手机号与原发券记录不一致'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherInProgressError) {
+    return c.json(
+      apiError('GIFT_VOUCHER_IN_PROGRESS', '该订单的上力发券仍在处理中，请稍后核实'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherNotRetryableError) {
+    return c.json(
+      apiError('GIFT_VOUCHER_NOT_RETRYABLE', '该订单已被上力明确拒绝，不会自动重试'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherOutcomeUnknownError) {
+    return c.json(
+      apiError(
+        'GIFT_VOUCHER_OUTCOME_UNKNOWN',
+        '上力发券结果未知且没有可恢复的券码；请用已记录的上游请求号人工核实，禁止用新 requestId 重发',
+      ),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherNotFoundError) {
+    return c.json(
+      apiError('GIFT_VOUCHER_NOT_FOUND', '该订单尚未发起过上力发券'),
+      404,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherModeUnsupportedError) {
+    return c.json(
+      apiError('ORDER_MODE_UNSUPPORTED', '该订单冻结的履约模式不是上力 C 公众号礼包券'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherStateConflictError) {
+    return c.json(
+      apiError('ORDER_STATE_CONFLICT', '订单或上力发券记录已变化，请重新查询后再操作'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof GiftVoucherVaultUnavailableError) {
+    return c.json(
+      apiError('SUPPLIER_KEY_UNAVAILABLE', '受保护的发券数据不可用'),
+      503,
+      NO_STORE_HEADERS,
+    );
+  }
+  return handleGrantError(c, error);
+}
+
 function readOrderId(c: Context<AppEnv>): string | null {
   const orderId = c.req.param('orderId');
   // Keep this identical to the CSRF-exempt path pattern so an accepted id can
@@ -335,6 +444,7 @@ export function createBusinessOrderRoutes(deps: {
   const router = new Hono<AppEnv>();
   const repository = createBenefitOrderRepository(deps.db);
   const grantService = createPrepaidGrantService(deps);
+  const giftVoucherService = createGiftVoucherService(deps);
 
   // Machine credential first: no admin cookie/session is consulted at all.
   router.use('*', requireBusinessClient(deps.db, deps.config));
@@ -444,6 +554,81 @@ export function createBusinessOrderRoutes(deps: {
       return c.json(toPrepaidGrantResponse(outcome), 200, NO_STORE_HEADERS);
     } catch (error) {
       return handleGrantError(c, error);
+    }
+  });
+
+  /**
+   * BHB-012-E: issue a C-mode free gift voucher for an already-authorized
+   * business intent. C is free to the recipient, so there is no payment gate;
+   * the supplier nevertheless pre-deducts `packCount` packs at issuance.
+   */
+  router.post('/:orderId/gift-voucher', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) {
+      return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    }
+
+    const body = await readJson(c);
+    if (!body.ok) {
+      return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    }
+    const parsed = createGiftVoucherRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return c.json(
+        invalidRequest('上力发券参数不正确', issueFields(parsed.error)),
+        400,
+        NO_STORE_HEADERS,
+      );
+    }
+
+    try {
+      const outcome = await giftVoucherService.issue({
+        businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
+        orderId,
+        packCount: parsed.data.packCount,
+        refCode: parsed.data.refCode,
+        ...(parsed.data.phone === undefined ? {} : { phone: parsed.data.phone }),
+        signal: c.req.raw.signal,
+      });
+      return c.json(toGiftVoucherResponse(outcome), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleGiftVoucherError(c, error);
+    }
+  });
+
+  /**
+   * Read-only C-mode recovery by the stored issued code. It never re-signs or
+   * issues another voucher, so a lost response cannot deduct quota twice.
+   */
+  router.post('/:orderId/gift-voucher/recover', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) {
+      return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    }
+
+    const body = await readJson(c);
+    if (!body.ok) {
+      return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    }
+    const parsed = recoverGiftVoucherRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return c.json(
+        invalidRequest('恢复参数不正确', issueFields(parsed.error)),
+        400,
+        NO_STORE_HEADERS,
+      );
+    }
+
+    try {
+      const outcome = await giftVoucherService.recover({
+        businessSource: c.get('businessSource'),
+        orderId,
+        signal: c.req.raw.signal,
+      });
+      return c.json(toGiftVoucherResponse(outcome), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleGiftVoucherError(c, error);
     }
   });
 

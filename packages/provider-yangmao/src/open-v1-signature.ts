@@ -6,6 +6,8 @@ export const OPEN_V1_PURCHASE_CHECK_PATH = '/open/v1/prepaid/purchase-check';
 export const OPEN_V1_PREPAID_ORDER_PATH = '/open/v1/prepaid/orders';
 /** A-mode read-only link recovery by the original `requestId`. */
 export const OPEN_V1_PREPAID_ORDER_QUERY_PATH = '/open/v1/prepaid/orders/query';
+/** C-mode voucher issuance. The supplier pre-deducts `packCount` packs here. */
+export const OPEN_V1_GIFT_VOUCHER_PATH = '/open/v1/gift-vouchers';
 
 /**
  * Values the vendor accepts inside the A/B/C canonical string. A `number` is
@@ -142,5 +144,33 @@ export function buildPrepaidOrderSignedFields(
     refCode: input.refCode,
     ...(input.productCode ? { productCode: input.productCode } : {}),
     requestId: input.requestId,
+  };
+}
+
+/**
+ * C-mode `gift-vouchers` participates in `appKey`, `timestamp`, `nonce`,
+ * `refCode`, `packCount`, `requestId`, and the non-empty `phone` /
+ * `productCode`. `packCount` is a number in the JSON body but is stringified by
+ * the canonicalizer, matching the vendor's documented `"3"` form.
+ */
+export function buildGiftVoucherSignedFields(
+  identity: OpenV1RequestIdentity,
+  input: {
+    refCode: string;
+    packCount: number;
+    requestId: string;
+    phone?: string;
+    productCode?: string;
+  },
+): OpenV1SigningFields {
+  return {
+    appKey: identity.appKey,
+    timestamp: identity.timestamp,
+    nonce: identity.nonce,
+    refCode: input.refCode,
+    packCount: input.packCount,
+    requestId: input.requestId,
+    ...(input.phone ? { phone: input.phone } : {}),
+    ...(input.productCode ? { productCode: input.productCode } : {}),
   };
 }

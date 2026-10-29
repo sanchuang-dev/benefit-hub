@@ -5,6 +5,7 @@
  * exported by package.json and are not part of the stable contract.
  */
 export * from './applications.js';
+export * from './gift-voucher.js';
 export * from './mapping.js';
 export * from './operations-orders.js';
 export * from './orders.js';
