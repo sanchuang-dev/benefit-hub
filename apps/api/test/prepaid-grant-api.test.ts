@@ -11,6 +11,10 @@ import {
 } from '@sanchuang-dev/benefit-contracts';
 import { loadConfig, type AppConfig } from '../src/config.js';
 import { createApplication, replaceApplicationProducts } from '../src/modules/applications/applications.js';
+import {
+  issueApplicationCredential,
+  revokeApplicationCredential,
+} from '../src/modules/applications/credentials.js';
 import { createProduct } from '../src/modules/catalog/products.js';
 import { createSupplierMappingRepository } from '../src/modules/catalog/supplier-mapping-repository.js';
 import type { FulfillmentMode } from '../src/modules/orders/benefit-orders.js';
@@ -55,6 +59,8 @@ interface VendorState {
   claimUrl: string;
   orderNo: string;
   orderDelayMs: number;
+  /** Deterministic operator change while the live read-only check is in flight. */
+  onPurchaseCheck?: () => void;
 }
 
 interface VendorCall {
@@ -98,6 +104,7 @@ async function fixtureVendor() {
       };
 
       if (req.url === '/open/v1/prepaid/purchase-check') {
+        state.onPurchaseCheck?.();
         reply(200, { code: 0, data: state.eligibility });
         return;
       }
@@ -615,6 +622,97 @@ describe('A-mode prepaid grant preconditions', () => {
   }, 20_000);
 });
 
+describe('A-mode prepaid grant authorization at the debit reservation', () => {
+  it('rejects a disabled application or removed product while purchase-check is in flight', async () => {
+    for (const mutation of ['disabled', 'allowlist_removed'] as const) {
+      const vendor = await fixtureVendor();
+      const testServer = startServer(vendor);
+      try {
+        const product = seedProduct(testServer, `YM-PREPAID-A-${mutation}`);
+        activateMapping(testServer, product.id, { mode: 'A', productCode: 'YM-PACK-A' });
+        registerApplication(testServer, 'local-life', product.id);
+        const order = await createOrder(testServer, `LO-A-AUTH-${mutation}`, product.id);
+
+        // The Bearer has already authenticated and purchase-check has begun.
+        // An operator mutation commits before reserveGrant obtains its write lock.
+        vendor.state.onPurchaseCheck = () => {
+          if (mutation === 'disabled') {
+            testServer.database.sqlite
+              .prepare("UPDATE business_applications SET status = 'disabled' WHERE business_source = 'local-life'")
+              .run();
+          } else {
+            testServer.database.sqlite
+              .prepare(
+                "DELETE FROM business_application_products WHERE application_id = (SELECT id FROM business_applications WHERE business_source = 'local-life')",
+              )
+              .run();
+          }
+        };
+
+        const response = await grantOrder(testServer, order.id, VALID_GRANT_BODY);
+        expect(response.status).toBe(403);
+        expect(parseError(await response.json()).error).toBe(
+          mutation === 'disabled' ? 'APPLICATION_DISABLED' : 'PRODUCT_NOT_AUTHORIZED',
+        );
+        expect(vendor.calls.map((call) => call.path)).toEqual([
+          '/open/v1/prepaid/purchase-check',
+        ]);
+        expect(vendor.orderCalls()).toHaveLength(0);
+        expect(countRows(testServer, 'benefit_order_grants')).toBe(0);
+        expect(countRows(testServer, 'fulfillment_attempts')).toBe(0);
+        const local = testServer.database.sqlite
+          .prepare('SELECT status FROM benefit_orders WHERE id = ?')
+          .get(order.id) as { status: string };
+        expect(local.status).toBe('pending');
+      } finally {
+        testServer.close();
+        await vendor.close();
+      }
+    }
+  }, 20_000);
+
+  it('rejects a DB-issued credential revoked during purchase-check before any supplier debit', async () => {
+    const vendor = await fixtureVendor();
+    const testServer = startServer(vendor);
+    try {
+      const product = seedProduct(testServer, 'YM-PREPAID-A-CREDENTIAL');
+      activateMapping(testServer, product.id, { mode: 'A', productCode: 'YM-PACK-A' });
+      registerApplication(testServer, 'local-life', product.id);
+      const app = testServer.database.sqlite
+        .prepare("SELECT id FROM business_applications WHERE business_source = 'local-life'")
+        .get() as { id: string };
+      const issued = issueApplicationCredential(testServer.database.db, app.id, 'test-actor');
+      const order = await createOrder(testServer, 'LO-A-AUTH-REVOKED', product.id);
+
+      vendor.state.onPurchaseCheck = () => {
+        revokeApplicationCredential(
+          testServer.database.db,
+          app.id,
+          issued.credential.id,
+          'test-actor',
+        );
+      };
+
+      // Middleware initially accepts this token, but the transaction must
+      // refuse it once the supplier eligibility read returns.
+      const response = await grantOrder(
+        testServer, order.id, VALID_GRANT_BODY, issued.secret,
+      );
+      expect(response.status).toBe(401);
+      expect(parseError(await response.json()).error).toBe('UNAUTHORIZED');
+      expect(vendor.calls.map((call) => call.path)).toEqual([
+        '/open/v1/prepaid/purchase-check',
+      ]);
+      expect(vendor.orderCalls()).toHaveLength(0);
+      expect(countRows(testServer, 'benefit_order_grants')).toBe(0);
+      expect(countRows(testServer, 'fulfillment_attempts')).toBe(0);
+    } finally {
+      testServer.close();
+      await vendor.close();
+    }
+  }, 20_000);
+});
+
 describe('A-mode prepaid grant concurrency and tenant isolation', () => {
   it('lets only one concurrent caller reserve and sends exactly one debit', async () => {
     const vendor = await fixtureVendor();
@@ -814,7 +912,16 @@ describe('A-mode prepaid grant unknown and recovery semantics', () => {
       });
       expect(refConflict.status).toBe(409);
       expect(parseError(await refConflict.json()).error).toBe('GRANT_INPUT_CONFLICT');
+
+      const paymentConflict = await grantOrder(testServer, order.id, {
+        ...VALID_GRANT_BODY,
+        paymentReference: 'PAY-DIFFERENT-REFERENCE',
+      });
+      expect(paymentConflict.status).toBe(409);
+      expect(parseError(await paymentConflict.json()).error).toBe('GRANT_INPUT_CONFLICT');
+      // Every conflicted input is rejected locally, never queried or re-issued.
       expect(vendor.orderCalls()).toHaveLength(1);
+      expect(vendor.queryCalls()).toHaveLength(0);
     } finally {
       testServer.close();
       await vendor.close();
