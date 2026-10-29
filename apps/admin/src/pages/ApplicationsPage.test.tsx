@@ -222,6 +222,10 @@ describe('downstream application list', () => {
     ).toBeTruthy();
     expect(screen.queryByText('运行时鉴权未接入')).toBeNull();
 
+    // The create action shares the filter row instead of occupying its own row.
+    const createButton = findButtonText('登记应用');
+    expect(document.querySelector('.applications-toolbar-row')?.contains(createButton)).toBe(true);
+
     fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '本地' } });
     fireEvent.click(findButtonText('查询'));
     await waitFor(() =>
