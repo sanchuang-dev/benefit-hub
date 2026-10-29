@@ -241,6 +241,18 @@ export function createGiftVoucherService(deps: {
     try {
       // The vendor signs/queries the uppercase issued code as documented.
       lookup = await client.queryGiftVoucher(data.voucherCode.toUpperCase(), { signal });
+      // A lookup may omit one quota field. Reconcile it against the last
+      // persisted observation and reject an impossible combined balance. A
+      // malformed read is never allowed to overwrite a valid issued fact.
+      const observedTotal = lookup.packTotal ?? voucher.packTotal;
+      const observedRemaining = lookup.packRemaining ?? voucher.packRemaining;
+      if (
+        observedTotal !== null &&
+        observedRemaining !== null &&
+        observedRemaining > observedTotal
+      ) {
+        throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+      }
     } catch (error) {
       const definiteRejection = isDefiniteRejection(error);
       try {
@@ -289,9 +301,13 @@ export function createGiftVoucherService(deps: {
         ? {}
         : { packRemaining: lookup.packRemaining }),
       lastObservedAt: observedAt,
-      // An issued voucher remains awaiting the recipient's claim, never
-      // redeemed/completed by a read.
-      orderStatus: 'awaiting_claim',
+      // A supplier quota read is not evidence that a previously recorded
+      // partial/full claim was reversed. Only unresolved local states may
+      // advance to awaiting_claim; terminal fulfillment facts remain intact.
+      orderStatus:
+        order.status === 'processing' || order.status === 'unknown'
+          ? 'awaiting_claim'
+          : order.status,
       operation: 'query',
       result: 'accepted',
       occurredAt: verifiedAt,
