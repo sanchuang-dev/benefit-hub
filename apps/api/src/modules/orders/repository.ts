@@ -1339,6 +1339,9 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
 
           const packTotal = input.packTotal ?? voucherRow.packTotal;
           const packRemaining = input.packRemaining ?? voucherRow.packRemaining;
+          if (packTotal !== null && packRemaining !== null && packRemaining > packTotal) {
+            throw new GiftVoucherStateConflictError('供应商礼包剩余份额不能超过总份额');
+          }
           const lastObservedAt = input.lastObservedAt ?? voucherRow.lastObservedAt;
 
           if (
@@ -1364,11 +1367,19 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           let settledOrder = toBenefitOrder(orderRow);
           if (settledOrder.status !== orderStatus) {
             if (
-              GRANT_SUCCESS_STATUSES.has(settledOrder.status) &&
-              (orderStatus === 'unknown' || orderStatus === 'failed')
+              (settledOrder.status === 'completed' && orderStatus !== 'completed') ||
+              (
+                settledOrder.status === 'partially_completed' &&
+                orderStatus !== 'partially_completed' &&
+                orderStatus !== 'completed'
+              ) ||
+              (
+                GRANT_SUCCESS_STATUSES.has(settledOrder.status) &&
+                (orderStatus === 'unknown' || orderStatus === 'failed')
+              )
             ) {
               throw new GiftVoucherStateConflictError(
-                '已签发的订单不能被查询结果降级为未知或失败',
+                '已确认的订单履约结果不能被发券查询降级',
               );
             }
             if (settledOrder.version !== input.expectedVersion) {
