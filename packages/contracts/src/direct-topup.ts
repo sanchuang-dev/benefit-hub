@@ -34,6 +34,8 @@ export const directTopupSummarySchema = z.object({
   updatedAt: z.number().int().nonnegative(),
 }).strict();
 
+export type DirectTopupSummaryDto = z.infer<typeof directTopupSummarySchema>;
+
 export const directTopupResponseSchema = z.object({
   order: businessOrderSchema,
   topup: directTopupSummarySchema,
