@@ -1,6 +1,7 @@
 import type {
   AttemptOperation,
   AttemptResult,
+  GiftVoucherState,
   OrderStatus,
   PrepaidGrantState,
 } from '@sanchuang-dev/benefit-contracts';
@@ -57,6 +58,21 @@ export const PREPAID_GRANT_STATE_LABELS: Record<PrepaidGrantState, string> = {
 export const PREPAID_GRANT_STATE_COLORS: Record<PrepaidGrantState, string> = {
   reserved: 'processing',
   accepted: 'blue',
+  unknown: 'gold',
+  rejected: 'red',
+};
+
+/** C-mode operation state, deliberately separate from the platform order status. */
+export const GIFT_VOUCHER_STATE_LABELS: Record<GiftVoucherState, string> = {
+  reserved: '已持久化，结果待确认',
+  issued: '上力已签发（待用户领取）',
+  unknown: '结果未知，需人工核实',
+  rejected: '上力已明确拒绝',
+};
+
+export const GIFT_VOUCHER_STATE_COLORS: Record<GiftVoucherState, string> = {
+  reserved: 'processing',
+  issued: 'blue',
   unknown: 'gold',
   rejected: 'red',
 };

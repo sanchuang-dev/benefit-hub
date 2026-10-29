@@ -41,10 +41,12 @@ export {
   type YangmaoOpenV1ErrorDetails,
 } from './open-v1-errors.js';
 export {
+  buildGiftVoucherSignedFields,
   buildOpenV1StringToSign,
   buildPrepaidOrderSignedFields,
   buildPurchaseCheckSignedFields,
   createOpenV1Signature,
+  OPEN_V1_GIFT_VOUCHER_PATH,
   OPEN_V1_PREPAID_ORDER_PATH,
   OPEN_V1_PREPAID_ORDER_QUERY_PATH,
   OPEN_V1_PURCHASE_CHECK_PATH,
@@ -58,12 +60,16 @@ export type {
 export {
   createYangmaoOpenV1Client,
   DEFAULT_OPEN_V1_TIMEOUT_MS,
+  GIFT_VOUCHER_PACK_COUNT_MAX,
+  GIFT_VOUCHER_PACK_COUNT_MIN,
   type YangmaoOpenV1ClientOptions,
   type YangmaoOpenV1PurchaseReader,
   type YangmaoOpenV1PrepaidOrderLookup,
   type YangmaoOpenV1PrepaidOrderResult,
   type YangmaoOpenV1CreatePrepaidOrderInput,
   type YangmaoOpenV1GiftVoucherLookup,
+  type YangmaoOpenV1GiftVoucherResult,
+  type YangmaoOpenV1CreateGiftVoucherInput,
   type YangmaoOpenV1ReadOptions,
   type YangmaoOpenV1Transport,
 } from './open-v1-client.js';

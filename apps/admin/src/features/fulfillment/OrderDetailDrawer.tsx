@@ -23,6 +23,8 @@ import {
   ATTEMPT_OPERATION_LABELS,
   ATTEMPT_RESULT_COLORS,
   ATTEMPT_RESULT_LABELS,
+  GIFT_VOUCHER_STATE_COLORS,
+  GIFT_VOUCHER_STATE_LABELS,
   ORDER_STATUS_COLORS,
   ORDER_STATUS_LABELS,
   PREPAID_GRANT_STATE_COLORS,
@@ -408,6 +410,100 @@ export function OrderDetailDrawer({
                   showIcon
                   title="尚未发起上力下单"
                   description="平台只记录本地业务意图，不会自动扣减礼包额度。只有在业务方确认已收款/已授权后，才可通过业务订单接口发起 A 模式下单。"
+                />
+              )}
+            </section>
+          ) : null}
+
+          {detail.fulfillmentMode === 'C' ? (
+            <section aria-label="上力 C 公众号礼包券">
+              <Title level={5}>上力 C 公众号礼包券</Title>
+              {detail.giftVoucher ? (
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    bordered
+                    items={[
+                      {
+                        key: 'giftVoucherState',
+                        label: '上力发券记录',
+                        children: (
+                          <Space orientation="vertical" size={2}>
+                            <Tag color={GIFT_VOUCHER_STATE_COLORS[detail.giftVoucher.state]}>
+                              {GIFT_VOUCHER_STATE_LABELS[detail.giftVoucher.state]}
+                            </Tag>
+                            <Text type="secondary">
+                              「已签发」表示上力已生成礼包券并在签发时预扣礼包额度，不代表领取人已兑换或领取。
+                            </Text>
+                          </Space>
+                        ),
+                      },
+                      {
+                        key: 'giftVoucherRequestId',
+                        label: '上游请求号（幂等键）',
+                        children: <Text code copyable>{detail.giftVoucher.requestId}</Text>,
+                      },
+                      {
+                        key: 'packCount',
+                        label: '本券礼包个数（签发预扣）',
+                        children: `${detail.giftVoucher.packCount} 个`,
+                      },
+                      {
+                        key: 'packTotal',
+                        label: '供应商报告礼包总数',
+                        children:
+                          detail.giftVoucher.packTotal === null ? (
+                            <Text type="secondary">—</Text>
+                          ) : (
+                            `${detail.giftVoucher.packTotal} 个`
+                          ),
+                      },
+                      {
+                        key: 'packRemaining',
+                        label: '供应商报告剩余礼包',
+                        children:
+                          detail.giftVoucher.packRemaining === null ? (
+                            <Text type="secondary">—</Text>
+                          ) : (
+                            `${detail.giftVoucher.packRemaining} 个`
+                          ),
+                      },
+                      {
+                        key: 'lastObservedAt',
+                        label: '供应商最近观察时间',
+                        children:
+                          detail.giftVoucher.lastObservedAt === null ? (
+                            <Text type="secondary">—</Text>
+                          ) : (
+                            formatDateTime(detail.giftVoucher.lastObservedAt)
+                          ),
+                      },
+                      {
+                        key: 'giftVoucherAttemptedAt',
+                        label: '发起时间',
+                        children: formatDateTime(detail.giftVoucher.attemptedAt),
+                      },
+                      {
+                        key: 'giftVoucherUpdatedAt',
+                        label: '最近结果时间',
+                        children: formatDateTime(detail.giftVoucher.updatedAt),
+                      },
+                    ]}
+                  />
+                  <Alert
+                    type="info"
+                    showIcon
+                    title="券码与领取链接受保护存储"
+                    description="券码和 claimUrl 可能包含个人化参数，只加密保存在服务端，并由持有该业务凭证的调用方通过 C 发券或恢复接口取回；运营详情、日志与普通列表都不展示。剩余礼包数只反映供应商最近一次观察，平台不因券码查询不到或到期而推断额度退回。"
+                  />
+                </Space>
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="尚未发起上力发券"
+                  description="平台只记录本地业务意图，不会自动签发礼包券或预扣额度。C 面向领取人免费，但供应商在签发时即预扣 packCount 个礼包额度，因此必须由业务方显式授权后调用 C 发券接口。"
                 />
               )}
             </section>

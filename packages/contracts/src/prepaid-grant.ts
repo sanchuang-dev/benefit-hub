@@ -34,7 +34,8 @@ export const prepaidGrantStateSchema = z.enum(PREPAID_GRANT_STATES);
 const identifierSchema = z.string().min(1).max(128);
 const timestampSchema = z.number().int().nonnegative();
 
-const claimUrlSchema = z
+/** Credential-free http(s) H5 link; shared by A and C supplier responses. */
+export const claimUrlSchema = z
   .string()
   .min(1)
   .max(2048)
