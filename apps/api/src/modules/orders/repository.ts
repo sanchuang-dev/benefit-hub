@@ -89,6 +89,8 @@ export interface AppendFulfillmentAttemptInput {
 
 export interface ReserveGrantInput {
   orderId: string;
+  /** Recheck the authenticated DB credential under the same write lock as the reservation. */
+  applicationCredentialId?: string | null;
   /** Version observed before the reservation; a concurrent change fails. */
   expectedVersion: number;
   requestId: string;
@@ -637,6 +639,54 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
             .limit(1)
             .get();
           if (!orderRow) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          // The initial machine-auth middleware and the live purchase-check can
+          // be separated by network latency. Recheck the verified credential,
+          // app status and product allowlist inside this same IMMEDIATE write
+          // transaction, immediately before recording any potentially billable
+          // supplier attempt. The operator's revocation/disable/allowlist write
+          // and this reservation cannot cross each other.
+          const application = tx
+            .select({ id: businessApplications.id, status: businessApplications.status })
+            .from(businessApplications)
+            .where(eq(businessApplications.businessSource, orderRow.businessSource))
+            .limit(1)
+            .get();
+          if (input.applicationCredentialId != null) {
+            const credential = tx
+              .select({ applicationId: businessApplicationCredentials.applicationId })
+              .from(businessApplicationCredentials)
+              .where(
+                and(
+                  eq(businessApplicationCredentials.id, input.applicationCredentialId),
+                  isNull(businessApplicationCredentials.revokedAt),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!application || !credential || credential.applicationId !== application.id) {
+              throw new OrderCredentialRevokedError('应用服务凭证已失效');
+            }
+          }
+          if (application && application.status !== 'enabled') {
+            throw new OrderApplicationDisabledError('应用已停用，不能发起上力下单');
+          }
+          if (application) {
+            const permitted = tx
+              .select({ productId: businessApplicationProducts.productId })
+              .from(businessApplicationProducts)
+              .where(
+                and(
+                  eq(businessApplicationProducts.applicationId, application.id),
+                  eq(businessApplicationProducts.productId, orderRow.productId),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!permitted) {
+              throw new OrderProductNotAuthorizedError('该应用未被授权使用此内部商品');
+            }
+          }
 
           const existing = tx
             .select()
