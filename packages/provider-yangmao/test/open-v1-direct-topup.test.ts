@@ -68,6 +68,11 @@ describe('B direct-topup contract', () => {
     { ...PARTIAL, successCount: 3 },
     { ...PARTIAL, totalCount: 1 },
     { ...PARTIAL, allClaimed: true, successCount: 2 },
+    { ...PARTIAL, allClaimed: true, successCount: 2, items: [{ claimed: true }] },
+    { ...PARTIAL, allClaimed: false, successCount: 2 },
+    { ...PARTIAL, allClaimed: true, successCount: 2, items: [
+      { claimed: true }, { status: 'completed' },
+    ] },
     { ...PARTIAL, orderNo: undefined },
   ])('rejects impossible or unsupported successful envelopes', async (data) => {
     const c = client(async () => response(data));
