@@ -15,6 +15,7 @@
 import { z } from 'zod';
 import { deductionUnitSchema, fulfillmentModeSchema } from './mapping.js';
 import { giftVoucherSchema } from './gift-voucher.js';
+import { directTopupSummarySchema } from './direct-topup.js';
 import {
   attemptOperationSchema,
   attemptResultSchema,
@@ -146,6 +147,8 @@ export const operationsOrderDetailSchema = z
      * remain encrypted and are returned only to the authenticated owning app.
      */
     giftVoucher: giftVoucherSchema.nullable(),
+    /** B direct topup: supplier acceptance vs item completion kept separate. */
+    directTopup: directTopupSummarySchema.nullable().optional(),
     statusEvents: z.array(operationsOrderStatusEventSchema),
     attempts: z.array(operationsOrderAttemptSchema),
   })
