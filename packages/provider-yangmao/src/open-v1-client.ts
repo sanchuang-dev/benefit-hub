@@ -181,7 +181,7 @@ const directTopupResultSchema = z.object({
   })).max(100),
   idempotentReplay: z.boolean().nullish(),
 }).superRefine((value, ctx) => {
-  if (value.successCount > value.totalCount || value.items.length !== value.totalCount) {
+  if (value.successCount > value.totalCount || value.items.length > value.totalCount) {
     ctx.addIssue({ code: 'custom', message: 'inconsistent direct topup item count' });
   }
   const claimed = value.items.filter((item) => item.claimed === true).length;
