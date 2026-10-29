@@ -82,6 +82,8 @@ export interface PrepaidGrantOutcome {
 
 export interface GrantPrepaidOrderCommand {
   businessSource: string;
+  /** Authenticated DB-issued machine credential, never accepted from the request body. */
+  applicationCredentialId?: string | null;
   orderId: string;
   phone: string;
   refCode: string;
@@ -330,9 +332,10 @@ export function createPrepaidGrantService(deps: {
   ): Promise<PrepaidGrantOutcome> {
     const sameInput =
       grant.phoneHmac === hashPrepaidGrantPhone(masterKey, command.phone) &&
-      grant.refCode === command.refCode;
+      grant.refCode === command.refCode &&
+      grant.paymentReference === command.paymentReference;
     if (!sameInput) {
-      throw new GrantInputConflictError('相同订单已用不同手机号或推广码发起过下单');
+      throw new GrantInputConflictError('相同订单的手机号、推广码或支付凭据与原下单记录不一致');
     }
     if (grant.state === 'rejected') {
       throw new GrantNotRetryableError('该订单已被上力明确拒绝，不会自动重试');
@@ -419,6 +422,7 @@ export function createPrepaidGrantService(deps: {
 
       const reservation = repository.reserveGrant({
         orderId: order.id,
+        applicationCredentialId: command.applicationCredentialId,
         expectedVersion: order.version,
         requestId: derivePrepaidGrantRequestId(order.id),
         refCode: command.refCode,
