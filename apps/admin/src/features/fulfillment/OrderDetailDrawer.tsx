@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import {
   Alert,
   Button,
   Descriptions,
   Drawer,
   Empty,
+  Form,
   Grid,
+  Input,
+  Modal,
+  message,
   Skeleton,
   Space,
   Table,
@@ -32,6 +37,7 @@ import {
   providerLabel,
 } from './labels';
 import { useOrderDetailQuery } from './use-orders';
+import { reissueDirectTopup } from './api';
 
 const { Text, Title } = Typography;
 
@@ -161,12 +167,47 @@ export function OrderDetailDrawer({
   onClose: () => void;
 }) {
   const screens = Grid.useBreakpoint();
+  const [form] = Form.useForm<{
+    phone: string;
+    refCode: string;
+    paymentReference: string;
+  }>();
+  const [messageApi, contextHolder] = message.useMessage();
+  const [reissueOpen, setReissueOpen] = useState(false);
+  const [reissuePending, setReissuePending] = useState(false);
   const detailQuery = useOrderDetailQuery(orderId);
   const errorCopy = detailQuery.isError ? detailErrorCopy(detailQuery.error) : null;
   const detail = detailQuery.data;
 
+  async function handleReissue() {
+    if (!orderId) return;
+    let fields: { phone: string; refCode: string; paymentReference: string };
+    try {
+      fields = await form.validateFields();
+    } catch {
+      return;
+    }
+    setReissuePending(true);
+    try {
+      await reissueDirectTopup(orderId, fields);
+      messageApi.success('上力 B 原单补发已收到可验证结果');
+      form.resetFields();
+      setReissueOpen(false);
+      void detailQuery.refetch();
+    } catch (error) {
+      messageApi.error(error instanceof ApiError
+        ? error.message
+        : '补发结果未能确认，请检查订单最新状态，切勿再次盲目发券');
+      void detailQuery.refetch();
+    } finally {
+      setReissuePending(false);
+    }
+  }
+
   return (
-    <Drawer
+    <>
+      {contextHolder}
+      <Drawer
       open={Boolean(orderId)}
       onClose={onClose}
       title="平台订单详情"
@@ -494,6 +535,14 @@ export function OrderDetailDrawer({
                       ]}
                     />
                   ) : null}
+                  {detail.directTopup.state === 'partial' ? (
+                    <Button
+                      danger
+                      onClick={() => setReissueOpen(true)}
+                    >
+                      管理员受控补发（原 requestId）
+                    </Button>
+                  ) : null}
                   <Alert
                     type={detail.directTopup.state === 'partial' ||
                       detail.directTopup.state === 'unknown' ? 'warning' : 'info'}
@@ -651,6 +700,50 @@ export function OrderDetailDrawer({
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可显示的订单详情" />
       )}
-    </Drawer>
+      </Drawer>
+      <Modal
+        open={reissueOpen}
+        title="确认 B 模式原单受控补发"
+        okText="确认按原 requestId 补发"
+        okButtonProps={{ danger: true }}
+        confirmLoading={reissuePending}
+        onOk={() => void handleReissue()}
+        onCancel={() => {
+          if (reissuePending) return;
+          form.resetFields();
+          setReissueOpen(false);
+        }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="这是真实供应商写操作，可能涉及已经扣除的礼包份额"
+          description="仅对部分成功且已核实的原订单开放。系统强制沿用原始 requestId，并验证原收件人与支付凭据；必须由管理员操作且维护者单独开启 B 扣额开关。结果未知时系统拒绝再次补发。"
+        />
+        <Form form={form} layout="vertical" autoComplete="off" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="phone"
+            label="原收件人手机号"
+            rules={[{ required: true, pattern: /^1[3-9]\d{9}$/, message: '请输入原订单的 11 位手机号' }]}
+          >
+            <Input type="tel" autoComplete="off" placeholder="需与原订单完全一致" />
+          </Form.Item>
+          <Form.Item
+            name="refCode"
+            label="原推广编码"
+            rules={[{ required: true, pattern: /^[!-~]{1,64}$/, message: '请填写原推广编码' }]}
+          >
+            <Input autoComplete="off" />
+          </Form.Item>
+          <Form.Item
+            name="paymentReference"
+            label="原业务支付或授权凭据号"
+            rules={[{ required: true, pattern: /^[!-~]{1,128}$/, message: '请填写原业务凭据' }]}
+          >
+            <Input autoComplete="off" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }
