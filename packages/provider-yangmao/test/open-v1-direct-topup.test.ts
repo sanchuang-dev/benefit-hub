@@ -70,6 +70,12 @@ describe('B direct-topup contract', () => {
     { ...PARTIAL, allClaimed: true, successCount: 2 },
     { ...PARTIAL, allClaimed: true, successCount: 2, items: [{ claimed: true }] },
     { ...PARTIAL, allClaimed: false, successCount: 2 },
+    { ...PARTIAL, items: [
+      { claimed: false, status: 'completed' }, { claimed: true, status: 'failed' },
+    ] },
+    { ...PARTIAL, items: [
+      { claimed: true, status: 'failed' }, { claimed: false, status: 'failed' },
+    ] },
     { ...PARTIAL, allClaimed: true, successCount: 2, items: [
       { claimed: true }, { status: 'completed' },
     ] },
