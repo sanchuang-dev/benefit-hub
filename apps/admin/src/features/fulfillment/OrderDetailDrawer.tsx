@@ -37,6 +37,7 @@ import {
   providerLabel,
 } from './labels';
 import { useOrderDetailQuery } from './use-orders';
+import { useSessionQuery } from '../auth/use-auth';
 import { reissueDirectTopup } from './api';
 
 const { Text, Title } = Typography;
@@ -167,6 +168,7 @@ export function OrderDetailDrawer({
   onClose: () => void;
 }) {
   const screens = Grid.useBreakpoint();
+  const session = useSessionQuery();
   const [form] = Form.useForm<{
     phone: string;
     refCode: string;
@@ -560,7 +562,7 @@ export function OrderDetailDrawer({
                       ]}
                     />
                   ) : null}
-                  {detail.directTopup.state === 'partial' ? (
+                  {detail.directTopup.state === 'partial' && session.data?.admin.role === 'admin' ? (
                     <Button
                       danger
                       onClick={() => setReissueOpen(true)}
@@ -758,14 +760,14 @@ export function OrderDetailDrawer({
             label="原推广编码"
             rules={[{ required: true, pattern: /^[!-~]{1,64}$/, message: '请填写原推广编码' }]}
           >
-            <Input autoComplete="off" />
+            <Input autoComplete="off" placeholder="原推广编码" />
           </Form.Item>
           <Form.Item
             name="paymentReference"
             label="原业务支付或授权凭据号"
             rules={[{ required: true, pattern: /^[!-~]{1,128}$/, message: '请填写原业务凭据' }]}
           >
-            <Input autoComplete="off" />
+            <Input autoComplete="off" placeholder="原支付或授权凭据号" />
           </Form.Item>
         </Form>
       </Modal>
