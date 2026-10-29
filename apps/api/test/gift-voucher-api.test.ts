@@ -13,6 +13,7 @@ import { createApplication, replaceApplicationProducts } from '../src/modules/ap
 import { createProduct } from '../src/modules/catalog/products.js';
 import { createSupplierMappingRepository } from '../src/modules/catalog/supplier-mapping-repository.js';
 import type { FulfillmentMode } from '../src/modules/orders/benefit-orders.js';
+import { createBenefitOrderRepository } from '../src/modules/orders/repository.js';
 import { seedAccount, TEST_PASSWORD, TestClient, TestServer } from './helpers/test-server.js';
 
 /**
@@ -53,6 +54,9 @@ interface VendorState {
   packRemaining: number;
   expiresAt: string | number;
   issueDelayMs: number;
+  /** Used to test a read carrying only one quota field. */
+  omitQueryPackTotal?: boolean;
+  omitQueryPackRemaining?: boolean;
 }
 
 interface VendorCall {
@@ -145,8 +149,8 @@ async function fixtureVendor() {
             code: 0,
             data: {
               claimUrl: state.claimUrl,
-              packTotal: state.packTotal,
-              packRemaining: state.packRemaining,
+              ...(state.omitQueryPackTotal ? {} : { packTotal: state.packTotal }),
+              ...(state.omitQueryPackRemaining ? {} : { packRemaining: state.packRemaining }),
               expiresAt: state.expiresAt,
               // A query is not an issuance; an unknown vendor field is dropped.
               redeemed: true,
@@ -535,6 +539,49 @@ describe('C-mode gift-voucher repeat and recovery', () => {
     }
   }, 20_000);
 
+  it.each(['partially_completed', 'completed'] as const)(
+    'preserves the downstream %s status after a read-only C recovery',
+    async (status) => {
+      const vendor = await fixtureVendor();
+      const testServer = startServer(vendor);
+      try {
+        const product = seedProduct(testServer, 'YM-VOUCHER-C');
+        activateMapping(testServer, product.id, { mode: 'C', productCode: 'YM-PACK-C' });
+        registerApplication(testServer, 'local-life', product.id);
+        const order = await createOrder(testServer, `LO-C-STATUS-${status}`, product.id);
+        expect((await issueVoucher(testServer, order.id, VALID_BODY)).status).toBe(200);
+
+        const before = orderRow(testServer, order.id);
+        createBenefitOrderRepository(testServer.database.db).updateStatus({
+          orderId: order.id,
+          expectedVersion: before.version,
+          status,
+        });
+        const expectedHistory = statusHistory(testServer, order.id);
+        const expectedVersion = orderRow(testServer, order.id).version;
+        vendor.state.packRemaining = 1;
+
+        const recovered = await recoverVoucher(testServer, order.id);
+        expect(recovered.status).toBe(200);
+        const result = parseVoucher(await recovered.json());
+        expect(result.order.status).toBe(status);
+        expect(result.voucher.state).toBe('issued');
+        expect(result.voucher.packRemaining).toBe(1);
+        expect(orderRow(testServer, order.id)).toEqual({
+          status,
+          version: expectedVersion,
+        });
+        expect(statusHistory(testServer, order.id)).toEqual(expectedHistory);
+        expect(vendor.issueCalls()).toHaveLength(1);
+        expect(vendor.queryCalls()).toHaveLength(1);
+      } finally {
+        testServer.close();
+        await vendor.close();
+      }
+    },
+    20_000,
+  );
+
   it('rejects altered packCount, recipient or refCode without a second issuance', async () => {
     const vendor = await fixtureVendor();
     const testServer = startServer(vendor);
@@ -712,6 +759,75 @@ describe('C-mode gift-voucher preconditions', () => {
 });
 
 describe('C-mode gift-voucher unknown and rejection semantics', () => {
+  it('does not accept impossible quota after a possibly charged C issuance', async () => {
+    const vendor = await fixtureVendor();
+    vendor.state.packRemaining = 4; // Greater than the declared 3-pack voucher.
+    const testServer = startServer(vendor);
+    try {
+      const product = seedProduct(testServer, 'YM-VOUCHER-C');
+      activateMapping(testServer, product.id, { mode: 'C', productCode: 'YM-PACK-C' });
+      registerApplication(testServer, 'local-life', product.id);
+      const order = await createOrder(testServer, 'LO-C-IMPOSSIBLE-ISSUE', product.id);
+
+      const rejected = await issueVoucher(testServer, order.id, VALID_BODY);
+      expect(rejected.status).toBe(502);
+      expect(parseError(await rejected.json()).error).toBe('SUPPLIER_RESPONSE_UNVERIFIED');
+      expect(voucherRow(testServer, order.id)).toMatchObject({
+        state: 'unknown', pack_total: null, pack_remaining: null,
+      });
+      expect(orderRow(testServer, order.id).status).toBe('unknown');
+      const repeated = await issueVoucher(testServer, order.id, VALID_BODY);
+      expect(repeated.status).toBe(409);
+      expect(parseError(await repeated.json()).error).toBe('GIFT_VOUCHER_OUTCOME_UNKNOWN');
+      expect(vendor.issueCalls()).toHaveLength(1);
+      expect(vendor.queryCalls()).toHaveLength(0);
+    } finally {
+      testServer.close();
+      await vendor.close();
+    }
+  }, 20_000);
+
+  it.each([
+    { label: 'both fields', omitTotal: false, omitRemaining: false, total: 3, remaining: 4 },
+    { label: 'remaining only', omitTotal: true, omitRemaining: false, total: 3, remaining: 4 },
+    { label: 'total only', omitTotal: false, omitRemaining: true, total: 1, remaining: 2 },
+  ])('rejects contradictory C recovery quota ($label) without overwriting verified facts', async ({
+    label: _label, omitTotal, omitRemaining, total, remaining,
+  }) => {
+    const vendor = await fixtureVendor();
+    const testServer = startServer(vendor);
+    try {
+      const product = seedProduct(testServer, 'YM-VOUCHER-C');
+      activateMapping(testServer, product.id, { mode: 'C', productCode: 'YM-PACK-C' });
+      registerApplication(testServer, 'local-life', product.id);
+      const order = await createOrder(testServer, `LO-C-IMPOSSIBLE-READ-${omitTotal}-${omitRemaining}`, product.id);
+      expect((await issueVoucher(testServer, order.id, VALID_BODY)).status).toBe(200);
+      const prior = voucherRow(testServer, order.id)!;
+      const priorHistory = statusHistory(testServer, order.id);
+      vendor.state.packTotal = total;
+      vendor.state.packRemaining = remaining;
+      vendor.state.omitQueryPackTotal = omitTotal;
+      vendor.state.omitQueryPackRemaining = omitRemaining;
+
+      const recovered = await recoverVoucher(testServer, order.id);
+      expect(recovered.status).toBe(502);
+      expect(parseError(await recovered.json()).error).toBe('SUPPLIER_RESPONSE_UNVERIFIED');
+      expect(voucherRow(testServer, order.id)).toMatchObject({
+        state: 'issued',
+        pack_total: prior.pack_total,
+        pack_remaining: prior.pack_remaining,
+        last_observed_at: prior.last_observed_at,
+      });
+      expect(orderRow(testServer, order.id).status).toBe('awaiting_claim');
+      expect(statusHistory(testServer, order.id)).toEqual(priorHistory);
+      expect(vendor.issueCalls()).toHaveLength(1);
+      expect(vendor.queryCalls()).toHaveLength(1);
+    } finally {
+      testServer.close();
+      await vendor.close();
+    }
+  }, 20_000);
+
   it('keeps a malformed success unknown and never re-signs another voucher', async () => {
     const vendor = await fixtureVendor();
     vendor.state.issueMode = 'malformed';
