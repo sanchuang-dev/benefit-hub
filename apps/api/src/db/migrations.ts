@@ -467,4 +467,51 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+  {
+    id: '0009_benefit_order_grants',
+    sql: `
+      -- Durable A-mode operation identity, inserted before the signed supplier
+      -- POST. The unique request id is the vendor idempotency key, so a retry
+      -- can only recover the same upstream order. No phone number, credential or
+      -- claim URL is stored: phone_hmac is a master-key keyed digest used only to
+      -- detect conflicting repeated input.
+      CREATE TABLE IF NOT EXISTS benefit_order_grants (
+        order_id TEXT PRIMARY KEY NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        request_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('reserved', 'accepted', 'unknown', 'rejected')),
+        upstream_order_no TEXT,
+        ref_code TEXT NOT NULL,
+        phone_hmac TEXT NOT NULL,
+        payment_reference TEXT NOT NULL,
+        attempted_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (length(request_id) BETWEEN 1 AND 64),
+        CHECK (length(ref_code) BETWEEN 1 AND 64),
+        CHECK (length(phone_hmac) = 64 AND phone_hmac NOT GLOB '*[^0-9a-f]*'),
+        CHECK (length(payment_reference) BETWEEN 1 AND 128),
+        CHECK (upstream_order_no IS NULL OR length(upstream_order_no) BETWEEN 1 AND 128)
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_benefit_order_grants_request
+        ON benefit_order_grants (request_id);
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_grants_state_updated
+        ON benefit_order_grants (state, updated_at);
+
+      -- The operation identity and the keyed phone digest never change after the
+      -- reservation; only the observed state and upstream order number may be
+      -- settled by a later attempt or recovery read.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_grants_identity_immutable
+      BEFORE UPDATE OF order_id, request_id, ref_code, phone_hmac, payment_reference
+      ON benefit_order_grants
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order grant identity is immutable');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_grants_no_delete
+      BEFORE DELETE ON benefit_order_grants
+      BEGIN
+        SELECT RAISE(ABORT, 'benefit order grants are never deleted');
+      END;
+    `,
+  },
 ];

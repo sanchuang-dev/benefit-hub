@@ -6,8 +6,11 @@ import {
   type YangmaoOpenV1PurchaseEligibility,
 } from './open-v1-purchase-check.js';
 import {
+  buildPrepaidOrderSignedFields,
   buildPurchaseCheckSignedFields,
   createOpenV1Signature,
+  OPEN_V1_PREPAID_ORDER_PATH,
+  OPEN_V1_PREPAID_ORDER_QUERY_PATH,
   OPEN_V1_PURCHASE_CHECK_PATH,
 } from './open-v1-signature.js';
 import { hasControlCharacters } from './text-safety.js';
@@ -64,6 +67,27 @@ export interface YangmaoOpenV1GiftVoucherLookup {
   packRemaining?: number;
   expiresAt?: string | number;
 }
+/**
+ * Accepted A-mode order. `claimUrl` is an H5 link the recipient must still open
+ * and use; a successful response consumed one pack quota but is never proof that
+ * the user claimed anything.
+ */
+export interface YangmaoOpenV1PrepaidOrderResult {
+  provider: 'yangmao';
+  observedAt: string;
+  orderNo: string;
+  claimUrl: string;
+  balanceAfter?: number;
+  idempotentReplay?: boolean;
+}
+export interface YangmaoOpenV1CreatePrepaidOrderInput {
+  phone: string;
+  refCode: string;
+  /** Optional per the vendor contract; omitted when falsy. */
+  productCode?: string;
+  /** Stable idempotency key shared by the caller and its recovery read. */
+  requestId: string;
+}
 const RECOVERY_ID_PATTERN = /^[!-~]{1,64}$/;
 const VOUCHER_CODE_PATTERN = /^[a-zA-Z0-9._-]{1,128}$/;
 const safeClaimUrlSchema = z.string().min(1).max(2048).refine((value) => {
@@ -78,6 +102,15 @@ const prepaidOrderLookupSchema = z.object({
   claimUrl: safeClaimUrlSchema.nullish(),
   claimable: z.boolean().nullish(),
   orderNo: z.string().min(1).max(128).nullish(),
+});
+// A successful order MUST carry both the vendor order number and a usable H5
+// link. Unknown extra keys are stripped by zod, so an unconfirmed field can
+// never be mistaken for a successful issuance.
+const prepaidOrderResultSchema = z.object({
+  orderNo: z.string().min(1).max(128),
+  claimUrl: safeClaimUrlSchema,
+  balanceAfter: z.number().int().min(0).nullish(),
+  idempotentReplay: z.boolean().nullish(),
 });
 const giftVoucherLookupSchema = z.object({
   claimUrl: safeClaimUrlSchema.nullish(),
@@ -101,6 +134,17 @@ export interface YangmaoOpenV1PurchaseReader {
     phone: string,
     options?: YangmaoOpenV1ReadOptions,
   ): Promise<YangmaoOpenV1PurchaseEligibility>;
+  /**
+   * A-mode `POST /prepaid/orders`: deducts exactly one pack quota (or replays
+   * the same `requestId` without a second deduction) and returns the H5 claim
+   * link. A caller must persist the request identity and an unknown/attempt
+   * fact before invoking this method, and must never invent a fresh
+   * `requestId` after an indeterminate result.
+   */
+  createPrepaidOrder(
+    input: YangmaoOpenV1CreatePrepaidOrderInput,
+    options?: YangmaoOpenV1ReadOptions,
+  ): Promise<YangmaoOpenV1PrepaidOrderResult>;
 }
 
 export const DEFAULT_OPEN_V1_TIMEOUT_MS = 10_000;
@@ -202,13 +246,15 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
       this.appSecret,
     );
 
-    const data = await this.readSignedData(
+    const data = await this.sendSignedRequest({
+      path: OPEN_V1_PURCHASE_CHECK_PATH,
+      method: 'POST',
+      body: JSON.stringify({ phone }),
       timestamp,
       nonce,
       signature,
-      phone,
-      options.signal,
-    );
+      callerSignal: options.signal,
+    });
 
     const eligibility = parseOpenV1PurchaseEligibility(data);
     if (eligibility === null) {
@@ -219,6 +265,77 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
       provider: 'yangmao',
       observedAt: new Date(this.clock()).toISOString(),
       ...eligibility,
+    };
+  }
+
+  /**
+   * A-mode order creation. The vendor treats `requestId` as the idempotency
+   * key, so reusing it is the only safe way to retry or recover; a new value is
+   * a genuinely new debit. The response is only accepted when both the vendor
+   * order number and a credential-free http(s) claim link are present.
+   */
+  async createPrepaidOrder(
+    input: YangmaoOpenV1CreatePrepaidOrderInput,
+    options: YangmaoOpenV1ReadOptions = {},
+  ): Promise<YangmaoOpenV1PrepaidOrderResult> {
+    if (typeof input.phone !== 'string' || !PHONE_PATTERN.test(input.phone)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_PHONE_INVALID');
+    }
+    if (typeof input.refCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.refCode)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    if (typeof input.requestId !== 'string' || !RECOVERY_ID_PATTERN.test(input.requestId)) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+    if (
+      input.productCode !== undefined &&
+      (typeof input.productCode !== 'string' || !RECOVERY_ID_PATTERN.test(input.productCode))
+    ) {
+      throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_CONFIG_INVALID');
+    }
+
+    const timestamp = String(Math.trunc(this.clock()));
+    const nonce = this.nonceFactory();
+    if (typeof nonce !== 'string' || !NONCE_PATTERN.test(nonce)) throw configError();
+
+    const signature = createOpenV1Signature(
+      buildPrepaidOrderSignedFields(
+        { appKey: this.appKey, timestamp, nonce },
+        input,
+      ),
+      this.appSecret,
+    );
+
+    // Omit an empty optional product code from BOTH the signed fields and the
+    // JSON body, matching the vendor's "空值不参与" rule.
+    const body: Record<string, string> = {
+      phone: input.phone,
+      refCode: input.refCode,
+      requestId: input.requestId,
+    };
+    if (input.productCode) body.productCode = input.productCode;
+
+    const data = await this.sendSignedRequest({
+      path: OPEN_V1_PREPAID_ORDER_PATH,
+      method: 'POST',
+      body: JSON.stringify(body),
+      timestamp,
+      nonce,
+      signature,
+      callerSignal: options.signal,
+    });
+
+    const parsed = prepaidOrderResultSchema.safeParse(data);
+    if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      orderNo: parsed.data.orderNo,
+      claimUrl: parsed.data.claimUrl,
+      ...(parsed.data.balanceAfter == null ? {} : { balanceAfter: parsed.data.balanceAfter }),
+      ...(parsed.data.idempotentReplay == null
+        ? {}
+        : { idempotentReplay: parsed.data.idempotentReplay }),
     };
   }
 
@@ -237,13 +354,15 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
       { appKey: this.appKey, timestamp, nonce, requestId },
       this.appSecret,
     );
-    const data = await this.readSignedData(
-      timestamp, nonce, signature, '', options.signal, {
-        path: '/open/v1/prepaid/orders/query',
-        method: 'POST',
-        body: JSON.stringify({ requestId }),
-      },
-    );
+    const data = await this.sendSignedRequest({
+      path: OPEN_V1_PREPAID_ORDER_QUERY_PATH,
+      method: 'POST',
+      body: JSON.stringify({ requestId }),
+      timestamp,
+      nonce,
+      signature,
+      callerSignal: options.signal,
+    });
     const parsed = prepaidOrderLookupSchema.safeParse(data);
     if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
     const { claimUrl, claimable, orderNo } = parsed.data;
@@ -274,12 +393,14 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
       { appKey: this.appKey, timestamp, nonce, code },
       this.appSecret,
     );
-    const data = await this.readSignedData(
-      timestamp, nonce, signature, '', options.signal, {
-        path: `/open/v1/gift-vouchers/${encodeURIComponent(code)}`,
-        method: 'GET',
-      },
-    );
+    const data = await this.sendSignedRequest({
+      path: `/open/v1/gift-vouchers/${encodeURIComponent(code)}`,
+      method: 'GET',
+      timestamp,
+      nonce,
+      signature,
+      callerSignal: options.signal,
+    });
     const parsed = giftVoucherLookupSchema.safeParse(data);
     if (!parsed.success) throw new YangmaoOpenV1Error('YANGMAO_OPEN_V1_RESPONSE_INVALID');
     const { claimUrl, packTotal, packRemaining, expiresAt } = parsed.data;
@@ -297,34 +418,37 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
   }
 
   /**
-   * Shared signed A/B/C read pipeline (business-read POST or GET), no redirects,
-   * then four independent gates in order — HTTP status, JSON parsing, envelope
-   * shape, and body `code`. The caller receives the raw `data` value for
-   * endpoint-specific validation; nothing here is ever interpreted as an
-   * order, a balance change or a deduction.
+   * Shared signed A/B/C transport, no redirects, then four independent gates in
+   * order — HTTP status, JSON parsing, envelope shape, and body `code`. The
+   * caller receives the raw `data` value for endpoint-specific validation.
+   * A successful envelope is still never interpreted here as an order, a
+   * balance change or a delivered benefit.
    */
-  private async readSignedData(
-    timestamp: string,
-    nonce: string,
-    signature: string,
-    phone: string,
-    callerSignal: AbortSignal | undefined,
-    recovery?: { path: string; method: 'GET' | 'POST'; body?: string },
-  ): Promise<unknown> {
+  private async sendSignedRequest(input: {
+    path: string;
+    method: 'GET' | 'POST';
+    body?: string;
+    timestamp: string;
+    nonce: string;
+    signature: string;
+    callerSignal?: AbortSignal;
+  }): Promise<unknown> {
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
-    const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
+    const signal = input.callerSignal
+      ? AbortSignal.any([input.callerSignal, timeoutSignal])
+      : timeoutSignal;
 
-    const request = new Request(`${this.baseUrl}${recovery?.path ?? OPEN_V1_PURCHASE_CHECK_PATH}`, {
-      method: recovery?.method ?? 'POST',
+    const request = new Request(`${this.baseUrl}${input.path}`, {
+      method: input.method,
       headers: {
         'X-App-Key': this.appKey,
-        'X-Timestamp': timestamp,
-        'X-Nonce': nonce,
-        'X-Sign': signature,
+        'X-Timestamp': input.timestamp,
+        'X-Nonce': input.nonce,
+        'X-Sign': input.signature,
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: recovery ? recovery.body : JSON.stringify({ phone }),
+      body: input.body,
       redirect: 'manual',
       signal,
     });
@@ -333,7 +457,7 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
     try {
       response = await this.transport(request);
     } catch {
-      throw this.classifyAbortOrTransportFailure(callerSignal, timeoutSignal);
+      throw this.classifyAbortOrTransportFailure(input.callerSignal, timeoutSignal);
     }
 
     // HTTP status and body `code` are two independent gates. A 2xx status is
@@ -354,7 +478,7 @@ class YangmaoOpenV1Client implements YangmaoOpenV1PurchaseReader {
     try {
       text = await response.text();
     } catch {
-      throw this.classifyAbortOrTransportFailure(callerSignal, timeoutSignal);
+      throw this.classifyAbortOrTransportFailure(input.callerSignal, timeoutSignal);
     }
 
     let body: unknown;

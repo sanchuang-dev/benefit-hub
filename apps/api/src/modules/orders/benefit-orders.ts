@@ -13,10 +13,12 @@ import {
   BUSINESS_SOURCE_PATTERN,
   FULFILLMENT_MODES,
   ORDER_STATUSES,
+  PREPAID_GRANT_STATES,
   type AttemptOperation,
   type AttemptResult,
   type FulfillmentMode,
   type OrderStatus,
+  type PrepaidGrantState,
 } from '@sanchuang-dev/benefit-contracts';
 
 /** The four supplier fulfilment shapes (A/B/C/D) described in docs/product-scope.md. */
@@ -37,6 +39,10 @@ export type { OrderStatus };
 /** Attempt vocabularies are also owned by the shared wire contract. */
 export { ATTEMPT_OPERATIONS, ATTEMPT_RESULTS };
 export type { AttemptOperation, AttemptResult };
+
+/** A-mode operation states; owned by the shared wire contract. */
+export { PREPAID_GRANT_STATES };
+export type { PrepaidGrantState };
 
 /**
  * A persisted business grant intent. `businessSource + businessOrderNo` is the
@@ -88,6 +94,25 @@ export interface FulfillmentAttempt {
   lastVerifiedAt: number | null;
 }
 
+/**
+ * Durable A-mode operation identity for one order. `phoneHmac` is a master-key
+ * keyed digest, never a phone number; it exists only to reject a conflicting
+ * repeated grant input. The claim link is deliberately not part of this model.
+ * This object is server-only: build an explicit safe DTO instead of serializing
+ * `phoneHmac` or `paymentReference` to a caller or operator surface.
+ */
+export interface PrepaidOrderGrant {
+  orderId: string;
+  requestId: string;
+  state: PrepaidGrantState;
+  upstreamOrderNo: string | null;
+  refCode: string;
+  phoneHmac: string;
+  paymentReference: string;
+  attemptedAt: number;
+  updatedAt: number;
+}
+
 export class OrderInputError extends Error {}
 /** Same business identity, but the key parameters describe a different intent. */
 export class OrderIntentConflictError extends Error {}
@@ -104,6 +129,20 @@ export class OrderProductNotAuthorizedError extends Error {}
 export class OrderCredentialRevokedError extends Error {}
 /** The product has no current active supplier mapping version to freeze. */
 export class OrderMappingUnavailableError extends Error {}
+/** Only a frozen A-mode Yangmao snapshot can be executed by this slice. */
+export class OrderModeUnsupportedError extends Error {}
+/** The order's current platform status no longer permits starting a grant. */
+export class OrderNotGrantableError extends Error {}
+/** A repeated grant for the same order carried different inputs. */
+export class GrantInputConflictError extends Error {}
+/** A reservation is still within its in-flight window; do not race it. */
+export class GrantInProgressError extends Error {}
+/** A previously rejected/unknown operation must not be retried blindly. */
+export class GrantNotRetryableError extends Error {}
+/** No durable A-mode operation exists for this order. */
+export class GrantNotFoundError extends Error {}
+/** The persisted grant state no longer permits the requested transition. */
+export class GrantStateConflictError extends Error {}
 
 /**
  * `BUSINESS_SOURCE_PATTERN` and `BUSINESS_ORDER_NO_PATTERN` are owned by the

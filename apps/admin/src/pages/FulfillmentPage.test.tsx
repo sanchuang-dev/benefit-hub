@@ -86,6 +86,7 @@ function detail(overrides: Partial<OperationsOrderDetailDto> = {}): OperationsOr
       deductionUnit: 'pack',
       activatedAt: NOW - 60_000,
     },
+    grant: null,
     statusEvents: [{ id: 'event-1', status: 'pending', version: 1, createdAt: NOW }],
     attempts: [],
     ...overrides,
@@ -339,6 +340,63 @@ describe('platform order detail drawer', () => {
     for (const fabricated of ['已派发', '已扣额', '已到账', '扣款成功', 'dispatchStatus']) {
       expect(within(drawer).queryByText(fabricated)).toBeNull();
     }
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('shows the durable A operation identity without persisting or inventing a claim link', { timeout: 60_000 }, async () => {
+    const detailData = detail({
+      fulfillmentMode: 'A',
+      status: 'awaiting_claim',
+      version: 3,
+      statusEvents: [
+        { id: 'event-1', status: 'pending', version: 1, createdAt: NOW },
+        { id: 'event-2', status: 'processing', version: 2, createdAt: NOW + 1_000 },
+        { id: 'event-3', status: 'awaiting_claim', version: 3, createdAt: NOW + 2_000 },
+      ],
+      frozenMapping: {
+        id: 'mapping-version-1',
+        mappingId: 'mapping-1',
+        versionNumber: 1,
+        provider: 'yangmao',
+        productCode: 'YM-PREPAID-A',
+        fulfillmentMode: 'A',
+        deductionUnit: 'pack',
+        activatedAt: NOW - 60_000,
+      },
+      grant: {
+        state: 'accepted',
+        requestId: 'bhA0123456789abcdef',
+        upstreamOrderNo: 'PKG-FICTIONAL-1',
+        attemptedAt: NOW + 1_000,
+        updatedAt: NOW + 2_000,
+      },
+    });
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, { order: detailData });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order()]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('上力 A 预充值下单')).toBeTruthy();
+    expect(within(drawer).getByText('上力已受理（待用户领取）')).toBeTruthy();
+    expect(within(drawer).getByText('bhA0123456789abcdef')).toBeTruthy();
+    expect(within(drawer).getByText('PKG-FICTIONAL-1')).toBeTruthy();
+    expect(within(drawer).getByText(/领取链接不落库/)).toBeTruthy();
+    expect(within(drawer).getByText(/不代表用户已领取到账/)).toBeTruthy();
+    // No claim URL, phone or supplier payload is present in the operator detail.
+    expect(within(drawer).queryByText(/claimUrl=/)).toBeNull();
+    expect(within(drawer).queryByText(/13800138000/)).toBeNull();
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 

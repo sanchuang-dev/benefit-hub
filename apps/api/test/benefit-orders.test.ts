@@ -1158,6 +1158,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0006_supplier_connections',
         '0007_business_applications',
         '0008_business_application_credentials',
+        '0009_benefit_order_grants',
       ]);
 
       // Every pre-existing fact survives the additive migration.
@@ -1323,6 +1324,7 @@ describe('benefit order mapping version migration (0005)', () => {
         { id: '0006_supplier_connections' },
         { id: '0007_business_applications' },
         { id: '0008_business_application_credentials' },
+        { id: '0009_benefit_order_grants' },
       ]);
       expect(migrations.map((migration) => migration.id)).toEqual([
         '0001_admin_auth',
@@ -1333,6 +1335,7 @@ describe('benefit order mapping version migration (0005)', () => {
         '0006_supplier_connections',
         '0007_business_applications',
         '0008_business_application_credentials',
+        '0009_benefit_order_grants',
       ]);
     } finally {
       handle.close();

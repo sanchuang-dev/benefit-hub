@@ -1,8 +1,12 @@
-# Benefit Hub · 下游业务订单 HTTP 入站（BHB-012-A / BHB-014-B）
+# Benefit Hub · 下游业务订单 HTTP 入站（BHB-012-A / BHB-014-B / BHB-012-C）
 
-> **状态（2026-10-28）：仅本地业务意图 + 应用级运行时授权。** 本接口把已合入的订单 Repository 暴露给三创下游业务（如本地生活、卡博士）做**接单与查询**；新订单固定为 `pending`，不调用上力/羊毛供应商，不扣额度、不派发、不产生任何上游 HTTP 副作用。平台不再提供始终为 false 的虚构履约开关字段。BHB-014-B 起，凭证可在管理后台按应用签发，应用启停与内部商品白名单会真实约束本接口；Draft PR 合入或本文件存在都不代表真实履约上线。
+> **状态（2026-10-29）：创建意图 + 应用级运行时授权 + A 模式下单代码。**
+>
+> - `POST /api/v1/business/orders`（BHB-012-A）仍只创建/重放**本地业务意图**：新订单固定为 `pending`，不调用上力/羊毛供应商，不扣额度、不派发、不产生任何上游 HTTP 副作用。
+> - `POST /api/v1/business/orders/:orderId/grant` 与 `/recover`（BHB-012-C，§6）是单独的 A 模式副作用入口：前者在显式付款声明与实时资格检查后扣 1 个礼包额度，后者只读找回链接。代码与隔离测试已实现，但**未执行真实上力扣额，也未完成 live 验收**。
+> - 平台不提供始终为 false 的虚构履约开关字段。BHB-014-B 起，凭证可在管理后台按应用签发，应用启停与内部商品白名单会真实约束机器调用；Draft PR 合入、CI 绿灯或本文件存在都不代表真实履约上线。
 
-范围为机器对机器接口，与管理后台的人类 Cookie 登录是两套独立身份边界。实现归属 `apps/api/src/modules/orders/business-order-routes.ts`、`service-auth.ts` 与 `apps/api/src/modules/applications/credentials.ts`。
+范围为机器对机器接口，与管理后台的人类 Cookie 登录是两套独立身份边界。实现归属 `apps/api/src/modules/orders/business-order-routes.ts`、`a-prepaid-grant.ts`、`service-auth.ts` 与 `apps/api/src/modules/applications/credentials.ts`。
 
 ## 1. 身份与服务凭证
 
@@ -122,7 +126,91 @@ Base path：`/api/v1/business/orders`。所有响应都是 JSON 且带 `Cache-Co
 
 ## 5. 安全与运维要点
 
-- 机器 `POST /api/v1/business/orders` 是全局 CSRF 的唯一窄豁免：该路径 (method+path) 自身必须通过 Bearer 鉴权；所有人类 Cookie 写接口（登录、商品、映射、应用与凭证管理）继续要求 `bh_csrf` 双重提交和同源 `Origin`。
+- 机器 `POST /api/v1/business/orders`（创建意图）与 `POST /api/v1/business/orders/:orderId/grant|recover` 是全局 CSRF 的窄豁免：这些 method+path 自身必须通过 Bearer 鉴权，路径模式严格限定；所有人类 Cookie 写接口（登录、商品、映射、应用与凭证管理）继续要求 `bh_csrf` 双重提交和同源 `Origin`。
 - 不要把令牌放入 URL、查询参数、前端 bundle、GitHub 普通变量或日志。应用凭证只在签发响应中出现一次，浏览器不持久保存。
 - 停用应用、撤销凭证、移出商品白名单都在下一次请求立即生效；已创建订单的冻结快照不被改写。
 - 该接口只承接本地业务意图。真实供应商派发/查单、扣额、重试、对账与运营 UI 属于后续独立卡片，需要逐模式实现供应商合同、幂等、失败恢复与结果核实。
+
+## 6. A 预充值礼包下单与领取链接恢复（BHB-012-C）
+
+> **状态（2026-10-29）：代码与隔离测试已实现；未在 CI 或 Worker 中执行任何真实上力扣额。** 真实 A 下单需要维护者单独批准、可用的测试礼包额度与收件手机号，并以脱敏联调证据另行验收；本文件不代表 live 验收通过。
+
+A 模式在既有业务订单之上增加两个机器接口，仍只接受 `Authorization: Bearer <token>`，不接受管理员 Cookie。它们与其他机器 POST 一样是 CSRF 窄豁免，但每次都必须先通过服务凭证鉴权。
+
+| 方法 | 路径 | 语义 |
+| --- | --- | --- |
+| `POST` | `/api/v1/business/orders/:orderId/grant` | 对一个已创建的业务订单执行 A 模式下单；成功后扣 1 个礼包额度并返回 `claimUrl`。 |
+| `POST` | `/api/v1/business/orders/:orderId/recover` | 用已持久化的 `requestId` 只读查询上力，取回原领取链接；不扣额度。 |
+
+### 6.1 发起下单
+
+请求体为 strict JSON，只允许三个字段：
+
+```json
+{
+  "phone": "13800138000",
+  "refCode": "ref_abc123",
+  "paymentReference": "PAY-FICTIONAL-1001"
+}
+```
+
+- `phone`：必填，`^1\d{10}$`；只用于本次资格检查和签名。平台**不持久化明文手机号**，只保存主密钥 HMAC 摘要用于拒绝冲突的重复输入，且不会写日志。
+- `refCode`：必填，1–64 位可见 ASCII 子分销推广码。
+- `paymentReference`：必填，1–128 位可见 ASCII。它是业务方**显式声明已收款/已授权**的事实；平台没有支付网关，也不从 `pending` 本地意图推断付款。
+- 不接受 `businessSource`、`provider`、`fulfillmentMode`、供应商 `productCode`、`requestId`、状态或金额；供应商、模式与上游商品编码只来自订单创建时冻结的映射快照。
+
+执行顺序：
+
+1. 校验订单属于当前凭证绑定的 `businessSource`；不属于即 404，不区分“不存在”和“他人订单”。
+2. 已登记应用必须为 `enabled` 且内部商品仍在白名单；未登记来源沿用既有兼容路径。
+3. 订单冻结映射必须是 `yangmao` + `A`，上游商品编码取冻结快照，不取当前映射。
+4. 必须配置服务器主密钥；否则 503 `SUPPLIER_KEY_UNAVAILABLE`，不发起供应商请求。
+5. 先调用只读 `POST /open/v1/prepaid/purchase-check`。`purchaseRestricted`、`giftUnclaimed`、`lotteryUnbet` 任一为真即 409 `PURCHASE_NOT_ELIGIBLE`，不落下单记录、不扣额度。
+6. 在同一短事务内持久化幂等身份并追加一条 `grant/unknown` 尝试记录，把订单从 `pending` 改为 `processing`；事务提交后才发起签名的 `POST /open/v1/prepaid/orders`，**网络调用期间不持有 SQLite 事务**。
+7. 供应商 `code=0` 且同时具备 `orderNo` 与合法 `claimUrl` 才记为受理：订单进入 `awaiting_claim`，`claimUrl` 只在该响应中返回。**`awaiting_claim` 不是 `completed`，也不代表用户已领取到账。**
+
+`requestId` 由平台订单 ID 确定性派生（前缀 `bhA` + SHA-256 摘要，共 63 字符），数据库唯一；重试不会生成新 ID。下单记录只保存 `requestId`、上游 `orderNo`、状态、推广码、付款引用、主密钥 HMAC 摘要与时间，不保存 claimUrl。
+
+成功响应：
+
+```json
+{
+  "order": { "id": "fictional-platform-order-id", "status": "awaiting_claim", "fulfillmentMode": "A", "...": "同业务订单 DTO" },
+  "grant": {
+    "state": "accepted",
+    "requestId": "bhA0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab",
+    "upstreamOrderNo": "PKG20261022000001",
+    "attemptedAt": 1760000000000,
+    "updatedAt": 1760000000100
+  },
+  "claimUrl": "https://h5.example.test/bet?orderNo=PKG20261022000001",
+  "observedAt": 1760000000100
+}
+```
+
+`claimUrl` 可能包含供应商侧的个人化参数，属于敏感结果：只返回给已认证的业务调用方，不落库、不写日志、不进前端 bundle。
+
+### 6.2 重复、结果未知与恢复
+
+- **完全相同输入重复调用 grant**：不再发送下单请求，改用同一 `requestId` 的只读 `orders/query` 取回链接；返回同一 `requestId` / 上游订单号。若原请求仍在处理中，409 `GRANT_IN_PROGRESS`。
+- **同一订单不同手机号或推广码**：409 `GRANT_INPUT_CONFLICT`，不覆盖既有记录。
+- **超时、网络失败、HTTP 5xx、`code=0` 但字段缺失/非法**：订单与下单记录明确保留为 `unknown`，绝不自动重发下单；用 `recover` 或稍后 grant 重试（同样只读）核实。
+- **上力明确业务拒绝（400/401/403）**：记录为 `rejected`、订单 `failed`；后续重复调用 409 `GRANT_NOT_RETRYABLE`，不盲重试。
+- **恢复成功**：只读查询返回合法 `claimUrl` 时，记录 `accepted` 并把订单置为 `awaiting_claim`；恢复接口本身永远不扣额度。
+- **查询明确不存在**：仍保持 `unknown`（原请求可能未发出），不会自动生成新 `requestId` 或新下单。
+
+`POST /:orderId/recover` 请求体为 `{}`，不需要手机号；它要求订单已有下单记录（否则 404 `GRANT_NOT_FOUND`）。
+
+### 6.3 运营可见性
+
+「发放记录 → 订单详情」对 A 模式订单展示下单记录状态、上游请求号、上游订单号与最近结果时间；不展示手机号、付款引用、密钥或供应商原始报文。运营需要领取链接时，在「供应商管理 → 上力 → 只读联调 → A 订单查询」使用既有管理员只读接口 `POST /api/v1/suppliers/yangmao/prepaid/orders/query`，传入详情中展示的同一 `requestId`。该接口要求管理员会话与 CSRF，返回 `claimUrl`；它不是自动重发，也不改变平台状态。
+
+### 6.4 新增稳定错误码
+
+除既有订单错误外，A 下单/恢复可能返回：`PURCHASE_NOT_ELIGIBLE`、`ORDER_MODE_UNSUPPORTED`、`ORDER_NOT_GRANTABLE`、`ORDER_STATE_CONFLICT`、`GRANT_INPUT_CONFLICT`、`GRANT_IN_PROGRESS`、`GRANT_NOT_RETRYABLE`、`GRANT_NOT_FOUND`、`GRANT_STATE_CONFLICT`、`SUPPLIER_NOT_CONFIGURED`、`SUPPLIER_KEY_UNAVAILABLE`、`SUPPLIER_TIMEOUT`、`SUPPLIER_AUTH_FAILED`、`SUPPLIER_BUSINESS_FAILED`、`SUPPLIER_RESPONSE_UNVERIFIED`、`SUPPLIER_UNAVAILABLE`。错误体只额外携带数字 `vendorCode` / `httpStatus`（如可用），不回显供应商 message、手机号、签名或原始响应。
+
+### 6.5 证据边界
+
+- 单元/集成测试覆盖：A 签名字段与独立 OpenSSL 向量、D `X-Signature` 不复用、响应 schema、HTTP 状态与 body `code` 双层判断、超时/取消/传输失败、手机号本地校验、并发唯一预约、映射冻结、租户隔离、未知结果与同 `requestId` 恢复、明确拒绝不重试、master key/供应商未配置、CSRF 窄豁免与 Bearer 边界。
+- API 集成测试通过**真实 Hono app → 本机 loopback 假供应商 HTTP 服务**执行，不 Mock 订单数据库或幂等约束；假供应商只存在于测试进程，夹具明确标注为虚构。
+- `pnpm check`、Docker 镜像构建与真实容器健康检查需要在提交/CI 环境另行执行。**真实上力 A 扣额、真实 claimUrl 与平台状态证据尚未取得**；没有维护者单独批准、测试额度与收件手机号时，不得用本文或 CI 绿灯宣称 live 验收。

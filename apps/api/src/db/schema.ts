@@ -376,6 +376,38 @@ export const fulfillmentAttempts = sqliteTable(
   (table) => [index('idx_fulfillment_attempts_order').on(table.orderId, table.occurredAt)],
 );
 
+/**
+ * One durable A-mode supplier operation per benefit order (BHB-012-C).
+ *
+ * The row is inserted *before* the signed `POST /open/v1/prepaid/orders` call,
+ * so a crash or timeout can never lose the fact that a debit may have happened.
+ * `request_id` is derived deterministically from the frozen platform order and
+ * is unique, so a retry can only recover the same vendor order. No phone number
+ * or claim URL is stored: `phone_hmac` is a master-key keyed digest used solely
+ * to reject a conflicting repeated input, and the claim link is fetched again
+ * through the vendor's read-only query when needed.
+ */
+export const benefitOrderGrants = sqliteTable(
+  'benefit_order_grants',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    requestId: text('request_id').notNull(),
+    state: text('state').notNull(),
+    upstreamOrderNo: text('upstream_order_no'),
+    refCode: text('ref_code').notNull(),
+    phoneHmac: text('phone_hmac').notNull(),
+    paymentReference: text('payment_reference').notNull(),
+    attemptedAt: integer('attempted_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_grants_request').on(table.requestId),
+    index('idx_benefit_order_grants_state_updated').on(table.state, table.updatedAt),
+  ],
+);
+
 /** Encrypted server-side provider credentials. No plaintext secrets in DB. */
 export const supplierConnections = sqliteTable('supplier_connections', {
   provider: text('provider').primaryKey(),
