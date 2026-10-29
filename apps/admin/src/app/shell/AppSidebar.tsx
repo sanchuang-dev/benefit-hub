@@ -1,0 +1,135 @@
+import { Empty, Input, Layout, Menu } from 'antd';
+import type { MenuProps } from 'antd';
+import { LayoutDashboard, Search } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { filterNavigation, HOME_PAGE, NAV_GROUPS } from './navigation';
+import type { NavGroup } from './navigation';
+import './sidebar.css';
+
+const { Sider } = Layout;
+
+type MenuItems = NonNullable<MenuProps['items']>;
+
+interface AppSidebarProps {
+  /** Menu key of the current route, resolved by `activeMenuKey()`. */
+  activeKey: string;
+  onNavigate: (key: string) => void;
+}
+
+function buildMenuItems(groups: readonly NavGroup[]): MenuItems {
+  return groups.map((group) => {
+    const Icon = group.icon;
+    return {
+      key: group.key,
+      icon: <Icon size={16} aria-hidden="true" />,
+      label: group.label,
+      children: group.pages.map((page) => ({ key: page.key, label: page.label })),
+    };
+  });
+}
+
+/**
+ * Sidebar shell: brand, menu search and the Ant Design Menu. The search only
+ * narrows what is visible; routes, work tabs and page data stay untouched.
+ */
+export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
+  const [query, setQuery] = useState('');
+  const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
+    NAV_GROUPS.map((group) => group.key),
+  );
+  const [collapsed, setCollapsed] = useState(false);
+
+  const trimmedQuery = query.trim();
+  const searching = trimmedQuery.length > 0;
+  const { showHome, groups: visibleGroups } = useMemo(
+    () => filterNavigation(trimmedQuery),
+    [trimmedQuery],
+  );
+
+  const items = useMemo<MenuItems>(() => {
+    const menuItems: MenuItems = showHome
+      ? [
+          {
+            key: HOME_PAGE.key,
+            icon: <LayoutDashboard size={16} aria-hidden="true" />,
+            label: HOME_PAGE.label,
+          },
+        ]
+      : [];
+    return [...menuItems, ...buildMenuItems(visibleGroups)];
+  }, [showHome, visibleGroups]);
+
+  // Deep links and browser history must reveal the selected group, even if it
+  // was previously collapsed by the operator.
+  useEffect(() => {
+    const parent = NAV_GROUPS.find((group) =>
+      group.pages.some((page) => page.key === activeKey),
+    );
+    if (!parent) return;
+    setExpandedGroups((current) =>
+      current.includes(parent.key) ? current : [...current, parent.key],
+    );
+  }, [activeKey]);
+
+  // While searching, every group that still has a hit is expanded; otherwise the
+  // operator's own expansion state is restored as soon as the query clears.
+  const openKeys = searching ? visibleGroups.map((group) => group.key) : expandedGroups;
+
+  return (
+    <Sider
+      className="app-sider"
+      theme="light"
+      width={216}
+      collapsedWidth={56}
+      breakpoint="lg"
+      onCollapse={(nextCollapsed) => {
+        setCollapsed(nextCollapsed);
+        // The collapsed rail cannot show the input; clear the filter so the
+        // icon-only menu is never silently narrowed by an invisible query.
+        if (nextCollapsed) setQuery('');
+      }}
+    >
+      <div className="app-brand">
+        <span className="app-brand-mark" aria-hidden="true">
+          BH
+        </span>
+        <span className="app-brand-text">Benefit Hub</span>
+      </div>
+
+      {collapsed ? null : (
+        <div className="app-sidebar-search">
+          <Input
+            allowClear
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索菜单"
+            aria-label="搜索菜单"
+            autoComplete="off"
+            prefix={<Search size={14} aria-hidden="true" />}
+          />
+        </div>
+      )}
+
+      {items.length === 0 ? (
+        <Empty
+          className="app-sidebar-empty"
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="未找到匹配的菜单"
+        />
+      ) : (
+        <Menu
+          className="app-nav"
+          mode="inline"
+          theme="light"
+          selectedKeys={[activeKey]}
+          items={items}
+          openKeys={openKeys}
+          onOpenChange={(keys) => {
+            if (!searching) setExpandedGroups(keys);
+          }}
+          onClick={({ key }) => onNavigate(key)}
+        />
+      )}
+    </Sider>
+  );
+}

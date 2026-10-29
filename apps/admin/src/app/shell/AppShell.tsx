@@ -1,100 +1,15 @@
-import { App as AntdApp, Button, Dropdown, Layout, Menu, Tabs, Tag, Typography } from 'antd';
-import {
-  LayoutDashboard,
-  LogOut,
-  Package,
-  Building2,
-  AppWindow,
-  ReceiptText,
-  Settings,
-  UserRound,
-} from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { App as AntdApp, Button, Dropdown, Layout, Tabs, Tag, Typography } from 'antd';
+import { LogOut, UserRound } from 'lucide-react';
+import { useEffect, useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AdminIdentity } from '../../features/auth/api';
 import { useLogoutMutation } from '../../features/auth/use-auth';
 import { useUiPrefs, useUiPrefsHydrated } from '../../shared/lib/ui-prefs';
+import { AppSidebar } from './AppSidebar';
+import { activeMenuKey, NAV_KEYS, NAV_PAGES } from './navigation';
 import './shell.css';
 
-const { Header, Sider, Content } = Layout;
-
-// Navigation expresses platform domains, not the current upstream provider's API layout.
-// Each destination is an existing page; the supplier catalog deep-link reuses the
-// established URL-backed CatalogPage tab instead of creating a placeholder.
-const NAV_GROUPS = [
-  {
-    key: 'rights',
-    label: '权益中心',
-    icon: <Package size={16} />,
-    pages: [
-      { key: '/catalog', label: '权益商品' },
-      { key: '/value-rules', label: '价值换算' },
-    ],
-  },
-  {
-    key: 'supply',
-    label: '供给中心',
-    icon: <Building2 size={16} />,
-    pages: [
-      { key: '/suppliers', label: '供应商管理' },
-      { key: '/catalog?tab=supplier', label: '供货目录' },
-    ],
-  },
-  {
-    key: 'open-platform',
-    label: '开放平台',
-    icon: <AppWindow size={16} />,
-    pages: [
-      { key: '/applications', label: '下游应用' },
-      { key: '/interfaces', label: '接口管理' },
-    ],
-  },
-  {
-    key: 'delivery',
-    label: '订单履约',
-    icon: <ReceiptText size={16} />,
-    pages: [{ key: '/fulfillment', label: '业务订单' }],
-  },
-  {
-    key: 'governance',
-    label: '平台治理',
-    icon: <Settings size={16} />,
-    pages: [{ key: '/settings', label: '系统设置' }],
-  },
-];
-
-const NAV_PAGES = [
-  { key: '/', label: '总览' },
-  ...NAV_GROUPS.flatMap((group) => group.pages),
-];
-
-// Restored work tabs are validated against real pages only: the supplier
-// catalog is a distinct workspace keyed by its URL-backed tab.
-const NAV_KEYS = new Set(NAV_PAGES.map((page) => page.key));
-
-const NAV_ITEMS = [
-  { key: '/', icon: <LayoutDashboard size={16} />, label: '总览' },
-  ...NAV_GROUPS.map((group) => ({
-    key: group.key,
-    icon: group.icon,
-    label: group.label,
-    children: group.pages.map((page) => ({ key: page.key, label: page.label })),
-  })),
-];
-
-function activeMenuKey(pathname: string, search: string): string {
-  // Supply and internal product tabs share one route but are distinct workspaces.
-  if (pathname === '/catalog') {
-    return new URLSearchParams(search).get('tab') === 'supplier'
-      ? '/catalog?tab=supplier'
-      : '/catalog';
-  }
-
-  const match = NAV_PAGES.find(
-    (item) => item.key !== '/' && (pathname === item.key || pathname.startsWith(item.key + '/')),
-  );
-  return match?.key ?? '/';
-}
+const { Header, Content } = Layout;
 
 interface AppShellProps {
   admin: AdminIdentity;
@@ -110,9 +25,6 @@ export function AppShell({ admin }: AppShellProps) {
   const addTab = useUiPrefs((state) => state.addTab);
   const removeTab = useUiPrefs((state) => state.closeTab);
   const hydrated = useUiPrefsHydrated();
-  const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
-    NAV_GROUPS.map((group) => group.key),
-  );
 
   useEffect(() => {
     // Hydration boundary: an async storage backend must finish restoring before
@@ -133,19 +45,6 @@ export function AppShell({ admin }: AppShellProps) {
     const withHome = restored.includes('/') ? restored : ['/', ...restored];
     return withHome.includes(activeKey) ? withHome : [...withHome, activeKey];
   }, [activeKey, persistedTabKeys]);
-
-  // Deep links and browser history must reveal the selected group, even if it
-  // was previously collapsed by the operator.
-  useEffect(() => {
-    const parent = NAV_GROUPS.find((group) =>
-      group.pages.some((page) => page.key === activeKey),
-    );
-    if (parent) {
-      setExpandedGroups((current) =>
-        current.includes(parent.key) ? current : [...current, parent.key],
-      );
-    }
-  }, [activeKey]);
 
   const handleLogout = () => {
     logoutMutation.mutate(undefined, {
@@ -182,30 +81,7 @@ export function AppShell({ admin }: AppShellProps) {
 
   return (
     <Layout className="app-shell" hasSider>
-      <Sider
-        className="app-sider"
-        theme="light"
-        width={216}
-        collapsedWidth={56}
-        breakpoint="lg"
-      >
-        <div className="app-brand">
-          <span className="app-brand-mark" aria-hidden="true">
-            BH
-          </span>
-          <span className="app-brand-text">Benefit Hub</span>
-        </div>
-        <Menu
-          className="app-nav"
-          mode="inline"
-          theme="light"
-          selectedKeys={[activeKey]}
-          items={NAV_ITEMS}
-          openKeys={expandedGroups}
-          onOpenChange={setExpandedGroups}
-          onClick={({ key }) => navigate(key)}
-        />
-      </Sider>
+      <AppSidebar activeKey={activeKey} onNavigate={(key) => navigate(key)} />
 
       <Layout className="app-main">
         <Header className="app-header">

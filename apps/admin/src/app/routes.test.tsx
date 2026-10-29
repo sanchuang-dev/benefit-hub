@@ -202,6 +202,43 @@ describe('login flow', () => {
     await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
   }, 20_000);
 
+  it('filters the sidebar menu by search and restores it when cleared', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, { orders: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+
+    const search = await screen.findByLabelText('搜索菜单', undefined, { timeout: 5000 });
+    fireEvent.change(search, { target: { value: '订单' } });
+
+    expect(screen.getByRole('menuitem', { name: '业务订单' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: '权益商品' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '系统设置' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '业务订单' }));
+    expect(await screen.findByRole('heading', { name: '业务订单' })).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '不存在的菜单' } });
+    expect(screen.getByText('未找到匹配的菜单')).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByRole('menuitem', { name: '权益商品' })).toBeTruthy();
+    expect(screen.queryByText('未找到匹配的菜单')).toBeNull();
+  }, 20_000);
+
   it('opens each platform destination from grouped navigation with its real capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);

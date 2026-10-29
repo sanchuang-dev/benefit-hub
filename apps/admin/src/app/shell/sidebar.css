@@ -1,0 +1,95 @@
+/*
+ * Sidebar shell: brand area, menu search and the Ant Design Menu.
+ * The layout hierarchy stays inside the existing white operations console.
+ */
+.app-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.app-sider::after {
+  content: '';
+  position: absolute;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: #e3e6ea;
+  pointer-events: none;
+}
+
+.app-brand {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid #eef0f2;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.app-brand-mark {
+  flex: 0 0 auto;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  border-radius: 5px;
+  background: #2563eb;
+  color: #fff;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app-brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.app-sidebar-search {
+  padding: 10px 12px 4px;
+}
+
+.app-sidebar-search .ant-input-affix-wrapper {
+  border-radius: 6px;
+}
+
+.app-nav {
+  padding: 8px 0 16px;
+  border-inline-end: 0 !important;
+}
+
+.app-nav .ant-menu-submenu-title {
+  font-weight: 600;
+}
+
+.app-sidebar-empty {
+  margin: 24px 12px;
+}
+
+.app-sidebar-empty .ant-empty-description {
+  color: #64748b;
+  font-size: 12px;
+}
+
+@media (max-width: 991px) {
+  .ant-layout-sider-collapsed .app-brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .ant-layout-sider-collapsed .app-brand-text {
+    display: none;
+  }
+}
