@@ -155,7 +155,7 @@ function handleOrderError(c: Context<AppEnv>, error: unknown) {
   }
   if (error instanceof GrantInputConflictError) {
     return c.json(
-      apiError('GRANT_INPUT_CONFLICT', '相同订单已用不同手机号或推广码发起过下单'),
+      apiError('GRANT_INPUT_CONFLICT', '相同订单的手机号、推广码或支付凭据与原下单记录不一致'),
       409,
       NO_STORE_HEADERS,
     );
@@ -399,6 +399,7 @@ export function createBusinessOrderRoutes(deps: {
     try {
       const outcome = await grantService.grant({
         businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
         orderId,
         phone: parsed.data.phone,
         refCode: parsed.data.refCode,
