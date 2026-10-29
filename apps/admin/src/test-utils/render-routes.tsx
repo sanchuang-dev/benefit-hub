@@ -6,13 +6,17 @@ import { routes } from '../app/routes';
 import { useUiPrefs } from '../shared/lib/ui-prefs';
 
 /**
- * Clears session-scoped UI preferences between tests. The store is a module
- * singleton, so without this a tab/view chosen in one test would leak into the
- * next one even though its component tree was unmounted.
+ * Clears UI preferences between tests through the persist API, not a concrete
+ * storage API, so the helper keeps working if the backend is swapped. The store
+ * is a module singleton, so without this a tab/view chosen in one test would
+ * leak into the next one even though its component tree was unmounted.
+ *
+ * An async backend (IndexedDB) would make this return a Promise; callers should
+ * then await it in afterEach.
  */
 export function resetUiPrefs(): void {
   useUiPrefs.getState().reset();
-  sessionStorage.clear();
+  void useUiPrefs.persist.clearStorage();
 }
 
 export function installDomStubs(): void {

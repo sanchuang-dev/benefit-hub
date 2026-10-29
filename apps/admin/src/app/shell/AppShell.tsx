@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AdminIdentity } from '../../features/auth/api';
 import { useLogoutMutation } from '../../features/auth/use-auth';
-import { useUiPrefs } from '../../shared/lib/ui-prefs';
+import { useUiPrefs, useUiPrefsHydrated } from '../../shared/lib/ui-prefs';
 import './shell.css';
 
 const { Header, Sider, Content } = Layout;
@@ -109,13 +109,19 @@ export function AppShell({ admin }: AppShellProps) {
   const persistedTabKeys = useUiPrefs((state) => state.openTabs);
   const addTab = useUiPrefs((state) => state.addTab);
   const removeTab = useUiPrefs((state) => state.closeTab);
+  const hydrated = useUiPrefsHydrated();
   const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
     NAV_GROUPS.map((group) => group.key),
   );
 
   useEffect(() => {
+    // Hydration boundary: an async storage backend must finish restoring before
+    // the current route is appended, otherwise a default tab list could be
+    // written over the persisted one. With sessionStorage hydration is already
+    // complete on the first render, so this is true immediately.
+    if (!hydrated) return;
     addTab(activeKey);
-  }, [activeKey, addTab]);
+  }, [activeKey, addTab, hydrated]);
 
   /**
    * The route stays the source of truth for the current page; stored keys only
