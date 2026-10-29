@@ -45,6 +45,7 @@ export function hashDirectTopupPhone(masterKey: Buffer, phone: string): string {
 }
 
 export class DirectTopupProductUnverifiedError extends Error {}
+export class DirectTopupWriteDisabledError extends Error {}
 export class DirectTopupPurchaseIneligibleError extends Error {}
 export class DirectTopupInputConflictError extends Error {}
 
@@ -89,6 +90,9 @@ export function createDirectTopupService(deps: {
   }
 
   function requireFrozenVerifiedB(order: BenefitOrder): string {
+    if (!deps.config.bLiveWritesEnabled) {
+      throw new DirectTopupWriteDisabledError('B 真实扣额写操作未单独启用');
+    }
     const detail = orders.getForOperations(order.id);
     const frozen = detail?.frozenMapping;
     if (!frozen) throw new OrderMappingUnavailableError('订单没有冻结的供应商映射');
