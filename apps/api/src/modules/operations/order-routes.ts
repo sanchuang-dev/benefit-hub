@@ -115,6 +115,15 @@ function toDetailDto(detail: OperationsOrderDetail): OperationsOrderDetailDto {
           activatedAt: detail.frozenMapping.activatedAt,
         }
       : null,
+    grant: detail.grant
+      ? {
+          state: detail.grant.state,
+          requestId: detail.grant.requestId,
+          upstreamOrderNo: detail.grant.upstreamOrderNo,
+          attemptedAt: detail.grant.attemptedAt,
+          updatedAt: detail.grant.updatedAt,
+        }
+      : null,
     statusEvents: detail.statusEvents.map((event) => ({
       id: event.id,
       status: event.status,

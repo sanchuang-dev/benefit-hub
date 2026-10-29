@@ -21,6 +21,7 @@ import {
   businessSourceSchema,
   orderStatusSchema,
 } from './orders.js';
+import { prepaidGrantSchema } from './prepaid-grant.js';
 
 /** Bounded server-side page sizes; the API rejects anything else. */
 export const OPERATIONS_ORDER_PAGE_SIZES = [10, 20, 50] as const;
@@ -132,6 +133,12 @@ export const operationsOrderDetailSchema = z
     updatedAt: timestampSchema,
     product: operationsOrderProductSchema,
     frozenMapping: operationsOrderFrozenMappingSchema.nullable(),
+    /**
+     * A-mode operation identity. It carries no phone, payment reference or
+     * claim link: the operator recovers the link through the existing
+     * admin-only supplier read API using the surfaced `requestId`.
+     */
+    grant: prepaidGrantSchema.nullable(),
     statusEvents: z.array(operationsOrderStatusEventSchema),
     attempts: z.array(operationsOrderAttemptSchema),
   })

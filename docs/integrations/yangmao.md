@@ -129,3 +129,11 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **服务器配置**：仅使用 `YANGMAO_INRICE_BASE_URL`、`YANGMAO_INRICE_APP_KEY`、`YANGMAO_INRICE_APP_SECRET`，三项必须同时存在且只由服务端读取。缺失或不完整时接口返回 503 `SUPPLIER_NOT_CONFIGURED`，不会改用开发默认值、空列表或假数据。实际环境的凭证管理与供应商地址以当前部署配置和有效 API 合同为准。
 - **失败语义**：鉴权/HTTP/业务失败返回 502，超时返回 504，未配置返回 503；任何失败都不会被显示成“供应商目录为空”。只有供应商真实返回空数组时才是 200 空列表。
 - **前端边界**：商品管理「供应商商品」Tab 以 Ant Design Table/Card 只读展示供货方（上力）、上游编码、报价和获取时间；名称在选中单品时按需读取，不做整页详情 N+1；可用状态显示“待核实”，不根据 `goodsStatus` 猜测可售。不以静态开关冒充供应商履约能力状态。
+
+## 13. A 预充值下单与领取链接恢复（BHB-012-C）
+
+- **代码归属**：供应商协议仍在 `packages/provider-yangmao`；新增 `createPrepaidOrder()`，`POST /open/v1/prepaid/orders`，签名字段严格为 `appKey`、`timestamp`、`nonce`、`phone`、`refCode`、非空 `productCode`、`requestId`，仍使用 A/B/C `X-Sign`（SHA-256 大写 hex），**不使用** D `X-Signature`。成功响应必须同时具备 `orderNo` 与合法 `claimUrl`；`balanceAfter`、`idempotentReplay` 仅在类型合法时保留，未知字段丢弃。`code=0` 但字段缺失/非法、超时、取消、传输失败都抛稳定错误，绝不表达“已领取/已完成”。
+- **平台接线**：`apps/api/src/modules/orders/a-prepaid-grant.ts` 复用既有订单 Repository、冻结映射、应用白名单和服务凭证；新增 `POST /api/v1/business/orders/:orderId/grant` 与 `POST /api/v1/business/orders/:orderId/recover`。下单前先执行只读 `purchase-check`，`purchaseRestricted`/`giftUnclaimed`/`lotteryUnbet` 任一为真即拒绝且不落下单记录。`requestId` 由平台订单 ID 确定性派生并在数据库唯一；下单记录、预发 `unknown` 尝试与订单 `processing` 状态在同一短事务持久化，签名 HTTP 调用在事务之外。
+- **结果语义**：上力受理后订单为 `awaiting_claim`，`claimUrl` 只在已认证响应中返回、不落库；用户仍需在供应商 H5 领取，因此绝不记为 `completed`。超时/5xx/畸形成功保持 `unknown`；重复调用只用同一 `requestId` 走 `orders/query`，不重发扣额；上力明确业务拒绝记为 `rejected`/`failed`，不再自动重试。
+- **数据边界**：不保存明文手机号，只保存主密钥 HMAC 摘要（拒绝冲突的重复输入）；不保存 claimUrl、供应商原始报文、密钥或签名。运营在既有订单详情看到 requestId/上游订单号/状态，使用既有管理员只读查询取回链接。
+- **证据边界**：provider 单测使用 OpenSSL 独立向量与虚构 transport；API 集成测试通过真实 Hono → loopback 假供应商 HTTP 服务覆盖真实签名、冻结映射、并发唯一预约、未知/恢复与拒绝路径。**未执行任何真实 A 扣额**；真实下单、真实 claimUrl 与平台状态仍需维护者单独批准、测试额度与收件手机号后的脱敏证据。

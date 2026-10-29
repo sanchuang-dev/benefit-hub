@@ -124,6 +124,16 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 - **接口职责**：供应商连接配置服务于目录查询与凭证管理；发放、扣额与结果核实由实际订单履约实现负责，不用行政式禁用开关代替能力实现。
 - **真实验收**：合并部署与一次性密钥配置后，由管理员通过页面保存测试凭证，再点击「验证目录读取」与商品详情；如果未真正保存凭证或未读回上力数据，不得声称联通完成。不得将实际 AppKey/AppSecret 贴入 Issue/PR、日志或聊天作为调试方式。
 
+### 上力 A 预充值礼包下单（2026-10-29 / BHB-012-C）
+
+- **能力范围**：仅 A 模式。业务方在确认已收款/已授权后调用 `POST /api/v1/business/orders/:orderId/grant`；平台先做只读 `purchase-check`，再以确定性 `requestId` 调用 `POST /open/v1/prepaid/orders`，成功只表示上力创建了 H5 订单并扣 1 个礼包额度，用户仍需领取，订单状态停在 `awaiting_claim`，**不是** `completed`。
+- **数据库**：migration `0009_benefit_order_grants` 仅新增下单记录表、唯一 `request_id` 索引与不可变/禁删触发器，不修改既有订单、尝试或状态事件表；回滚镜像不会删除该表，也不会自动降级。
+- **主密钥前置**：A 下单要求 `BENEFIT_SUPPLIER_MASTER_KEY` 可用；缺失时返回 503 `SUPPLIER_KEY_UNAVAILABLE`，不会退回明文手机号或无记录扣额。手机号不落库，只保存主密钥 HMAC 摘要，用于拒绝冲突的重复输入。
+- **未知结果**：超时、网络失败、HTTP 5xx、`code=0` 但缺字段都保留 `unknown`，不会有后台自动重试。恢复只能用同一 `requestId` 的只读查询；运维不得手工换 ID 或直接改状态为成功。
+- **明确拒绝**：上力 400/401/403 记为 `rejected` / 订单 `failed`，后续调用返回 409，需人工核实后再决定是否另开业务单，不能盲目重发。
+- **运营取链接**：订单详情展示 `requestId`、上游订单号与最近结果；领取链接不落库，管理员用既有 `POST /api/v1/suppliers/yangmao/prepaid/orders/query`（管理员会话 + CSRF）按同一 `requestId` 取回。该读取不扣额度。
+- **真实扣额门槛**：合并、部署和 CI 绿灯都不授权真实下单。必须由维护者单独批准，并提供可用测试礼包额度、收件手机号与脱敏联调证据后，才能声明 A 模式 live 验收；普通 CI/Worker 只运行 loopback 假供应商测试。
+
 ## 5. SQLite 数据安全
 
 - 首期只有一个应用写实例，文件位于 `/data/benefit.sqlite`（挂载宿主机 `/srv/benefit-hub/data`，路径可经确认调整）。
@@ -136,7 +146,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 
 ## 6. 发布门槛与验收证据
 
-- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，BHB-013-B1 已实现「发放记录」的平台本地订单只读页（真实供应商履约与发放仍未实现）。
+- [x] 仓库已具备 pnpm workspace、锁文件、可构建 Hono API 和 React 占位页，基础镜像构建验证通过；BHB-004 已实现内部商品管理页面，BHB-013-B1 已实现「发放记录」的平台本地订单只读页；BHB-012-C 已实现 A 模式下单/恢复代码与隔离测试。**真实供应商扣额与发放仍未在线验收**，不得以代码或 CI 绿灯替代。
 - [x] 公司原型服务器 Docker/Compose、端口占用及 Caddy/原型服务已读检查（后续变更须复核）。
 - [x] SSH 凭证链路和主机指纹已在 CI 实测通过；不得回显 Secret。
 - [ ] SQLite 挂载目录存在、文件权限正确，重建容器后数据仍存在（BHB-002 仅在本地临时 SQLite 验证迁移/重启，未在服务器复核）。

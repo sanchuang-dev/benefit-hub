@@ -8,3 +8,4 @@ export * from './applications.js';
 export * from './mapping.js';
 export * from './operations-orders.js';
 export * from './orders.js';
+export * from './prepaid-grant.js';

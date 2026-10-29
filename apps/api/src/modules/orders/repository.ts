@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import {
+  benefitOrderGrants,
   benefitOrders,
   benefitOrderStatusEvents,
   businessApplicationCredentials,
@@ -16,6 +17,8 @@ import {
   assertAttemptOperation,
   assertAttemptResult,
   assertOrderStatus,
+  GrantNotFoundError,
+  GrantStateConflictError,
   normalizeBusinessOrderNo,
   normalizeBusinessSource,
   normalizeUpstreamRef,
@@ -25,6 +28,7 @@ import {
   OrderIntentConflictError,
   OrderMappingUnavailableError,
   OrderNotFoundError,
+  OrderNotGrantableError,
   OrderProductNotActiveError,
   OrderProductNotFoundError,
   OrderProductNotAuthorizedError,
@@ -43,6 +47,8 @@ import {
   type FulfillmentMode,
   type OrderStatus,
   type OrderStatusEvent,
+  type PrepaidGrantState,
+  type PrepaidOrderGrant,
 } from './benefit-orders.js';
 
 /**
@@ -79,6 +85,51 @@ export interface AppendFulfillmentAttemptInput {
   observedStatus?: OrderStatus | null;
   occurredAt?: number;
   lastVerifiedAt?: number | null;
+}
+
+export interface ReserveGrantInput {
+  orderId: string;
+  /** Recheck the authenticated DB credential under the same write lock as the reservation. */
+  applicationCredentialId?: string | null;
+  /** Version observed before the reservation; a concurrent change fails. */
+  expectedVersion: number;
+  requestId: string;
+  refCode: string;
+  phoneHmac: string;
+  paymentReference: string;
+  occurredAt: number;
+}
+
+export interface ReserveGrantResult {
+  grant: PrepaidOrderGrant;
+  order: BenefitOrder;
+  /** False when another reservation already existed for this order. */
+  created: boolean;
+}
+
+/**
+ * Settles a durable A-mode operation. `attempt` settles the signed supplier
+ * POST and requires a still-`reserved` row; `recovery` records a read-only
+ * query and may upgrade `reserved`/`unknown` to `accepted`, but never rewrites
+ * an already accepted or rejected operation into something else.
+ */
+export interface SettleGrantInput {
+  orderId: string;
+  /** Current order version; ignored when the status is unchanged. */
+  expectedVersion: number;
+  kind: 'attempt' | 'recovery';
+  grantState: 'accepted' | 'unknown' | 'rejected';
+  upstreamOrderNo?: string | null;
+  orderStatus: OrderStatus;
+  operation: AttemptOperation;
+  result: AttemptResult;
+  occurredAt: number;
+  lastVerifiedAt: number | null;
+}
+
+export interface SettleGrantResult {
+  grant: PrepaidOrderGrant;
+  order: BenefitOrder;
 }
 
 /**
@@ -131,6 +182,8 @@ export interface OperationsOrderDetail {
   order: BenefitOrder;
   currentProduct: OperationsOrderProduct;
   frozenMapping: OperationsOrderFrozenMapping | null;
+  /** A-mode operation identity, when one was ever reserved. */
+  grant: PrepaidOrderGrant | null;
   statusEvents: OrderStatusEvent[];
   attempts: FulfillmentAttempt[];
 }
@@ -171,6 +224,24 @@ export interface BenefitOrderRepository {
   createOrGetIntent(input: CreateOrderIntentInput): CreateOrderIntentResult;
   getById(orderId: string): BenefitOrder | null;
   findByIdentity(businessSource: string, businessOrderNo: string): BenefitOrder | null;
+  /**
+   * Reads the one durable A-mode operation for an order, if any. This is a
+   * local read only; it never contacts the supplier.
+   */
+  getGrant(orderId: string): PrepaidOrderGrant | null;
+  /**
+   * Persists the operation identity and flips the order to `processing` before
+   * any supplier call. The insert and status change share one short IMMEDIATE
+   * transaction; the caller must make the supplier HTTP call only afterwards,
+   * with no transaction open. Re-reserving an existing operation returns it
+   * unchanged (`created: false`) so a concurrent caller cannot double-send.
+   */
+  reserveGrant(input: ReserveGrantInput): ReserveGrantResult;
+  /**
+   * Atomically settles the operation, the order status and one attempt fact.
+   * A terminal `accepted`/`rejected` operation is never rewritten.
+   */
+  settleGrant(input: SettleGrantInput): SettleGrantResult;
   /**
    * Optimistic status change; a stale `expectedVersion` fails stably.
    *
@@ -227,6 +298,18 @@ interface AttemptRow {
   lastVerifiedAt: number | null;
 }
 
+interface GrantRow {
+  orderId: string;
+  requestId: string;
+  state: string;
+  upstreamOrderNo: string | null;
+  refCode: string;
+  phoneHmac: string;
+  paymentReference: string;
+  attemptedAt: number;
+  updatedAt: number;
+}
+
 function toBenefitOrder(row: OrderRow): BenefitOrder {
   return {
     id: row.id,
@@ -270,6 +353,35 @@ function toFulfillmentAttempt(row: AttemptRow): FulfillmentAttempt {
  * Stored enum columns are constrained by SQLite CHECKs. Reading anything else
  * is data corruption, not a reason to render a guessed operator-facing value.
  */
+const GRANT_STATE_SET = new Set(['reserved', 'accepted', 'unknown', 'rejected']);
+function toPrepaidGrantState(value: string): PrepaidGrantState {
+  if (GRANT_STATE_SET.has(value)) return value as PrepaidGrantState;
+  throw new Error(`Unknown benefit order grant state stored in database: ${value}`);
+}
+
+function toPrepaidGrant(row: GrantRow): PrepaidOrderGrant {
+  return {
+    orderId: row.orderId,
+    requestId: row.requestId,
+    state: toPrepaidGrantState(row.state),
+    upstreamOrderNo: row.upstreamOrderNo,
+    refCode: row.refCode,
+    phoneHmac: row.phoneHmac,
+    paymentReference: row.paymentReference,
+    attemptedAt: row.attemptedAt,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function loadGrantRow(db: AppDatabase, orderId: string): GrantRow | undefined {
+  return db
+    .select()
+    .from(benefitOrderGrants)
+    .where(eq(benefitOrderGrants.orderId, orderId))
+    .limit(1)
+    .get();
+}
+
 function toStoredProductStatus(value: string): 'active' | 'disabled' {
   if (value === 'active' || value === 'disabled') return value;
   throw new Error(`Unknown catalog product status stored in database: ${value}`);
@@ -304,6 +416,12 @@ function loadAttempts(db: AppDatabase, orderId: string): FulfillmentAttempt[] {
 function isForeignKeyViolation(error: unknown): boolean {
   return error instanceof Error && error.message.includes('FOREIGN KEY constraint failed');
 }
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && error.message.includes('UNIQUE constraint failed');
+}
+
+const GRANT_SUCCESS_STATUSES = new Set<string>(['awaiting_claim', 'partially_completed', 'completed']);
 
 export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepository {
   return {
@@ -500,6 +618,333 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       return row ? toBenefitOrder(row) : null;
     },
 
+    getGrant(orderId) {
+      const row = loadGrantRow(db, requireOrderId(orderId));
+      return row ? toPrepaidGrant(row) : null;
+    },
+
+    reserveGrant(input) {
+      const orderId = requireOrderId(input.orderId);
+      if (!Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 1) {
+        throw new OrderInputError('订单版本号需为大于 0 的整数');
+      }
+      const occurredAt = requireTimestamp(input.occurredAt, '发生时间');
+
+      return db.transaction(
+        (tx) => {
+          const orderRow = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!orderRow) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          // The initial machine-auth middleware and the live purchase-check can
+          // be separated by network latency. Recheck the verified credential,
+          // app status and product allowlist inside this same IMMEDIATE write
+          // transaction, immediately before recording any potentially billable
+          // supplier attempt. The operator's revocation/disable/allowlist write
+          // and this reservation cannot cross each other.
+          const application = tx
+            .select({ id: businessApplications.id, status: businessApplications.status })
+            .from(businessApplications)
+            .where(eq(businessApplications.businessSource, orderRow.businessSource))
+            .limit(1)
+            .get();
+          if (input.applicationCredentialId != null) {
+            const credential = tx
+              .select({ applicationId: businessApplicationCredentials.applicationId })
+              .from(businessApplicationCredentials)
+              .where(
+                and(
+                  eq(businessApplicationCredentials.id, input.applicationCredentialId),
+                  isNull(businessApplicationCredentials.revokedAt),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!application || !credential || credential.applicationId !== application.id) {
+              throw new OrderCredentialRevokedError('应用服务凭证已失效');
+            }
+          }
+          if (application && application.status !== 'enabled') {
+            throw new OrderApplicationDisabledError('应用已停用，不能发起上力下单');
+          }
+          if (application) {
+            const permitted = tx
+              .select({ productId: businessApplicationProducts.productId })
+              .from(businessApplicationProducts)
+              .where(
+                and(
+                  eq(businessApplicationProducts.applicationId, application.id),
+                  eq(businessApplicationProducts.productId, orderRow.productId),
+                ),
+              )
+              .limit(1)
+              .get();
+            if (!permitted) {
+              throw new OrderProductNotAuthorizedError('该应用未被授权使用此内部商品');
+            }
+          }
+
+          const existing = tx
+            .select()
+            .from(benefitOrderGrants)
+            .where(eq(benefitOrderGrants.orderId, orderId))
+            .limit(1)
+            .get();
+          if (existing) {
+            return {
+              grant: toPrepaidGrant(existing),
+              order: toBenefitOrder(orderRow),
+              created: false,
+            };
+          }
+
+          if (orderRow.version !== input.expectedVersion) {
+            throw new OrderVersionConflictError(
+              `订单版本已变化（当前版本 ${orderRow.version}，提交版本 ${input.expectedVersion}）`,
+            );
+          }
+          if (orderRow.status !== 'pending') {
+            throw new OrderNotGrantableError(
+              `订单当前状态不允许发起上力下单：${orderRow.status}`,
+            );
+          }
+
+          const row: GrantRow = {
+            orderId,
+            requestId: input.requestId,
+            state: 'reserved',
+            upstreamOrderNo: null,
+            refCode: input.refCode,
+            phoneHmac: input.phoneHmac,
+            paymentReference: input.paymentReference,
+            attemptedAt: occurredAt,
+            updatedAt: occurredAt,
+          };
+
+          try {
+            tx.insert(benefitOrderGrants).values(row).run();
+          } catch (error) {
+            // A concurrent reservation for the same order lost the insert race.
+            // Return the winner instead of sending a second supplier call.
+            if (isUniqueViolation(error)) {
+              const raced = tx
+                .select()
+                .from(benefitOrderGrants)
+                .where(eq(benefitOrderGrants.orderId, orderId))
+                .limit(1)
+                .get();
+              if (raced) {
+                return {
+                  grant: toPrepaidGrant(raced),
+                  order: toBenefitOrder(orderRow),
+                  created: false,
+                };
+              }
+            }
+            throw error;
+          }
+
+          const updated = tx
+            .update(benefitOrders)
+            .set({ status: 'processing', version: input.expectedVersion + 1, updatedAt: occurredAt })
+            .where(
+              and(
+                eq(benefitOrders.id, orderId),
+                eq(benefitOrders.version, input.expectedVersion),
+              ),
+            )
+            .run();
+          if (updated.changes === 0) {
+            throw new OrderVersionConflictError('订单版本已变化，未发起上力下单');
+          }
+
+          tx.insert(benefitOrderStatusEvents)
+            .values({
+              id: randomUUID(),
+              orderId,
+              status: 'processing',
+              version: input.expectedVersion + 1,
+              createdAt: occurredAt,
+            })
+            .run();
+
+          // The pre-send attempt is itself a durable fact: if the process dies
+          // before the response, the local record still says "unknown".
+          tx.insert(fulfillmentAttempts)
+            .values({
+              id: randomUUID(),
+              orderId,
+              operation: 'grant',
+              upstreamRequestNo: row.requestId,
+              upstreamOrderNo: null,
+              result: 'unknown',
+              observedStatus: 'processing',
+              occurredAt,
+              lastVerifiedAt: null,
+            })
+            .run();
+
+          const refreshed = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!refreshed) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          return { grant: toPrepaidGrant(row), order: toBenefitOrder(refreshed), created: true };
+        },
+        { behavior: 'immediate' },
+      );
+    },
+
+    settleGrant(input) {
+      const orderId = requireOrderId(input.orderId);
+      const orderStatus = assertOrderStatus(input.orderStatus);
+      const operation = assertAttemptOperation(input.operation);
+      const result = assertAttemptResult(input.result);
+      const occurredAt = requireTimestamp(input.occurredAt, '发生时间');
+      const lastVerifiedAt =
+        input.lastVerifiedAt === null
+          ? null
+          : requireTimestamp(input.lastVerifiedAt, '最近核实时间');
+      const upstreamOrderNo = normalizeUpstreamRef(input.upstreamOrderNo, '上游订单号');
+
+      return db.transaction(
+        (tx) => {
+          const orderRow = tx
+            .select()
+            .from(benefitOrders)
+            .where(eq(benefitOrders.id, orderId))
+            .limit(1)
+            .get();
+          if (!orderRow) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+
+          const grantRow = tx
+            .select()
+            .from(benefitOrderGrants)
+            .where(eq(benefitOrderGrants.orderId, orderId))
+            .limit(1)
+            .get();
+          if (!grantRow) throw new GrantNotFoundError(`订单没有上力下单记录：${orderId}`);
+
+          const currentState = toPrepaidGrantState(grantRow.state);
+          let nextState: PrepaidGrantState = currentState;
+
+          if (input.kind === 'attempt') {
+            if (currentState !== 'reserved') {
+              throw new GrantStateConflictError(
+                `上力下单记录已处于 ${currentState}，不能再次结算原始请求`,
+              );
+            }
+            nextState = input.grantState;
+          } else {
+            // A recovery read may only upgrade an indeterminate operation. It
+            // never rewrites an explicit rejection or downgrades acceptance.
+            if (currentState === 'rejected') {
+              throw new GrantStateConflictError('上力下单记录已明确拒绝，不再执行查询恢复');
+            }
+            if (currentState === 'accepted') nextState = 'accepted';
+            else nextState = input.grantState === 'accepted' ? 'accepted' : 'unknown';
+          }
+
+          if (upstreamOrderNo != null && grantRow.upstreamOrderNo != null &&
+              upstreamOrderNo !== grantRow.upstreamOrderNo) {
+            throw new GrantStateConflictError('上游订单号与已记录的订单不一致，拒绝覆盖');
+          }
+          const settledUpstreamOrderNo = upstreamOrderNo ?? grantRow.upstreamOrderNo;
+
+          if (nextState !== currentState || settledUpstreamOrderNo !== grantRow.upstreamOrderNo) {
+            tx.update(benefitOrderGrants)
+              .set({
+                state: nextState,
+                upstreamOrderNo: settledUpstreamOrderNo,
+                updatedAt: occurredAt,
+              })
+              .where(eq(benefitOrderGrants.orderId, orderId))
+              .run();
+          }
+
+          let settledOrder = toBenefitOrder(orderRow);
+          if (settledOrder.status !== orderStatus) {
+            if (GRANT_SUCCESS_STATUSES.has(settledOrder.status) &&
+                (orderStatus === 'unknown' || orderStatus === 'failed')) {
+              throw new GrantStateConflictError('已受理的订单不能被查询结果降级为未知或失败');
+            }
+            if (settledOrder.version !== input.expectedVersion) {
+              throw new OrderVersionConflictError(
+                `订单版本已变化（当前版本 ${settledOrder.version}，提交版本 ${input.expectedVersion}）`,
+              );
+            }
+            const updated = tx
+              .update(benefitOrders)
+              .set({
+                status: orderStatus,
+                version: input.expectedVersion + 1,
+                updatedAt: occurredAt,
+              })
+              .where(
+                and(
+                  eq(benefitOrders.id, orderId),
+                  eq(benefitOrders.version, input.expectedVersion),
+                ),
+              )
+              .run();
+            if (updated.changes === 0) {
+              throw new OrderVersionConflictError('订单版本已变化，未记录上力结果');
+            }
+            tx.insert(benefitOrderStatusEvents)
+              .values({
+                id: randomUUID(),
+                orderId,
+                status: orderStatus,
+                version: input.expectedVersion + 1,
+                createdAt: occurredAt,
+              })
+              .run();
+
+            const refreshed = tx
+              .select()
+              .from(benefitOrders)
+              .where(eq(benefitOrders.id, orderId))
+              .limit(1)
+              .get();
+            if (!refreshed) throw new OrderNotFoundError(`订单不存在：${orderId}`);
+            settledOrder = toBenefitOrder(refreshed);
+          }
+
+          tx.insert(fulfillmentAttempts)
+            .values({
+              id: randomUUID(),
+              orderId,
+              operation,
+              upstreamRequestNo: grantRow.requestId,
+              upstreamOrderNo: settledUpstreamOrderNo,
+              result,
+              observedStatus: orderStatus,
+              occurredAt,
+              lastVerifiedAt,
+            })
+            .run();
+
+          const refreshedGrant = tx
+            .select()
+            .from(benefitOrderGrants)
+            .where(eq(benefitOrderGrants.orderId, orderId))
+            .limit(1)
+            .get();
+          if (!refreshedGrant) throw new GrantNotFoundError(`订单没有上力下单记录：${orderId}`);
+
+          return { grant: toPrepaidGrant(refreshedGrant), order: settledOrder };
+        },
+        { behavior: 'immediate' },
+      );
+    },
+
     updateStatus(input) {
       const orderId = requireOrderId(input.orderId);
       const status = assertOrderStatus(input.status);
@@ -692,6 +1137,8 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
         throw new Error(`Order ${order.id} references a missing mapping version`);
       }
 
+      const grantRow = loadGrantRow(db, order.id);
+
       return {
         order,
         currentProduct: {
@@ -705,6 +1152,7 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
               deductionUnit: toStoredDeductionUnit(frozenRow.deductionUnit),
             }
           : null,
+        grant: grantRow ? toPrepaidGrant(grantRow) : null,
         statusEvents: loadStatusEvents(db, order.id),
         attempts: loadAttempts(db, order.id),
       };

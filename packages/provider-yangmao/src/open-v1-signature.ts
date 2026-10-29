@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 
 /** A/B/C `POST /open/v1/prepaid/purchase-check`; the base URL is caller-supplied. */
 export const OPEN_V1_PURCHASE_CHECK_PATH = '/open/v1/prepaid/purchase-check';
+/** A-mode `POST /open/v1/prepaid/orders`: deducts one prepaid gift pack. */
+export const OPEN_V1_PREPAID_ORDER_PATH = '/open/v1/prepaid/orders';
+/** A-mode read-only link recovery by the original `requestId`. */
+export const OPEN_V1_PREPAID_ORDER_QUERY_PATH = '/open/v1/prepaid/orders/query';
 
 /**
  * Values the vendor accepts inside the A/B/C canonical string. A `number` is
@@ -112,5 +116,31 @@ export function buildPurchaseCheckSignedFields(
     timestamp: identity.timestamp,
     nonce: identity.nonce,
     phone,
+  };
+}
+
+/**
+ * A-mode `prepaid/orders` participates in `appKey`, `timestamp`, `nonce`,
+ * `phone`, `refCode`, and the non-empty `productCode` / `requestId`. Omitting an
+ * empty optional value here keeps the signed string identical to what the
+ * vendor's "空值不参与" rule expects.
+ */
+export function buildPrepaidOrderSignedFields(
+  identity: OpenV1RequestIdentity,
+  input: {
+    phone: string;
+    refCode: string;
+    productCode?: string;
+    requestId: string;
+  },
+): OpenV1SigningFields {
+  return {
+    appKey: identity.appKey,
+    timestamp: identity.timestamp,
+    nonce: identity.nonce,
+    phone: input.phone,
+    refCode: input.refCode,
+    ...(input.productCode ? { productCode: input.productCode } : {}),
+    requestId: input.requestId,
   };
 }

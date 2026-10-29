@@ -113,6 +113,23 @@ export const BUSINESS_ORDER_ERROR_CODES = [
   'PRODUCT_NOT_AUTHORIZED',
   'ORDER_MAPPING_UNAVAILABLE',
   'ORDER_INTENT_CONFLICT',
+  // A-mode prepaid grant (BHB-012-C).
+  'PURCHASE_NOT_ELIGIBLE',
+  'ORDER_MODE_UNSUPPORTED',
+  'ORDER_NOT_GRANTABLE',
+  'ORDER_STATE_CONFLICT',
+  'GRANT_INPUT_CONFLICT',
+  'GRANT_IN_PROGRESS',
+  'GRANT_NOT_RETRYABLE',
+  'GRANT_NOT_FOUND',
+  'GRANT_STATE_CONFLICT',
+  'SUPPLIER_NOT_CONFIGURED',
+  'SUPPLIER_KEY_UNAVAILABLE',
+  'SUPPLIER_TIMEOUT',
+  'SUPPLIER_AUTH_FAILED',
+  'SUPPLIER_BUSINESS_FAILED',
+  'SUPPLIER_RESPONSE_UNVERIFIED',
+  'SUPPLIER_UNAVAILABLE',
 ] as const;
 export type BusinessOrderErrorCode = (typeof BUSINESS_ORDER_ERROR_CODES)[number];
 
@@ -125,6 +142,10 @@ export const businessOrderErrorResponseSchema = z
     error: z.enum(BUSINESS_ORDER_ERROR_CODES),
     message: z.string().min(1),
     fields: z.array(z.string().min(1)).min(1).optional(),
+    // Sanitized supplier observation only (numeric code / HTTP status). Raw
+    // supplier messages, payloads and identifiers are never echoed.
+    vendorCode: z.number().int().optional(),
+    httpStatus: z.number().int().min(100).max(599).optional(),
   })
   .strict();
 export type BusinessOrderErrorResponse = z.infer<typeof businessOrderErrorResponseSchema>;

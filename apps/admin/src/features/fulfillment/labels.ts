@@ -2,6 +2,7 @@ import type {
   AttemptOperation,
   AttemptResult,
   OrderStatus,
+  PrepaidGrantState,
 } from '@sanchuang-dev/benefit-contracts';
 
 /** Our unified platform status; never a supplier-native status label. */
@@ -43,6 +44,21 @@ export const ATTEMPT_RESULT_COLORS: Record<AttemptResult, string> = {
   accepted: 'blue',
   rejected: 'red',
   unknown: 'gold',
+};
+
+/** A-mode operation state, deliberately separate from the platform order status. */
+export const PREPAID_GRANT_STATE_LABELS: Record<PrepaidGrantState, string> = {
+  reserved: '已持久化，结果待确认',
+  accepted: '上力已受理（待用户领取）',
+  unknown: '结果未知，需核实',
+  rejected: '上力已明确拒绝',
+};
+
+export const PREPAID_GRANT_STATE_COLORS: Record<PrepaidGrantState, string> = {
+  reserved: 'processing',
+  accepted: 'blue',
+  unknown: 'gold',
+  rejected: 'red',
 };
 
 /** Only the current provider key has an operator-facing display name. */

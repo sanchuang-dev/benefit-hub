@@ -25,6 +25,8 @@ import {
   ATTEMPT_RESULT_LABELS,
   ORDER_STATUS_COLORS,
   ORDER_STATUS_LABELS,
+  PREPAID_GRANT_STATE_COLORS,
+  PREPAID_GRANT_STATE_LABELS,
   providerLabel,
 } from './labels';
 import { useOrderDetailQuery } from './use-orders';
@@ -341,6 +343,75 @@ export function OrderDetailDrawer({
               />
             )}
           </section>
+
+          {detail.fulfillmentMode === 'A' ? (
+            <section aria-label="上力 A 预充值下单">
+              <Title level={5}>上力 A 预充值下单</Title>
+              {detail.grant ? (
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    bordered
+                    items={[
+                      {
+                        key: 'grantState',
+                        label: '上力下单记录',
+                        children: (
+                          <Space orientation="vertical" size={2}>
+                            <Tag color={PREPAID_GRANT_STATE_COLORS[detail.grant.state]}>
+                              {PREPAID_GRANT_STATE_LABELS[detail.grant.state]}
+                            </Tag>
+                            <Text type="secondary">
+                              「已受理」表示上力创建了 H5 订单并扣减礼包额度，不代表用户已领取到账。
+                            </Text>
+                          </Space>
+                        ),
+                      },
+                      {
+                        key: 'requestId',
+                        label: '上游请求号（幂等键）',
+                        children: <Text code copyable>{detail.grant.requestId}</Text>,
+                      },
+                      {
+                        key: 'upstreamOrderNo',
+                        label: '上游订单号',
+                        children:
+                          detail.grant.upstreamOrderNo === null ? (
+                            <Text type="secondary">—</Text>
+                          ) : (
+                            <Text code copyable>{detail.grant.upstreamOrderNo}</Text>
+                          ),
+                      },
+                      {
+                        key: 'attemptedAt',
+                        label: '发起时间',
+                        children: formatDateTime(detail.grant.attemptedAt),
+                      },
+                      {
+                        key: 'grantUpdatedAt',
+                        label: '最近结果时间',
+                        children: formatDateTime(detail.grant.updatedAt),
+                      },
+                    ]}
+                  />
+                  <Alert
+                    type="info"
+                    showIcon
+                    title="领取链接不落库"
+                    description="平台不持久化 claimUrl，也不会自动重发下单。运营可在「供应商管理 → 上力 → 只读联调 → A 订单查询」用上面的 requestId 取回原领取链接；必须使用同一个 requestId，超时或未知结果不代表可以重新下单。"
+                  />
+                </Space>
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="尚未发起上力下单"
+                  description="平台只记录本地业务意图，不会自动扣减礼包额度。只有在业务方确认已收款/已授权后，才可通过业务订单接口发起 A 模式下单。"
+                />
+              )}
+            </section>
+          ) : null}
 
           <section aria-label="本地状态与尝试记录">
             <Title level={5}>本地状态与尝试记录</Title>
