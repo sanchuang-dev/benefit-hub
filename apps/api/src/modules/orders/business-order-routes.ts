@@ -322,7 +322,7 @@ function toDirectTopupResponse(outcome: DirectTopupOutcome): DirectTopupResponse
   };
 }
 
-function handleDirectTopupError(c: Context<AppEnv>, error: unknown) {
+export function handleDirectTopupError(c: Context<AppEnv>, error: unknown) {
   if (error instanceof DirectTopupWriteDisabledError) {
     return c.json(apiError('DIRECT_TOPUP_WRITE_DISABLED',
       'B 真实扣额未被维护者单独启用'), 503, NO_STORE_HEADERS);
