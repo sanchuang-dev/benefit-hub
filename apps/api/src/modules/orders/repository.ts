@@ -573,7 +573,7 @@ type OrderWriteTransaction = Parameters<Parameters<AppDatabase['transaction']>[0
  * potentially billable supplier attempt. Reused by every mode so a revocation
  * or allowlist change can never be bypassed by a between-request gap.
  */
-function assertApplicationWriteAccess(
+export function assertApplicationWriteAccess(
   tx: OrderWriteTransaction,
   input: {
     businessSource: string;
