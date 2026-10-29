@@ -363,6 +363,21 @@ describe('B-mode direct topup Hono → mock supplier (never real quota)', () => 
     } finally { server.close(); await vendor.close(); }
   }, 20_000);
 
+  it('treats an HTTP 500 after a possibly charged B write as unknown and never auto-resends', async () => {
+    const vendor = await mockVendor(); vendor.state.mode = 'http500';
+    const server = startServer(vendor);
+    try {
+      const id = (await order(server, seedOrder(server))).id;
+      const result = await issue(server, id);
+      expect(result.status).toBe(502);
+      expect(createDirectTopupRepository(server.database.db).get(id)?.state).toBe('unknown');
+      server.restart();
+      expect((await issue(server, id)).status).toBe(409);
+      expect((await reissue(server, id)).status).toBe(409);
+      expect(vendor.writes()).toHaveLength(1);
+    } finally { server.close(); await vendor.close(); }
+  }, 20_000);
+
   it('rejects missing product verification, disabled write and ineligible recipients before any write', async () => {
     const vendor = await mockVendor();
     const server = startServer(vendor, {
