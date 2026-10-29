@@ -9,7 +9,8 @@ import type {
   BusinessApplication,
 } from '../features/applications/api';
 import type { CatalogProduct } from '../features/catalog/api';
-import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { UI_PREFS_STORAGE_KEY } from '../shared/lib/ui-prefs';
 
 const NOW = Date.UTC(2026, 9, 28, 4, 0, 0);
 const SESSION_EXPIRES_AT = NOW + 60 * 60 * 1000;
@@ -171,6 +172,7 @@ beforeAll(() => installDomStubs());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetUiPrefs();
 });
 
 describe('downstream application list', () => {
@@ -537,9 +539,16 @@ describe('application writes', () => {
       screen.getByText('请立即保存到调用方的服务器端配置'),
     ).toBeTruthy();
 
-    // The raw secret must not be persisted anywhere in the browser.
+    // The raw secret must not be persisted anywhere in the browser. The only
+    // allowed session entry is the UI-preferences store, which never holds API
+    // payloads; localStorage stays empty for admin API data by design.
     expect(window.localStorage.length).toBe(0);
-    expect(window.sessionStorage.length).toBe(0);
+    const sessionKeys = Array.from(
+      { length: window.sessionStorage.length },
+      (_, index) => window.sessionStorage.key(index),
+    );
+    expect(sessionKeys).toEqual([UI_PREFS_STORAGE_KEY]);
+    expect(window.sessionStorage.getItem(UI_PREFS_STORAGE_KEY) ?? '').not.toContain(SECRET);
     expect(document.cookie).not.toContain(SECRET);
     const requestUrls = (fetchMock.mock.calls as [string, RequestInit | undefined][]).map(
       ([url]) => url,

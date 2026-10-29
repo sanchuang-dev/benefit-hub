@@ -18,6 +18,7 @@ import type {
 } from '@sanchuang-dev/benefit-contracts';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';
+import { useUiPrefs } from '../../shared/lib/ui-prefs';
 import { MappingContractError } from './api';
 import { MappingDraftEditor } from './MappingDraftEditor';
 import './MappingPanel.css';
@@ -216,6 +217,11 @@ function MappingOverview({
   onReload: () => Promise<MappingOverviewDto | null>;
   onDirtyChange: (dirty: boolean) => void;
 }) {
+  // Keep the selected sub-tab across drawer reopens and page refreshes; it is a
+  // pure UI preference and never a source of server facts.
+  const mappingTab = useUiPrefs((state) => state.mappingTab);
+  const setMappingTab = useUiPrefs((state) => state.setMappingTab);
+
   return (
     <>
       <Alert
@@ -228,7 +234,8 @@ function MappingOverview({
 
       <Tabs
         size="small"
-        defaultActiveKey="current"
+        activeKey={mappingTab}
+        onChange={(key) => setMappingTab(key === 'history' ? 'history' : 'current')}
         items={[
           {
             key: 'current',

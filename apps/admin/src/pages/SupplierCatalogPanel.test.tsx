@@ -2,7 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { SupplierCatalogResponse, SupplierProductDetail } from '../features/catalog/api';
-import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const ADMIN = {
@@ -72,6 +72,7 @@ beforeAll(() => installDomStubs());
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  resetUiPrefs();
 });
 
 describe('supplier products tab', () => {
@@ -122,10 +123,33 @@ describe('supplier products tab', () => {
     expect(within(restored).getByText('FIXTURE-B')).toBeTruthy();
     expect(within(restored).queryByText('FIXTURE-A')).toBeNull();
     expect(await within(restored).findByText('商品名称：尚未获取（选中后读取）')).toBeTruthy();
-    expect(router.state.location.search).toBe('?tab=supplier');
+    // The tab-scoped filter now survives a refresh because it lives in the URL.
+    const restoredSearch = new URLSearchParams(router.state.location.search);
+    expect(restoredSearch.get('tab')).toBe('supplier');
+    expect(restoredSearch.get('supplierQ')).toBe('B');
 
     // The internal tab remains read/write-capable and no write request was sent.
     expect(writeCalls(fetchMock)).toEqual([]);
+  }, 60_000);
+
+  it('restores the supplier keyword from the URL after a refresh', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, SUPPLIER_CATALOG);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog?tab=supplier&supplierQ=FIXTURE-B');
+
+    const section = await screen.findByRole('region', { name: '供应商商品列表' }, { timeout: 5000 });
+    expect(await within(section).findByText('FIXTURE-B', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(within(section).queryByText('FIXTURE-A')).toBeNull();
+    expect((within(section).getByLabelText('上游商品编码') as HTMLInputElement).value).toBe(
+      'FIXTURE-B',
+    );
   }, 60_000);
 
   it('keeps the internal filter when visiting the supplier tab', async () => {

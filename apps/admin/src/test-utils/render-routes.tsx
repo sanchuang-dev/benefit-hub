@@ -3,6 +3,21 @@ import { render } from '@testing-library/react';
 import { App as AntdApp, ConfigProvider } from 'antd';
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { routes } from '../app/routes';
+import { useUiPrefs } from '../shared/lib/ui-prefs';
+
+/**
+ * Clears UI preferences between tests through the persist API, not a concrete
+ * storage API, so the helper keeps working if the backend is swapped. The store
+ * is a module singleton, so without this a tab/view chosen in one test would
+ * leak into the next one even though its component tree was unmounted.
+ *
+ * An async backend (IndexedDB) would make this return a Promise; callers should
+ * then await it in afterEach.
+ */
+export function resetUiPrefs(): void {
+  useUiPrefs.getState().reset();
+  void useUiPrefs.persist.clearStorage();
+}
 
 export function installDomStubs(): void {
   if (!window.matchMedia) {
