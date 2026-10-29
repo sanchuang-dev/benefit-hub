@@ -185,12 +185,17 @@ const directTopupResultSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'inconsistent direct topup item count' });
   }
   const claimed = value.items.filter((item) => item.claimed === true).length;
-  const explicitlyFailed = value.items.some((item) =>
-    item.claimed === false || /^(failed|error|rejected)$/i.test(item.status ?? ''),
-  );
-  if (claimed > value.successCount || (
-    value.allClaimed && (value.successCount !== value.totalCount || explicitlyFailed)
-  )) {
+  // Vendor success is not a delivered benefit until every reported item
+  // is independently consistent with the full completion claim.
+  if (
+    claimed > value.successCount ||
+    (value.allClaimed && (
+      value.successCount !== value.totalCount ||
+      value.items.length !== value.totalCount ||
+      value.items.some((item) => item.claimed !== true || /^(failed|error|rejected)$/i.test(item.status ?? ''))
+    )) ||
+    (!value.allClaimed && value.successCount === value.totalCount)
+  ) {
     ctx.addIssue({ code: 'custom', message: 'contradictory direct topup fulfillment result' });
   }
 });
