@@ -22,6 +22,10 @@ const environmentSchema = z.object({
   // but malformed value is a startup error so a broken auth boundary can never
   // silently fall back to "anybody may write orders".
   BENEFIT_ORDER_CLIENTS_JSON: z.string().optional(),
+  // Only product codes backed by verified supplier evidence may incur a B-mode debit.
+  // A missing or invalid configuration fails closed; never derive this from display names.
+  BENEFIT_B_TRAVEL_PRODUCTS_JSON: z.string().optional(),
+  BENEFIT_B_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
 });
 
 export interface YangmaoInriceConfig {
@@ -79,6 +83,10 @@ export interface AppConfig {
    * A malformed configuration never reaches this state; `loadConfig` throws.
    */
   businessOrderClients: BusinessOrderClientsConfig | null;
+  /** B-mode supplier-verified productCode -> evidence reference (server-only). */
+  verifiedBTravelProducts: Readonly<Record<string, string>>;
+  /** Explicit separate permission for the quota-deducting B write. Default false. */
+  bLiveWritesEnabled: boolean;
 }
 
 /**
@@ -164,6 +172,26 @@ function readBusinessOrderClientsConfig(
   return { clients: [...bySource.values()] };
 }
 
+function readVerifiedBTravelProducts(raw: string | undefined): Record<string, string> {
+  if (!raw?.trim()) return {};
+  let value: unknown;
+  try { value = JSON.parse(raw); } catch {
+    throw new Error('Invalid BENEFIT_B_TRAVEL_PRODUCTS_JSON: malformed JSON');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid BENEFIT_B_TRAVEL_PRODUCTS_JSON: expected code-to-evidence map');
+  }
+  const result: Record<string, string> = {};
+  for (const [code, evidence] of Object.entries(value)) {
+    if (!/^[!-~]{1,64}$/.test(code) || typeof evidence !== 'string' ||
+        !/^[!-~]{8,256}$/.test(evidence)) {
+      throw new Error('Invalid BENEFIT_B_TRAVEL_PRODUCTS_JSON: invalid evidence entry');
+    }
+    result[code] = evidence;
+  }
+  return result;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = environmentSchema.safeParse(env);
   if (!parsed.success) {
@@ -188,5 +216,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       ? Buffer.from(value.BENEFIT_SUPPLIER_MASTER_KEY, 'hex')
       : null,
     businessOrderClients: readBusinessOrderClientsConfig(env),
+    verifiedBTravelProducts: readVerifiedBTravelProducts(value.BENEFIT_B_TRAVEL_PRODUCTS_JSON),
+    bLiveWritesEnabled: value.BENEFIT_B_LIVE_WRITE_ENABLED === 'true',
   };
 }

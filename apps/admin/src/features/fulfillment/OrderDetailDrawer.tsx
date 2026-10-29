@@ -1,10 +1,15 @@
+import { useState } from 'react';
 import {
   Alert,
   Button,
   Descriptions,
   Drawer,
   Empty,
+  Form,
   Grid,
+  Input,
+  Modal,
+  message,
   Skeleton,
   Space,
   Table,
@@ -32,6 +37,8 @@ import {
   providerLabel,
 } from './labels';
 import { useOrderDetailQuery } from './use-orders';
+import { useSessionQuery } from '../auth/use-auth';
+import { reissueDirectTopup } from './api';
 
 const { Text, Title } = Typography;
 
@@ -161,12 +168,48 @@ export function OrderDetailDrawer({
   onClose: () => void;
 }) {
   const screens = Grid.useBreakpoint();
+  const session = useSessionQuery();
+  const [form] = Form.useForm<{
+    phone: string;
+    refCode: string;
+    paymentReference: string;
+  }>();
+  const [messageApi, contextHolder] = message.useMessage();
+  const [reissueOpen, setReissueOpen] = useState(false);
+  const [reissuePending, setReissuePending] = useState(false);
   const detailQuery = useOrderDetailQuery(orderId);
   const errorCopy = detailQuery.isError ? detailErrorCopy(detailQuery.error) : null;
   const detail = detailQuery.data;
 
+  async function handleReissue() {
+    if (!orderId) return;
+    let fields: { phone: string; refCode: string; paymentReference: string };
+    try {
+      fields = await form.validateFields();
+    } catch {
+      return;
+    }
+    setReissuePending(true);
+    try {
+      await reissueDirectTopup(orderId, fields);
+      messageApi.success('上力 B 原单补发已收到可验证结果');
+      form.resetFields();
+      setReissueOpen(false);
+      void detailQuery.refetch();
+    } catch (error) {
+      messageApi.error(error instanceof ApiError
+        ? error.message
+        : '补发结果未能确认，请检查订单最新状态，切勿再次盲目发券');
+      void detailQuery.refetch();
+    } finally {
+      setReissuePending(false);
+    }
+  }
+
   return (
-    <Drawer
+    <>
+      {contextHolder}
+      <Drawer
       open={Boolean(orderId)}
       onClose={onClose}
       title="平台订单详情"
@@ -415,6 +458,141 @@ export function OrderDetailDrawer({
             </section>
           ) : null}
 
+          {detail.fulfillmentMode === 'B' && detail.frozenMapping ? (
+            <section aria-label="上力 B 直充履约">
+              <Title level={5}>上力 B · 纯腾讯出行礼包直充</Title>
+              {detail.directTopup ? (
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Descriptions size="small" column={1} bordered items={[
+                    {
+                      key: 'topupState', label: '实际直充状态',
+                      children: (
+                        <Space size={8} wrap>
+                          <Tag color={
+                            detail.directTopup.state === 'completed' ? 'success' :
+                            detail.directTopup.state === 'partial' ? 'warning' :
+                            detail.directTopup.state === 'rejected' ? 'error' : 'default'
+                          }>
+                            {({
+                              reserved: '已预留，供应商结果待核实',
+                              retrying: '原单补发正在执行',
+                              unknown: '供应商结果未知',
+                              partial: '部分券已发放',
+                              completed: '供应商报告全部发放',
+                              rejected: '供应商已拒绝',
+                            } as const)[detail.directTopup.state]}
+                          </Tag>
+                          <Text type="secondary">B 模式没有 H5 领取链接</Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      key: 'topupRequestId', label: '原始请求号（幂等键）',
+                      children: <Text code copyable>{detail.directTopup.requestId}</Text>,
+                    },
+                    {
+                      key: 'topupOrderNo', label: '上游订单号',
+                      children: detail.directTopup.upstreamOrderNo === null
+                        ? <Text type="secondary">待核实</Text>
+                        : <Text code copyable>{detail.directTopup.upstreamOrderNo}</Text>,
+                    },
+                    {
+                      key: 'topupCounts', label: '发券成功数 / 总数',
+                      children: detail.directTopup.successCount === null ||
+                        detail.directTopup.totalCount === null
+                        ? <Text type="secondary">尚无可信结果</Text>
+                        : <Text>{detail.directTopup.successCount} / {detail.directTopup.totalCount}</Text>,
+                    },
+                    {
+                      key: 'topupVerifiedAt', label: '最近供应商结果时间',
+                      children: detail.directTopup.lastVerifiedAt === null
+                        ? <Text type="secondary">尚未核实</Text>
+                        : formatDateTime(detail.directTopup.lastVerifiedAt),
+                    },
+                    {
+                      key: 'topupUpdatedAt', label: '平台最近更新',
+                      children: formatDateTime(detail.directTopup.updatedAt),
+                    },
+                  ]} />
+                  {detail.directTopup.observations.length > 0 ? (
+                    <section aria-label="原单逐次供应商观察记录">
+                      <Title level={5}>原单逐次观察记录</Title>
+                      <Text type="secondary">
+                        每次供应商答复均独立保存。后次补发只返回部分条目时，
+                        不覆盖以前确认成功的证据；缺少稳定券项 ID，不能按表格行序号拼接同一张券。
+                      </Text>
+                      <Table
+                        rowKey={(_, index) => String(index)}
+                        size="small"
+                        pagination={false}
+                        dataSource={detail.directTopup.observations}
+                        columns={[
+                          { title: '核实时间', dataIndex: 'observedAt', key: 'time',
+                            render: (value: number) => formatDateTime(value) },
+                          { title: '动作', dataIndex: 'operation', key: 'operation',
+                            render: (value: string) => value === 'reissue' ? '原单补发' : '首次直充' },
+                          { title: '成功 / 总数', key: 'counts',
+                            render: (_value, item) => item.successCount + ' / ' + item.totalCount },
+                          { title: '本次返回条目', key: 'items',
+                            render: (_value, item) => item.items.length + ' 条（仅本次观察）' },
+                        ]}
+                      />
+                    </section>
+                  ) : null}
+                  {detail.directTopup.items.length > 0 ? (
+                    <Table
+                      size="small"
+                      rowKey={(_, index) => String(index)}
+                      pagination={false}
+                      dataSource={detail.directTopup.items}
+                      columns={[
+                        { title: '返回条目', key: 'seq', render: (_value, _row, index) => index + 1 },
+                        {
+                          title: '发券结果', key: 'claimed',
+                          render: (_value, item) => item.claimed === true
+                            ? <Tag color="success">确认成功</Tag>
+                            : item.claimed === false
+                              ? <Tag color="error">确认失败</Tag>
+                              : <Tag>未明确</Tag>,
+                        },
+                        {
+                          title: '供应商状态（安全摘要）', dataIndex: 'status',
+                          key: 'status', render: (status: string | undefined) => status ?? '未知',
+                        },
+                      ]}
+                    />
+                  ) : null}
+                  {detail.directTopup.state === 'partial' && session.data?.admin.role === 'admin' ? (
+                    <Button
+                      danger
+                      onClick={() => setReissueOpen(true)}
+                    >
+                      管理员受控补发（原 requestId）
+                    </Button>
+                  ) : null}
+                  <Alert
+                    type={detail.directTopup.state === 'partial' ||
+                      detail.directTopup.state === 'unknown' ? 'warning' : 'info'}
+                    showIcon
+                    title={detail.directTopup.state === 'partial'
+                      ? '存在部分失败，可按原单受控补发'
+                      : detail.directTopup.state === 'unknown'
+                        ? '结果未知，禁止盲目补发'
+                        : '平台记录的供应商观察结果'}
+                    description="以上是经过校验的供应商摘要。items 可能只包含部分返回条目，不能按条数推断总数。补发必须沿用原 requestId、核对收件手机号与支付凭据，并且需要维护者明确开启扣额写权限；本页面不会自动执行。"
+                  />
+                </Space>
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="尚无 B 模式直充记录"
+                  description="本地订单并不等于已扣礼包或已到账。已授权业务方仍须完成服务端资格检查及独立的真实扣额授权。"
+                />
+              )}
+            </section>
+          ) : null}
+
           {detail.fulfillmentMode === 'C' ? (
             <section aria-label="上力 C 公众号礼包券">
               <Title level={5}>上力 C 公众号礼包券</Title>
@@ -549,6 +727,50 @@ export function OrderDetailDrawer({
       ) : (
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可显示的订单详情" />
       )}
-    </Drawer>
+      </Drawer>
+      <Modal
+        open={reissueOpen}
+        title="确认 B 模式原单受控补发"
+        okText="确认按原 requestId 补发"
+        okButtonProps={{ danger: true }}
+        confirmLoading={reissuePending}
+        onOk={() => void handleReissue()}
+        onCancel={() => {
+          if (reissuePending) return;
+          form.resetFields();
+          setReissueOpen(false);
+        }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="这是真实供应商写操作，可能涉及已经扣除的礼包份额"
+          description="仅对部分成功且已核实的原订单开放。系统强制沿用原始 requestId，并验证原收件人与支付凭据；必须由管理员操作且维护者单独开启 B 扣额开关。结果未知时系统拒绝再次补发。"
+        />
+        <Form form={form} layout="vertical" autoComplete="off" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="phone"
+            label="原收件人手机号"
+            rules={[{ required: true, pattern: /^1[3-9]\d{9}$/, message: '请输入原订单的 11 位手机号' }]}
+          >
+            <Input type="tel" autoComplete="off" placeholder="需与原订单完全一致" />
+          </Form.Item>
+          <Form.Item
+            name="refCode"
+            label="原推广编码"
+            rules={[{ required: true, pattern: /^[!-~]{1,64}$/, message: '请填写原推广编码' }]}
+          >
+            <Input autoComplete="off" placeholder="原推广编码" />
+          </Form.Item>
+          <Form.Item
+            name="paymentReference"
+            label="原业务支付或授权凭据号"
+            rules={[{ required: true, pattern: /^[!-~]{1,128}$/, message: '请填写原业务凭据' }]}
+          >
+            <Input autoComplete="off" placeholder="原支付或授权凭据号" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </>
   );
 }

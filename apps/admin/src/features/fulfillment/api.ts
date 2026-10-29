@@ -37,3 +37,19 @@ export async function fetchOrderDetail(id: string): Promise<OperationsOrderDetai
   );
   return body.order;
 }
+
+
+/**
+ * Admin-role / CSRF protected B-mode manual reissue. The upstream requestId
+ * comes from the persisted B operation, NOT from these browser inputs.
+ */
+export async function reissueDirectTopup(
+  id: string,
+  request: { phone: string; refCode: string; paymentReference: string },
+): Promise<OperationsOrderDetailDto> {
+  const body = await apiRequest<{ order: OperationsOrderDetailDto }>(
+    "/api/v1/operations/orders/" + encodeURIComponent(id) + "/direct-topup/reissue",
+    { method: "POST", body: { ...request, confirmReissue: true } },
+  );
+  return body.order;
+}

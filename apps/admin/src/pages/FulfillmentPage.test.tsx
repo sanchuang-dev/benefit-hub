@@ -464,6 +464,111 @@ describe('platform order detail drawer', () => {
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 
+  it('shows the B partial snapshots and requires explicit admin form confirmation for reissue', { timeout: 60_000 }, async () => {
+    const partial = detail({
+      status: 'partially_completed',
+      fulfillmentMode: 'B',
+      directTopup: {
+        state: 'partial',
+        requestId: 'bhBf1f1f1f1f1f1',
+        upstreamOrderNo: 'PKG-B-FICTIONAL-1',
+        successCount: 1,
+        totalCount: 2,
+        items: [{ claimed: true, status: 'completed' }, { claimed: false, status: 'failed' }],
+        observations: [{
+          operation: 'grant',
+          upstreamOrderNo: 'PKG-B-FICTIONAL-1',
+          successCount: 1,
+          totalCount: 2,
+          items: [{ claimed: true, status: 'completed' }, { claimed: false, status: 'failed' }],
+          observedAt: NOW,
+        }],
+        lastVerifiedAt: NOW,
+        attemptedAt: NOW,
+        updatedAt: NOW,
+      },
+    });
+    const completed = detail({
+      ...partial,
+      status: 'completed',
+      directTopup: {
+        ...partial.directTopup!,
+        state: 'completed',
+        successCount: 2,
+        items: [{ claimed: true, status: 'completed' }, { claimed: true, status: 'completed' }],
+      },
+    });
+    let current = partial;
+    let confirmedPostBody: Record<string, unknown> | null = null;
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/auth/csrf') return jsonResponse(200, { csrfToken: 'fictional-csrf-token' });
+      if (url === '/api/v1/operations/orders/order-1/direct-topup/reissue' && init?.method === 'POST') {
+        confirmedPostBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        current = completed;
+        return jsonResponse(200, { order: completed });
+      }
+      if (url === '/api/v1/operations/orders/order-1') return jsonResponse(200, { order: current });
+      if (url.startsWith('/api/v1/operations/orders?')) return jsonResponse(200, listResponse([order({ status: 'partially_completed' })]));
+      return undefined;
+    });
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+    expect(await screen.findByText('原单逐次观察记录', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getByText('PKG-B-FICTIONAL-1')).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+    fireEvent.click(screen.getByRole('button', { name: /管理员受控补发/ }));
+    expect(await screen.findByText('确认 B 模式原单受控补发')).toBeTruthy();
+    // Opening the dialog is not a supplier write.
+    expect(writeCalls(fetchMock)).toEqual([]);
+    fireEvent.change(screen.getByPlaceholderText('需与原订单完全一致'), {
+      target: { value: '13800138000' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('原推广编码'), {
+      target: { value: 'ref_abc123' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('原支付或授权凭据号'), {
+      target: { value: 'PAY-FICTIONAL-B-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: '确认按原 requestId 补发' }));
+    await waitFor(() => expect(confirmedPostBody).not.toBeNull());
+    expect(confirmedPostBody).toEqual({
+      phone: '13800138000', refCode: 'ref_abc123',
+      paymentReference: 'PAY-FICTIONAL-B-1', confirmReissue: true,
+    });
+    expect(writeCalls(fetchMock)).toEqual([
+      'POST /api/v1/operations/orders/order-1/direct-topup/reissue',
+    ]);
+  });
+
+  it('hides the B reissue control for a viewer even when the order is partial', { timeout: 60_000 }, async () => {
+    const partial = detail({
+      status: 'partially_completed',
+      directTopup: {
+        state: 'partial', requestId: 'bhBf1f1f1f1f1f1', upstreamOrderNo: 'PKG-B-FICTIONAL-1',
+        successCount: 1, totalCount: 2, items: [{ claimed: true }, { claimed: false }],
+        observations: [], lastVerifiedAt: NOW, attemptedAt: NOW, updatedAt: NOW,
+      },
+    });
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') {
+        return jsonResponse(200, {
+          admin: { ...ADMIN, role: 'viewer' }, session: { expiresAt: SESSION_EXPIRES_AT },
+        });
+      }
+      if (url === '/api/v1/operations/orders/order-1') return jsonResponse(200, { order: partial });
+      if (url.startsWith('/api/v1/operations/orders?')) return jsonResponse(200, listResponse([order({ status: 'partially_completed' })]));
+      return undefined;
+    });
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+    expect(await screen.findByText('上力 B · 纯腾讯出行礼包直充')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /管理员受控补发/ })).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
   it('shows a legacy order as no frozen mapping and states the absence of local attempt records', { timeout: 60_000 }, async () => {
     const fetchMock = mockFetch((url) => {
       if (url === '/api/v1/auth/session') return sessionResponse();

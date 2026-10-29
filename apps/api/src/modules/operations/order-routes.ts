@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import {
   BUSINESS_ORDER_NO_PATTERN,
+  directTopupReissueRequestSchema,
   BUSINESS_SOURCE_PATTERN,
   OPERATIONS_ORDER_PAGE_SIZES,
   orderStatusSchema,
@@ -11,9 +12,11 @@ import {
 } from '@sanchuang-dev/benefit-contracts';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
-import { requireSession, type AppEnv } from '../../middleware/auth.js';
+import { requireRole, requireSession, type AppEnv } from '../../middleware/auth.js';
 import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
-import { invalidRequest, issueFields } from '../http.js';
+import { invalidRequest, issueFields, readJson } from '../http.js';
+import { createDirectTopupService } from '../orders/b-direct-topup.js';
+import { handleDirectTopupError } from '../orders/business-order-routes.js';
 import {
   createBenefitOrderRepository,
   type OperationsOrderDetail,
@@ -124,6 +127,7 @@ function toDetailDto(detail: OperationsOrderDetail): OperationsOrderDetailDto {
           updatedAt: detail.grant.updatedAt,
         }
       : null,
+    directTopup: detail.directTopup,
     giftVoucher: detail.giftVoucher
       ? {
           state: detail.giftVoucher.state,
@@ -170,6 +174,7 @@ export function createOperationsOrderRoutes(deps: {
 }): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const repository = createBenefitOrderRepository(deps.db);
+  const topupService = createDirectTopupService(deps);
   const requireAuthenticated = requireSession(deps.db, deps.config);
 
   router.get('/orders', requireAuthenticated, (c) => {
@@ -221,6 +226,40 @@ export function createOperationsOrderRoutes(deps: {
     }
     return c.json({ order: toDetailDto(detail) }, 200, NO_STORE_HEADERS);
   });
+
+  /**
+   * Admin-only, CSRF-protected manual reissue. A second vendor write is
+   * impossible until the persisted result is explicitly partial, the exact
+   * original recipient/payment match, and both server-side B write gates pass.
+   * This route never accepts the upstream requestId from the browser.
+   */
+  router.post('/orders/:orderId/direct-topup/reissue', requireAuthenticated,
+    requireRole('admin'), async (c) => {
+      const orderId = z.string().trim().min(1).max(128).safeParse(c.req.param('orderId'));
+      if (!orderId.success) {
+        return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+      }
+      const body = await readJson(c);
+      if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+      const parsed = directTopupReissueRequestSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json(invalidRequest('补发参数不正确', issueFields(parsed.error)), 400, NO_STORE_HEADERS);
+      }
+      const detail = repository.getForOperations(orderId.data);
+      if (!detail) return c.json(apiError('ORDER_NOT_FOUND', '订单不存在'), 404, NO_STORE_HEADERS);
+      try {
+        await topupService.reissue({
+          businessSource: detail.order.businessSource, orderId: orderId.data,
+          phone: parsed.data.phone, refCode: parsed.data.refCode,
+          paymentReference: parsed.data.paymentReference, signal: c.req.raw.signal,
+        });
+        const refreshed = repository.getForOperations(orderId.data);
+        if (!refreshed) throw new Error('B 直充补发订单不存在');
+        return c.json({ order: toDetailDto(refreshed) }, 200, NO_STORE_HEADERS);
+      } catch (error) {
+        return handleDirectTopupError(c, error);
+      }
+    });
 
   return router;
 }

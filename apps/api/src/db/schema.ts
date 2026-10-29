@@ -443,6 +443,55 @@ export const benefitOrderGiftVouchers = sqliteTable(
   ],
 );
 
+
+/**
+ * B-mode direct-topup reservation and sanitized supplier summary.
+ * The phone remains only a keyed HMAC; individual card identifiers and raw
+ * supplier messages never enter this table.
+ */
+export const benefitOrderDirectTopups = sqliteTable(
+  'benefit_order_direct_topups',
+  {
+    orderId: text('order_id').primaryKey().references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    requestId: text('request_id').notNull(),
+    refCode: text('ref_code').notNull(),
+    phoneHmac: text('phone_hmac').notNull(),
+    paymentReference: text('payment_reference').notNull(),
+    state: text('state').notNull(),
+    upstreamOrderNo: text('upstream_order_no'),
+    successCount: integer('success_count'),
+    totalCount: integer('total_count'),
+    itemsSummaryJson: text('items_summary_json'),
+    lastVerifiedAt: integer('last_verified_at'),
+    attemptedAt: integer('attempted_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_direct_topups_request').on(table.requestId),
+    index('idx_benefit_order_direct_topups_state_updated').on(table.state, table.updatedAt),
+  ],
+);
+
+
+/** Immutable, sanitized supplier observations of every confirmed B response.
+ * A follow-up reissue may contain only a subset of item details. Keep each
+ * observation independently instead of guessing item identity by array index.
+ */
+export const benefitOrderDirectTopupObservations = sqliteTable(
+  'benefit_order_direct_topup_observations',
+  {
+    id: text('id').primaryKey(),
+    orderId: text('order_id').notNull().references(() => benefitOrderDirectTopups.orderId, { onDelete: 'restrict' }),
+    operation: text('operation').notNull(),
+    upstreamOrderNo: text('upstream_order_no').notNull(),
+    successCount: integer('success_count').notNull(),
+    totalCount: integer('total_count').notNull(),
+    itemsSummaryJson: text('items_summary_json').notNull(),
+    observedAt: integer('observed_at').notNull(),
+  },
+  (table) => [index('idx_direct_topup_observations_order_observed').on(table.orderId, table.observedAt)],
+);
+
 /** Encrypted server-side provider credentials. No plaintext secrets in DB. */
 export const supplierConnections = sqliteTable('supplier_connections', {
   provider: text('provider').primaryKey(),
