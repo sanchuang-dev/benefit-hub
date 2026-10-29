@@ -148,14 +148,23 @@ const prepaidOrderResultSchema = z.object({
 const rawExpiresAtSchema = z
   .union([z.string().min(1).max(128), z.number().finite().nonnegative()])
   .nullish();
+/** Supplier quota values are observations, never permission to invent extra packs. */
+function hasConsistentVoucherQuota(value: {
+  packTotal?: number | null;
+  packRemaining?: number | null;
+}): boolean {
+  return value.packTotal == null ||
+    value.packRemaining == null ||
+    value.packRemaining <= value.packTotal;
+}
 const giftVoucherLookupSchema = z.object({
   claimUrl: safeClaimUrlSchema.nullish(),
-  packTotal: z.number().int().min(0).nullish(),
+  packTotal: z.number().int().min(1).nullish(),
   packRemaining: z.number().int().min(0).nullish(),
   // Vendor has not yet confirmed timestamp unit/encoding. Preserve the raw
   // bounded scalar without guessing ISO/Unix seconds/milliseconds.
   expiresAt: rawExpiresAtSchema,
-});
+}).refine(hasConsistentVoucherQuota, { path: ['packRemaining'] });
 const issuedVoucherSchema = z.object({
   // The vendor documents the issued code as uppercase; accepting any bounded
   // identifier here avoids inventing a stricter shape than the contract states.
@@ -167,7 +176,7 @@ const issuedVoucherSchema = z.object({
   expiresAt: rawExpiresAtSchema,
   balanceAfter: z.number().int().min(0).nullish(),
   idempotentReplay: z.boolean().nullish(),
-});
+}).refine(hasConsistentVoucherQuota, { path: ['packRemaining'] });
 
 export interface YangmaoOpenV1PurchaseReader {
   queryPrepaidOrder(requestId: string, options?: YangmaoOpenV1ReadOptions): Promise<YangmaoOpenV1PrepaidOrderLookup>;
