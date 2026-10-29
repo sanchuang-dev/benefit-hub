@@ -415,6 +415,108 @@ export function OrderDetailDrawer({
             </section>
           ) : null}
 
+          {detail.fulfillmentMode === 'B' ? (
+            <section aria-label="上力 B 直充履约">
+              <Title level={5}>上力 B · 纯腾讯出行礼包直充</Title>
+              {detail.directTopup ? (
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Descriptions size="small" column={1} bordered items={[
+                    {
+                      key: 'topupState', label: '实际直充状态',
+                      children: (
+                        <Space size={8} wrap>
+                          <Tag color={
+                            detail.directTopup.state === 'completed' ? 'success' :
+                            detail.directTopup.state === 'partial' ? 'warning' :
+                            detail.directTopup.state === 'rejected' ? 'error' : 'default'
+                          }>
+                            {({
+                              reserved: '已预留，供应商结果待核实',
+                              retrying: '原单补发正在执行',
+                              unknown: '供应商结果未知',
+                              partial: '部分券已发放',
+                              completed: '供应商报告全部发放',
+                              rejected: '供应商已拒绝',
+                            } as const)[detail.directTopup.state]}
+                          </Tag>
+                          <Text type="secondary">B 模式没有 H5 领取链接</Text>
+                        </Space>
+                      ),
+                    },
+                    {
+                      key: 'topupRequestId', label: '原始请求号（幂等键）',
+                      children: <Text code copyable>{detail.directTopup.requestId}</Text>,
+                    },
+                    {
+                      key: 'topupOrderNo', label: '上游订单号',
+                      children: detail.directTopup.upstreamOrderNo === null
+                        ? <Text type="secondary">待核实</Text>
+                        : <Text code copyable>{detail.directTopup.upstreamOrderNo}</Text>,
+                    },
+                    {
+                      key: 'topupCounts', label: '发券成功数 / 总数',
+                      children: detail.directTopup.successCount === null ||
+                        detail.directTopup.totalCount === null
+                        ? <Text type="secondary">尚无可信结果</Text>
+                        : <Text>{detail.directTopup.successCount} / {detail.directTopup.totalCount}</Text>,
+                    },
+                    {
+                      key: 'topupVerifiedAt', label: '最近供应商结果时间',
+                      children: detail.directTopup.lastVerifiedAt === null
+                        ? <Text type="secondary">尚未核实</Text>
+                        : formatDateTime(detail.directTopup.lastVerifiedAt),
+                    },
+                    {
+                      key: 'topupUpdatedAt', label: '平台最近更新',
+                      children: formatDateTime(detail.directTopup.updatedAt),
+                    },
+                  ]} />
+                  {detail.directTopup.items.length > 0 ? (
+                    <Table
+                      size="small"
+                      rowKey={(_, index) => String(index)}
+                      pagination={false}
+                      dataSource={detail.directTopup.items}
+                      columns={[
+                        { title: '返回条目', key: 'seq', render: (_value, _row, index) => index + 1 },
+                        {
+                          title: '发券结果', key: 'claimed',
+                          render: (_value, item) => item.claimed === true
+                            ? <Tag color="success">确认成功</Tag>
+                            : item.claimed === false
+                              ? <Tag color="error">确认失败</Tag>
+                              : <Tag>未明确</Tag>,
+                        },
+                        {
+                          title: '供应商状态（安全摘要）', dataIndex: 'status',
+                          key: 'status', render: (status: string | undefined) => status ?? '未知',
+                        },
+                      ]}
+                    />
+                  ) : null}
+                  <Alert
+                    type={detail.directTopup.state === 'partial' ||
+                      detail.directTopup.state === 'unknown' ? 'warning' : 'info'}
+                    showIcon
+                    title={detail.directTopup.state === 'partial'
+                      ? '存在部分失败，可按原单受控补发'
+                      : detail.directTopup.state === 'unknown'
+                        ? '结果未知，禁止盲目补发'
+                        : '平台记录的供应商观察结果'}
+                    description="以上是经过校验的供应商摘要。items 可能只包含部分返回条目，不能按条数推断总数。补发必须沿用原 requestId、核对收件手机号与支付凭据，并且需要维护者明确开启扣额写权限；本页面不会自动执行。"
+                  />
+                </Space>
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="尚无 B 模式直充记录"
+                  description="本地订单并不等于已扣礼包或已到账。已授权业务方仍须完成服务端资格检查及独立的真实扣额授权。"
+                />
+              )}
+            </section>
+          ) : null}
+
           {detail.fulfillmentMode === 'C' ? (
             <section aria-label="上力 C 公众号礼包券">
               <Title level={5}>上力 C 公众号礼包券</Title>
