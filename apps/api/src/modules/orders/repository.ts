@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
+import { directTopupSummarySchema, type DirectTopupSummaryDto } from '@sanchuang-dev/benefit-contracts';
 import {
+  benefitOrderDirectTopups,
   benefitOrderGiftVouchers,
   benefitOrderGrants,
   benefitOrders,
@@ -261,6 +263,7 @@ export interface OperationsOrderDetail {
   grant: PrepaidOrderGrant | null;
   /** C-mode operation identity, when one was ever reserved. */
   giftVoucher: GiftVoucherOperation | null;
+  directTopup: DirectTopupSummaryDto | null;
   statusEvents: OrderStatusEvent[];
   attempts: FulfillmentAttempt[];
 }
@@ -1651,6 +1654,8 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
 
       const grantRow = loadGrantRow(db, order.id);
       const giftVoucherRow = loadGiftVoucherRow(db, order.id);
+      const bTopupRow = db.select().from(benefitOrderDirectTopups)
+        .where(eq(benefitOrderDirectTopups.orderId, order.id)).get();
 
       return {
         order,
@@ -1667,6 +1672,17 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           : null,
         grant: grantRow ? toPrepaidGrant(grantRow) : null,
         giftVoucher: giftVoucherRow ? toGiftVoucherOperation(giftVoucherRow) : null,
+        directTopup: bTopupRow ? directTopupSummarySchema.parse({
+          state: bTopupRow.state,
+          requestId: bTopupRow.requestId,
+          upstreamOrderNo: bTopupRow.upstreamOrderNo,
+          successCount: bTopupRow.successCount,
+          totalCount: bTopupRow.totalCount,
+          items: bTopupRow.itemsSummaryJson === null ? [] : JSON.parse(bTopupRow.itemsSummaryJson),
+          lastVerifiedAt: bTopupRow.lastVerifiedAt,
+          attemptedAt: bTopupRow.attemptedAt,
+          updatedAt: bTopupRow.updatedAt,
+        }) : null,
         statusEvents: loadStatusEvents(db, order.id),
         attempts: loadAttempts(db, order.id),
       };
