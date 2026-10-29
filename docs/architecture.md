@@ -158,6 +158,7 @@ compose.yaml
 
 - React Router 管理登录入口、各业务域导航页、独立订单详情、浏览器历史与 URL 查询参数。顶部工作页签使用受控 Tabs 与路由映射；路由才是页面位置的来源，避免再复制一套“当前页面”真相源。
 - 侧栏导航的模型与菜单键解析集中在 `apps/admin/src/app/shell/navigation.ts`（业务域分组、页面、`activeMenuKey()`、搜索过滤），展示层为 `apps/admin/src/app/shell/AppSidebar.tsx`（品牌区、菜单搜索、Ant Design Menu 与折叠）；`AppShell.tsx` 只负责顶栏、工作页签与内容区。菜单搜索是纯展示过滤，不影响路由、页签或 TanStack Query 数据。
+- 页面头部属于壳层固定区：各页面继续渲染自己的 `.page-header`（标题、说明与主操作），壳层样式将它固定在内容区顶部（`position: sticky`）并遮住其下方 16px 间距，页面正文独立滚动；新页面沿用 `.page` + `.page-header` 即自动获得同一行为。
 - TanStack Query 管理 API 读写、分页缓存、失效、重试与可观察的加载/错误状态。**供应商扣额/发放/映射激活等写操作不做乐观成功**。
 - React 局部 useState / Ant Design Form 实例承载当前编辑会话、草稿表单及临时 Drawer 状态。只有确属跨页面共享的 UI 偏好才使用 Zustand；不要把整份列表数据或 Query 缓存搬进 Zustand。
 - 商品两个业务 Tab 分别保持筛选、分页、排序与表格/卡片偏好；卡片和 Table **消费相同的请求结果**。URL 查询参数可分享；用户切换页面不应悄悄丢失条件。

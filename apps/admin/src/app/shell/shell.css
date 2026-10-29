@@ -121,12 +121,32 @@
   width: 100%;
 }
 
+/*
+ * The page header is shell chrome, not scrolling content: it stays pinned to
+ * the top of the work area while the page body scrolls underneath. The ::after
+ * strip fills the 16px gap between header and content so scrolling rows cannot
+ * show through that margin strip.
+ */
 .page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   min-height: 66px;
   margin: 0 -16px 16px;
   padding: 13px 16px 11px;
   background: #fff;
   border-bottom: 1px solid #e8eaed;
+}
+
+.page-header::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -17px;
+  left: 0;
+  height: 16px;
+  background: #f5f6f8;
+  pointer-events: none;
 }
 
 .page-header h2 {
