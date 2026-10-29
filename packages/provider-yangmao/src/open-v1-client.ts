@@ -185,9 +185,16 @@ const directTopupResultSchema = z.object({
     ctx.addIssue({ code: 'custom', message: 'inconsistent direct topup item count' });
   }
   const claimed = value.items.filter((item) => item.claimed === true).length;
+  // The vendor fields are independent: a claimed=false item with completed
+  // status (or the reverse) is not trustworthy completion evidence.
+  const contradictoryItem = value.items.some((item) =>
+    (item.claimed === false && /^(completed|success)$/i.test(item.status ?? '')) ||
+    (item.claimed === true && /^(failed|error|rejected)$/i.test(item.status ?? ''))
+  );
   // Vendor success is not a delivered benefit until every reported item
   // is independently consistent with the full completion claim.
   if (
+    contradictoryItem ||
     claimed > value.successCount ||
     (value.allClaimed && (
       value.successCount !== value.totalCount ||
