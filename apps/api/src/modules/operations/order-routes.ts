@@ -124,6 +124,7 @@ function toDetailDto(detail: OperationsOrderDetail): OperationsOrderDetailDto {
           updatedAt: detail.grant.updatedAt,
         }
       : null,
+    directTopup: detail.directTopup,
     giftVoucher: detail.giftVoucher
       ? {
           state: detail.giftVoucher.state,
