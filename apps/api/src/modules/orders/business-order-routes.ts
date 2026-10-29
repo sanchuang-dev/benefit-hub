@@ -314,6 +314,7 @@ function toDirectTopupResponse(outcome: DirectTopupOutcome): DirectTopupResponse
       successCount: topup.successCount,
       totalCount: topup.totalCount,
       items: topup.items,
+      observations: topup.observations,
       lastVerifiedAt: topup.lastVerifiedAt,
       attemptedAt: topup.attemptedAt,
       updatedAt: topup.updatedAt,

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
+import { and, asc, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
 import { directTopupSummarySchema, type DirectTopupSummaryDto } from '@sanchuang-dev/benefit-contracts';
 import {
+  benefitOrderDirectTopupObservations,
   benefitOrderDirectTopups,
   benefitOrderGiftVouchers,
   benefitOrderGrants,
@@ -1679,6 +1680,17 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           successCount: bTopupRow.successCount,
           totalCount: bTopupRow.totalCount,
           items: bTopupRow.itemsSummaryJson === null ? [] : JSON.parse(bTopupRow.itemsSummaryJson),
+          observations: db.select().from(benefitOrderDirectTopupObservations)
+            .where(eq(benefitOrderDirectTopupObservations.orderId, order.id))
+            .orderBy(asc(benefitOrderDirectTopupObservations.observedAt),
+              asc(benefitOrderDirectTopupObservations.id)).all().map((entry) => ({
+              operation: entry.operation,
+              upstreamOrderNo: entry.upstreamOrderNo,
+              successCount: entry.successCount,
+              totalCount: entry.totalCount,
+              items: JSON.parse(entry.itemsSummaryJson),
+              observedAt: entry.observedAt,
+            })),
           lastVerifiedAt: bTopupRow.lastVerifiedAt,
           attemptedAt: bTopupRow.attemptedAt,
           updatedAt: bTopupRow.updatedAt,

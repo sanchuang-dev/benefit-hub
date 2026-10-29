@@ -512,6 +512,31 @@ export function OrderDetailDrawer({
                       children: formatDateTime(detail.directTopup.updatedAt),
                     },
                   ]} />
+                  {detail.directTopup.observations.length > 0 ? (
+                    <section aria-label="原单逐次供应商观察记录">
+                      <Title level={5}>原单逐次观察记录</Title>
+                      <Text type="secondary">
+                        每次供应商答复均独立保存。后次补发只返回部分条目时，
+                        不覆盖以前确认成功的证据；缺少稳定券项 ID，不能按表格行序号拼接同一张券。
+                      </Text>
+                      <Table
+                        rowKey={(_, index) => String(index)}
+                        size="small"
+                        pagination={false}
+                        dataSource={detail.directTopup.observations}
+                        columns={[
+                          { title: '核实时间', dataIndex: 'observedAt', key: 'time',
+                            render: (value: number) => formatDateTime(value) },
+                          { title: '动作', dataIndex: 'operation', key: 'operation',
+                            render: (value: string) => value === 'reissue' ? '原单补发' : '首次直充' },
+                          { title: '成功 / 总数', key: 'counts',
+                            render: (_value, item) => item.successCount + ' / ' + item.totalCount },
+                          { title: '本次返回条目', key: 'items',
+                            render: (_value, item) => item.items.length + ' 条（仅本次观察）' },
+                        ]}
+                      />
+                    </section>
+                  ) : null}
                   {detail.directTopup.items.length > 0 ? (
                     <Table
                       size="small"

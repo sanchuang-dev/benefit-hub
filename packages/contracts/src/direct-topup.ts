@@ -19,6 +19,18 @@ export const directTopupStateSchema = z.enum([
   'reserved', 'unknown', 'partial', 'completed', 'rejected', 'retrying',
 ]);
 
+export const directTopupObservationSchema = z.object({
+  operation: z.enum(['grant', 'reissue']),
+  upstreamOrderNo: z.string().min(1).max(128),
+  successCount: z.number().int().nonnegative(),
+  totalCount: z.number().int().positive(),
+  items: z.array(z.object({
+    claimed: z.boolean().optional(),
+    status: z.string().max(128).optional(),
+  }).strict()).max(100),
+  observedAt: z.number().int().nonnegative(),
+}).strict();
+
 export const directTopupSummarySchema = z.object({
   state: directTopupStateSchema,
   requestId: z.string().min(1).max(64),
@@ -29,6 +41,7 @@ export const directTopupSummarySchema = z.object({
     claimed: z.boolean().optional(),
     status: z.string().max(128).optional(),
   }).strict()).max(100),
+  observations: z.array(directTopupObservationSchema),
   lastVerifiedAt: z.number().int().nonnegative().nullable(),
   attemptedAt: z.number().int().nonnegative(),
   updatedAt: z.number().int().nonnegative(),

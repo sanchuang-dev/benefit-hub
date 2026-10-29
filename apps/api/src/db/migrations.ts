@@ -604,6 +604,28 @@ export const migrations: readonly Migration[] = [
       BEGIN
         SELECT RAISE(ABORT, 'B direct topup attempts are never deleted');
       END;
+      -- Immutable sanitized snapshots preserve past successful items when a
+      -- reissue response returns only a subset without stable supplier item IDs.
+      CREATE TABLE IF NOT EXISTS benefit_order_direct_topup_observations (
+        id TEXT PRIMARY KEY NOT NULL,
+        order_id TEXT NOT NULL REFERENCES benefit_order_direct_topups(order_id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL CHECK (operation IN ('grant','reissue')),
+        upstream_order_no TEXT NOT NULL CHECK(length(upstream_order_no) BETWEEN 1 AND 128),
+        success_count INTEGER NOT NULL CHECK (success_count >= 0),
+        total_count INTEGER NOT NULL CHECK (total_count >= 1),
+        items_summary_json TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        CHECK (success_count <= total_count)
+      );
+      CREATE INDEX IF NOT EXISTS idx_direct_topup_observations_order_observed
+        ON benefit_order_direct_topup_observations(order_id, observed_at);
+      CREATE TRIGGER IF NOT EXISTS trg_direct_topup_observations_no_update
+      BEFORE UPDATE ON benefit_order_direct_topup_observations
+      BEGIN SELECT RAISE(ABORT, 'B provider observations are append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS trg_direct_topup_observations_no_delete
+      BEFORE DELETE ON benefit_order_direct_topup_observations
+      BEGIN SELECT RAISE(ABORT, 'B provider observations are never deleted'); END;
+
     `,
   },
 ];

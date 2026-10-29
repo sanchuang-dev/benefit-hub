@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { YangmaoOpenV1DirectTopupResult } from '@sanchuang-dev/provider-yangmao';
 import type { AppDatabase } from '../../db/client.js';
 import {
+  benefitOrderDirectTopupObservations,
   benefitOrderDirectTopups,
   benefitOrders,
   benefitOrderStatusEvents,
@@ -34,6 +35,14 @@ export interface DirectTopupOperation {
   totalCount: number | null;
   /** Intentionally no supplier item ids, raw messages, or phone. */
   items: Array<{ claimed?: boolean; status?: string }>;
+  observations: Array<{
+    operation: 'grant' | 'reissue';
+    upstreamOrderNo: string;
+    successCount: number;
+    totalCount: number;
+    items: Array<{ claimed?: boolean; status?: string }>;
+    observedAt: number;
+  }>;
   lastVerifiedAt: number | null;
   attemptedAt: number;
   updatedAt: number;
@@ -43,7 +52,10 @@ export class DirectTopupConflictError extends Error {}
 export class DirectTopupUnknownError extends Error {}
 export class DirectTopupInProgressError extends Error {}
 
-function toOperation(row: typeof benefitOrderDirectTopups.$inferSelect): DirectTopupOperation {
+function toOperation(
+  row: typeof benefitOrderDirectTopups.$inferSelect,
+  observations: Array<typeof benefitOrderDirectTopupObservations.$inferSelect> = [],
+): DirectTopupOperation {
   if (!['reserved', 'unknown', 'partial', 'completed', 'rejected', 'retrying'].includes(row.state)) {
     throw new DirectTopupConflictError('B 模式状态损坏');
   }
@@ -59,6 +71,14 @@ function toOperation(row: typeof benefitOrderDirectTopups.$inferSelect): DirectT
     ...row,
     state: row.state as DirectTopupState,
     items: parsed as DirectTopupOperation['items'],
+    observations: observations.map((entry) => ({
+      operation: entry.operation as 'grant' | 'reissue',
+      upstreamOrderNo: entry.upstreamOrderNo,
+      successCount: entry.successCount,
+      totalCount: entry.totalCount,
+      items: JSON.parse(entry.itemsSummaryJson) as DirectTopupOperation['items'],
+      observedAt: entry.observedAt,
+    })),
   };
 }
 
@@ -66,7 +86,11 @@ export function createDirectTopupRepository(db: AppDatabase) {
   function get(orderId: string): DirectTopupOperation | null {
     const row = db.select().from(benefitOrderDirectTopups)
       .where(eq(benefitOrderDirectTopups.orderId, orderId)).limit(1).get();
-    return row ? toOperation(row) : null;
+    if (!row) return null;
+    return toOperation(row, db.select().from(benefitOrderDirectTopupObservations)
+      .where(eq(benefitOrderDirectTopupObservations.orderId, orderId))
+      .orderBy(asc(benefitOrderDirectTopupObservations.observedAt),
+        asc(benefitOrderDirectTopupObservations.id)).all());
   }
 
   /** Durable, immutable identity and pre-send unknown fact in one IMMEDIATE lock. */
@@ -214,6 +238,27 @@ export function createDirectTopupRepository(db: AppDatabase) {
         state = 'rejected';
         status = 'failed';
       }
+      const sanitizedItems = input.observed?.items.map((item) => ({
+        ...(item.claimed === undefined ? {} : { claimed: item.claimed }),
+        ...(item.status !== undefined &&
+          /^(completed|failed|pending|processing|unknown|rejected)$/i.test(item.status)
+          ? { status: item.status.toLowerCase() } : {}),
+      }));
+      // Every accepted supplier response gets its own append-only evidence.
+      // Missing stable item IDs mean different snapshots MUST NOT be merged
+      // based on array positions or shown as independent newly-issued cards.
+      if (input.observed && sanitizedItems) {
+        tx.insert(benefitOrderDirectTopupObservations).values({
+          id: randomUUID(),
+          orderId: input.orderId,
+          operation: input.kind,
+          upstreamOrderNo: input.observed.orderNo,
+          successCount: input.observed.successCount,
+          totalCount: input.observed.totalCount,
+          itemsSummaryJson: JSON.stringify(sanitizedItems),
+          observedAt: input.occurredAt,
+        }).run();
+      }
       const next = {
         state,
         updatedAt: input.occurredAt,
@@ -222,15 +267,7 @@ export function createDirectTopupRepository(db: AppDatabase) {
           successCount: input.observed.successCount,
           totalCount: input.observed.totalCount,
           // Never store raw supplier messages, voucher keys, or arbitrary fields.
-          // Supplier status is not a safe free-text field. Preserve only a
-          // small recognized vocabulary; never persist arbitrary provider
-          // strings that might contain recipient/card details.
-          itemsSummaryJson: JSON.stringify(input.observed.items.map((item) => ({
-            ...(item.claimed === undefined ? {} : { claimed: item.claimed }),
-            ...(item.status !== undefined &&
-              /^(completed|failed|pending|processing|unknown|rejected)$/i.test(item.status)
-                ? { status: item.status.toLowerCase() } : {}),
-          }))),
+          itemsSummaryJson: JSON.stringify(sanitizedItems),
           lastVerifiedAt: input.occurredAt,
         } : {}),
       };
@@ -257,7 +294,11 @@ export function createDirectTopupRepository(db: AppDatabase) {
       const refreshed = tx.select().from(benefitOrderDirectTopups)
         .where(eq(benefitOrderDirectTopups.orderId,input.orderId)).get();
       if (!refreshed) throw new Error('B 结算记录丢失');
-      return { orderStatus: status, operation: toOperation(refreshed) };
+      const recorded = tx.select().from(benefitOrderDirectTopupObservations)
+        .where(eq(benefitOrderDirectTopupObservations.orderId, input.orderId))
+        .orderBy(asc(benefitOrderDirectTopupObservations.observedAt),
+          asc(benefitOrderDirectTopupObservations.id)).all();
+      return { orderStatus: status, operation: toOperation(refreshed, recorded) };
     }, { behavior: 'immediate' });
   }
 
