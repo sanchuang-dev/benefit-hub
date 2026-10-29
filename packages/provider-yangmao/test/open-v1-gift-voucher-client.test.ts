@@ -208,6 +208,7 @@ describe('C-mode gift-voucher client', () => {
     { name: 'malformed voucherCode', data: { voucherCode: 'GV CODE/1', claimUrl: CLAIM_URL } },
     { name: 'negative packRemaining', data: { voucherCode: VOUCHER_CODE, claimUrl: CLAIM_URL, packRemaining: -1 } },
     { name: 'fractional packTotal', data: { voucherCode: VOUCHER_CODE, claimUrl: CLAIM_URL, packTotal: 1.5 } },
+    { name: 'impossible quota', data: { voucherCode: VOUCHER_CODE, claimUrl: CLAIM_URL, packTotal: 3, packRemaining: 4 } },
     { name: 'negative balanceAfter', data: { voucherCode: VOUCHER_CODE, claimUrl: CLAIM_URL, balanceAfter: -1 } },
     { name: 'non-boolean replay flag', data: { voucherCode: VOUCHER_CODE, claimUrl: CLAIM_URL, idempotentReplay: 'false' } },
   ])('rejects a $name response as unverified, never as a successful issuance', async ({ data }) => {
@@ -216,6 +217,21 @@ describe('C-mode gift-voucher client', () => {
     expect(error.code).toBe('YANGMAO_OPEN_V1_RESPONSE_INVALID');
     expect(error.message).not.toContain(VOUCHER_CODE);
     expect(error.message).not.toContain(CLAIM_URL);
+  });
+
+  it('rejects an inconsistent C lookup quota, but accepts missing optional quota fields', async () => {
+    const contradictory = createClient(async () =>
+      jsonResponse({ code: 0, data: { packTotal: 3, packRemaining: 4 } }),
+    );
+    const bad = await captureError(contradictory.queryGiftVoucher(VOUCHER_CODE));
+    expect(bad.code).toBe('YANGMAO_OPEN_V1_RESPONSE_INVALID');
+
+    const partial = createClient(async () =>
+      jsonResponse({ code: 0, data: { packRemaining: 2 } }),
+    );
+    await expect(partial.queryGiftVoucher(VOUCHER_CODE)).resolves.toMatchObject({
+      packRemaining: 2,
+    });
   });
 
   it.each([
