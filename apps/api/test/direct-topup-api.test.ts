@@ -232,6 +232,9 @@ describe('B-mode direct topup Hono → mock supplier (never real quota)', () => 
       const repo = createDirectTopupRepository(server.database.db);
       expect(repo.get(id)?.state).toBe('partial');
       expect(repo.get(id)?.items).toHaveLength(2);
+      // The first partial grant may leave a real unclaimed benefit. Reissue
+      // is the SAME supplier purchase, not a second purchase-check.
+      vendor.state.eligible = false;
       vendor.state.mode = 'completed';
       const reissued = await reissue(server, id);
       expect(reissued.status).toBe(200);
@@ -239,6 +242,7 @@ describe('B-mode direct topup Hono → mock supplier (never real quota)', () => 
       expect(complete.order.status).toBe('completed');
       expect(complete.topup.state).toBe('completed');
       expect(vendor.writes()).toHaveLength(2);
+      expect(vendor.reads()).toHaveLength(1);
       expect(JSON.parse(vendor.writes()[0]!.body).requestId)
         .toBe(JSON.parse(vendor.writes()[1]!.body).requestId);
       expect((await reissue(server, id)).status).toBe(409);
