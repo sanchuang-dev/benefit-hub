@@ -10,6 +10,11 @@ export const directTopupRequestSchema = z.object({
   paymentReference: businessOrderNoSchema,
 }).strict();
 
+export const directTopupReissueRequestSchema = directTopupRequestSchema.extend({
+  // A replay is never implied by repeating the initial endpoint.
+  confirmReissue: z.literal(true),
+});
+
 export const directTopupStateSchema = z.enum([
   'reserved', 'unknown', 'partial', 'completed', 'rejected', 'retrying',
 ]);
