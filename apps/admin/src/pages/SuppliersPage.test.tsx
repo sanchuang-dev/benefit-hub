@@ -108,4 +108,33 @@ describe('Yangmao supplier management', () => {
     fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
     expect(await screen.findByText('尚未配置上力只读凭证')).toBeTruthy();
   }, 20_000);
+  it('runs a real-shaped A/B read only after explicit admin input and reports vendor fields', async () => {
+    const calls: { url: string; method: string; body?: unknown }[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const method = init?.method ?? 'GET';
+      calls.push({ url, method, body: init?.body });
+      if (url === '/api/v1/auth/session') return respond(200, { admin: ADMIN, session: { expiresAt: Date.now() + 3_600_000 } });
+      if (url === '/api/v1/suppliers/yangmao') return respond(200, { supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: true } } });
+      if (url === '/api/v1/auth/csrf') return respond(200, { csrfToken: 'fixture-csrf' });
+      if (url === '/api/v1/suppliers/yangmao/purchase-check' && method === 'POST') {
+        return respond(200, { eligibility: {
+          provider: 'yangmao', observedAt: '2026-10-29T00:00:00Z',
+          purchaseRestricted: true, giftUnclaimed: false, lotteryUnbet: false,
+        } });
+      }
+      throw new Error('Unexpected request: ' + url);
+    }));
+    renderRoutes('/suppliers/yangmao');
+    expect(await screen.findByRole('heading', { name: '上力' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('tab', { name: '只读联调' }));
+    const field = await screen.findByRole('textbox', { name: '获授权测试手机号' });
+    fireEvent.change(field, { target: { value: '13800138000' } });
+    fireEvent.click(screen.getByRole('button', { name: '真实查询' }));
+    expect(await screen.findByText('限领中')).toBeTruthy();
+    expect(calls.some((c) => c.url === '/api/v1/suppliers/yangmao/purchase-check' &&
+      c.method === 'POST' && c.body === JSON.stringify({ phone: '13800138000' }))).toBe(true);
+    expect(screen.getByText(/响应成功不等于已扣额、发券或到账/)).toBeTruthy();
+  }, 20_000);
+
 });

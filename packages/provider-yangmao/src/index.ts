@@ -57,6 +57,8 @@ export {
   DEFAULT_OPEN_V1_TIMEOUT_MS,
   type YangmaoOpenV1ClientOptions,
   type YangmaoOpenV1PurchaseReader,
+  type YangmaoOpenV1PrepaidOrderLookup,
+  type YangmaoOpenV1GiftVoucherLookup,
   type YangmaoOpenV1ReadOptions,
   type YangmaoOpenV1Transport,
 } from './open-v1-client.js';

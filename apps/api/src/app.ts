@@ -14,6 +14,7 @@ import { createCatalogMappingRoutes } from './modules/catalog/mapping-routes.js'
 import { createCatalogRoutes } from './modules/catalog/routes.js';
 import { createSupplierCatalogRoutes } from './modules/catalog/supplier-catalog-routes.js';
 import { createSupplierManagementRoutes } from './modules/suppliers/routes.js';
+import { createSupplierReadOperationRoutes } from './modules/suppliers/read-operations-routes.js';
 import {
   BUSINESS_ORDER_COLLECTION_PATH,
   createBusinessOrderRoutes,
@@ -84,6 +85,7 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.route('/api/v1/catalog', createCatalogMappingRoutes(deps));
   app.route('/api/v1/catalog', createSupplierCatalogRoutes(deps));
   app.route('/api/v1/suppliers', createSupplierManagementRoutes(deps));
+  app.route('/api/v1/suppliers', createSupplierReadOperationRoutes(deps));
   app.route('/api/v1/business/orders', createBusinessOrderRoutes(deps));
   app.route('/api/v1/operations', createOperationsOrderRoutes(deps));
 
