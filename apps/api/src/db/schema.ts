@@ -492,6 +492,36 @@ export const benefitOrderDirectTopupObservations = sqliteTable(
   (table) => [index('idx_direct_topup_observations_order_observed').on(table.orderId, table.observedAt)],
 );
 
+/**
+ * One durable D-mode dispatch operation per platform order.
+ *
+ * The row is reserved before the amount-deducting supplier POST. The stable
+ * partnerOrderNo is the provider idempotency key; phone_hmac prevents a repeated
+ * call from silently changing the recipient without persisting the raw mobile.
+ * Raw fulfillmentSummary/card material is intentionally not stored here.
+ */
+export const benefitOrderDispatches = sqliteTable(
+  'benefit_order_dispatches',
+  {
+    orderId: text('order_id')
+      .primaryKey()
+      .references(() => benefitOrders.id, { onDelete: 'restrict' }),
+    partnerOrderNo: text('partner_order_no').notNull(),
+    state: text('state').notNull(),
+    phoneHmac: text('phone_hmac').notNull(),
+    paymentReference: text('payment_reference').notNull(),
+    upstreamOrderNo: text('upstream_order_no'),
+    providerStatus: text('provider_status'),
+    lastVerifiedAt: integer('last_verified_at'),
+    attemptedAt: integer('attempted_at').notNull(),
+    updatedAt: integer('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('ux_benefit_order_dispatches_partner_order').on(table.partnerOrderNo),
+    index('idx_benefit_order_dispatches_state_updated').on(table.state, table.updatedAt),
+  ],
+);
+
 /** Encrypted server-side provider credentials. No plaintext secrets in DB. */
 export const supplierConnections = sqliteTable('supplier_connections', {
   provider: text('provider').primaryKey(),
