@@ -427,6 +427,64 @@ describe('D-mode dispatch Hono → mock supplier (never real balance)', () => {
     }
   }, 20_000);
 
+  it('allows only an authenticated admin with explicit confirmation to perform one D write, then only queries the same order', async () => {
+    const vendor = await mockVendor();
+    const server = startServer(vendor);
+    try {
+      const order = await createOrder(server, seedDProduct(server));
+
+      await seedAccount(server, { username: 'ops.admin.d', role: 'admin' });
+      await seedAccount(server, { username: 'ops.viewer.d', role: 'viewer' });
+      const admin = new TestClient(server);
+      const viewer = new TestClient(server);
+      expect((await admin.login('ops.admin.d', TEST_PASSWORD)).status).toBe(200);
+      expect((await viewer.login('ops.viewer.d', TEST_PASSWORD)).status).toBe(200);
+
+      const viewerDenied = await viewer.post(
+        `/api/v1/operations/orders/${order.id}/dispatch`,
+        { mobile: MOBILE, paymentReference: PAYMENT_REFERENCE, confirmDispatch: true },
+      );
+      expect(viewerDenied.status).toBe(403);
+      expect(vendor.calls).toHaveLength(0);
+
+      const noConfirm = await admin.post(
+        `/api/v1/operations/orders/${order.id}/dispatch`,
+        { mobile: MOBILE, paymentReference: PAYMENT_REFERENCE },
+      );
+      expect(noConfirm.status).toBe(400);
+      expect(vendor.calls).toHaveLength(0);
+
+      const acceptedResponse = await admin.post(
+        `/api/v1/operations/orders/${order.id}/dispatch`,
+        { mobile: MOBILE, paymentReference: PAYMENT_REFERENCE, confirmDispatch: true },
+      );
+      expect(acceptedResponse.status).toBe(200);
+      const accepted = operationsOrderDetailResponseSchema.parse(await acceptedResponse.json());
+      expect(accepted.order.dispatch?.state).toBe('accepted');
+      expect(accepted.order.status).toBe('processing');
+      expect(vendor.writes()).toHaveLength(1);
+      expect(vendor.reads()).toHaveLength(0);
+
+      const recoveredResponse = await admin.post(
+        `/api/v1/operations/orders/${order.id}/dispatch/recover`,
+        {},
+      );
+      expect(recoveredResponse.status).toBe(200);
+      const recovered = operationsOrderDetailResponseSchema.parse(await recoveredResponse.json());
+      expect(recovered.order.dispatch).toMatchObject({
+        state: 'accepted',
+        upstreamOrderNo: 'D-UPSTREAM-FICTIONAL-1',
+        providerStatus: 'RECEIVE',
+      });
+      expect(recovered.order.status).toBe('processing');
+      expect(vendor.writes()).toHaveLength(1);
+      expect(vendor.reads()).toHaveLength(1);
+    } finally {
+      server.close();
+      await vendor.close();
+    }
+  }, 20_000);
+
   it('rejects caller-controlled supplier fields and cross-tenant access before any vendor call', async () => {
     const vendor = await mockVendor();
     const server = startServer(vendor);
