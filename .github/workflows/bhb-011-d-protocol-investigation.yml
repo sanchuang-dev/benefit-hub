@@ -1,4 +1,4 @@
-name: BHB-011-D Read-only Signature Shape Probe
+name: BHB-011-D Read-only Order Query DTO Probe
 
 on:
   workflow_dispatch:
@@ -12,16 +12,16 @@ permissions:
   contents: read
 
 jobs:
-  signature-shape:
+  order-query-dto-shape:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 10
     steps:
       - name: Install SSH transport
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Reverse-engineer D GET signed JSON shape using product detail control
+      - name: Probe null-serialized DTO shapes for D order query
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -60,15 +60,42 @@ jobs:
 
           const config = loadConfig(process.env);
           const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-          async function rawGet(supplier, label, path, signedBody) {
+          function permutations(items) {
+            if (items.length <= 1) return [items];
+            const result = [];
+            for (let i = 0; i < items.length; i += 1) {
+              const head = items[i];
+              const rest = items.slice(0, i).concat(items.slice(i + 1));
+              for (const tail of permutations(rest)) result.push([head, ...tail]);
+            }
+            return result;
+          }
+
+          function combinations(items, size, start = 0, prefix = [], out = []) {
+            if (prefix.length === size) {
+              out.push([...prefix]);
+              return out;
+            }
+            for (let i = start; i < items.length; i += 1) {
+              prefix.push(items[i]);
+              combinations(items, size, i + 1, prefix, out);
+              prefix.pop();
+            }
+            return out;
+          }
+
+          async function probe(supplier, caseNo, keys) {
+            const signedObject = {};
+            for (const key of keys) signedObject[key] = null;
+            const signedBody = JSON.stringify(signedObject);
             const timestamp = String(Date.now());
             const signature = createInriceSignature(supplier.appSecret, timestamp, signedBody);
-            let status = null;
-            let rawBody = '';
-            let transportError = null;
-            try {
-              const response = await fetch(new URL(path, supplier.baseUrl), {
+
+            const response = await fetch(
+              new URL('/api/open/inrice/v1/orders/query', supplier.baseUrl),
+              {
                 method: 'GET',
                 headers: {
                   'X-App-Key': supplier.appKey,
@@ -78,22 +105,25 @@ jobs:
                 },
                 redirect: 'manual',
                 signal: AbortSignal.timeout(10_000),
-              });
-              status = response.status;
-              rawBody = await response.text();
-            } catch (error) {
-              transportError = error instanceof Error ? error.message : String(error);
-            }
+              },
+            );
+            const rawBody = await response.text();
+            let vendorCode = null;
+            try {
+              const parsed = JSON.parse(rawBody);
+              if (Number.isInteger(parsed?.code)) vendorCode = parsed.code;
+            } catch {}
 
-            console.log('=== ' + label + ' ===');
-            console.log('path=' + path);
+            console.log('=== CASE ' + String(caseNo).padStart(3, '0') + ' ===');
+            console.log('dto_keys_in_order=' + keys.join(','));
             console.log('signed_json=' + signedBody);
-            console.log('http_status=' + (status ?? 'transport_error'));
-            if (transportError) console.log('transport_error_raw=' + transportError);
+            console.log('http_status=' + response.status);
+            console.log('vendor_code=' + (vendorCode ?? 'unparsed'));
             console.log('response_body_raw_begin');
             console.log(rawBody);
             console.log('response_body_raw_end');
-            console.log('=== END_' + label + ' ===');
+            console.log('=== END_CASE ===');
+            return vendorCode;
           }
 
           try {
@@ -104,35 +134,42 @@ jobs:
             const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
             console.log('positive_control_products=' + catalog.products.length);
 
-            const knownProduct = catalog.products[0]?.productCode;
-            if (!knownProduct) throw new Error('No D product code available');
+            const fields = [
+              'partnerOrderNo',
+              'orderNo',
+              'thirdPartyNo',
+              'inriceRecordNo',
+              'recordNo',
+              'mobile',
+            ];
 
-            await rawGet(
-              supplier,
-              'DETAIL_VALID_CONTROL',
-              '/api/open/inrice/v1/products/query?' + new URLSearchParams({ productCode: knownProduct }),
-              JSON.stringify({ productCode: knownProduct }),
-            );
+            let caseNo = 0;
+            let hit = false;
 
-            await rawGet(supplier, 'DETAIL_MISSING_SIGN_EMPTY_OBJECT',
-              '/api/open/inrice/v1/products/query',
-              '{}');
+            outer:
+            for (const size of [1, 2, 3]) {
+              for (const combo of combinations(fields, size)) {
+                for (const keys of permutations(combo)) {
+                  caseNo += 1;
+                  const code = await probe(supplier, caseNo, keys);
+                  if (code !== 401) {
+                    console.log('=== NON_401_HIT ===');
+                    console.log('hit_case=' + caseNo);
+                    console.log('hit_keys_in_order=' + keys.join(','));
+                    console.log('hit_vendor_code=' + code);
+                    console.log('=== END_NON_401_HIT ===');
+                    hit = true;
+                    break outer;
+                  }
+                  await sleep(70);
+                }
+              }
+            }
 
-            await rawGet(supplier, 'DETAIL_MISSING_SIGN_NULL',
-              '/api/open/inrice/v1/products/query',
-              JSON.stringify({ productCode: null }));
-
-            await rawGet(supplier, 'DETAIL_MISSING_SIGN_EMPTY_STRING',
-              '/api/open/inrice/v1/products/query',
-              JSON.stringify({ productCode: '' }));
-
-            await rawGet(supplier, 'DETAIL_EMPTY_QUERY_SIGN_EMPTY_STRING',
-              '/api/open/inrice/v1/products/query?productCode=',
-              JSON.stringify({ productCode: '' }));
-
-            await rawGet(supplier, 'DETAIL_EMPTY_QUERY_SIGN_NULL',
-              '/api/open/inrice/v1/products/query?productCode=',
-              JSON.stringify({ productCode: null }));
+            console.log('=== DTO_PROBE_SUMMARY ===');
+            console.log('cases=' + caseNo);
+            console.log('non_401_hit=' + hit);
+            console.log('=== END_DTO_PROBE_SUMMARY ===');
           } finally {
             sqlite.close();
           }
