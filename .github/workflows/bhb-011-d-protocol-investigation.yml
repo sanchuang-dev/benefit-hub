@@ -1,4 +1,4 @@
-name: BHB-011-D Read-only Order Query DTO Probe
+name: BHB-011-D Read-only Order Query Contract Probe
 
 on:
   workflow_dispatch:
@@ -12,16 +12,16 @@ permissions:
   contents: read
 
 jobs:
-  order-query-dto-shape:
+  order-query-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 8
     steps:
       - name: Install SSH transport
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Probe null-serialized DTO shapes for D order query
+      - name: Verify query keys against recovered signed DTO shape
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -60,70 +60,38 @@ jobs:
 
           const config = loadConfig(process.env);
           const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
-          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const probe = 'BHB011D_READONLY_PROBE_20261031_NO_ORDER';
 
-          function permutations(items) {
-            if (items.length <= 1) return [items];
-            const result = [];
-            for (let i = 0; i < items.length; i += 1) {
-              const head = items[i];
-              const rest = items.slice(0, i).concat(items.slice(i + 1));
-              for (const tail of permutations(rest)) result.push([head, ...tail]);
-            }
-            return result;
-          }
-
-          function combinations(items, size, start = 0, prefix = [], out = []) {
-            if (prefix.length === size) {
-              out.push([...prefix]);
-              return out;
-            }
-            for (let i = start; i < items.length; i += 1) {
-              prefix.push(items[i]);
-              combinations(items, size, i + 1, prefix, out);
-              prefix.pop();
-            }
-            return out;
-          }
-
-          async function probe(supplier, caseNo, keys) {
-            const signedObject = {};
-            for (const key of keys) signedObject[key] = null;
+          async function rawGet(supplier, label, query, signedObject) {
             const signedBody = JSON.stringify(signedObject);
             const timestamp = String(Date.now());
             const signature = createInriceSignature(supplier.appSecret, timestamp, signedBody);
+            const url = new URL('/api/open/inrice/v1/orders/query', supplier.baseUrl);
+            for (const [key, value] of Object.entries(query)) {
+              url.searchParams.set(key, value);
+            }
 
-            const response = await fetch(
-              new URL('/api/open/inrice/v1/orders/query', supplier.baseUrl),
-              {
-                method: 'GET',
-                headers: {
-                  'X-App-Key': supplier.appKey,
-                  'X-Timestamp': timestamp,
-                  'X-Signature': signature,
-                  Accept: 'application/json',
-                },
-                redirect: 'manual',
-                signal: AbortSignal.timeout(10_000),
+            const response = await fetch(url, {
+              method: 'GET',
+              headers: {
+                'X-App-Key': supplier.appKey,
+                'X-Timestamp': timestamp,
+                'X-Signature': signature,
+                Accept: 'application/json',
               },
-            );
+              redirect: 'manual',
+              signal: AbortSignal.timeout(10_000),
+            });
             const rawBody = await response.text();
-            let vendorCode = null;
-            try {
-              const parsed = JSON.parse(rawBody);
-              if (Number.isInteger(parsed?.code)) vendorCode = parsed.code;
-            } catch {}
 
-            console.log('=== CASE ' + String(caseNo).padStart(3, '0') + ' ===');
-            console.log('dto_keys_in_order=' + keys.join(','));
+            console.log('=== ' + label + ' ===');
+            console.log('query=' + JSON.stringify(query));
             console.log('signed_json=' + signedBody);
             console.log('http_status=' + response.status);
-            console.log('vendor_code=' + (vendorCode ?? 'unparsed'));
             console.log('response_body_raw_begin');
             console.log(rawBody);
             console.log('response_body_raw_end');
-            console.log('=== END_CASE ===');
-            return vendorCode;
+            console.log('=== END_' + label + ' ===');
           }
 
           try {
@@ -134,42 +102,36 @@ jobs:
             const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
             console.log('positive_control_products=' + catalog.products.length);
 
-            const fields = [
-              'partnerOrderNo',
-              'orderNo',
-              'thirdPartyNo',
-              'inriceRecordNo',
-              'recordNo',
-              'mobile',
-            ];
-
-            let caseNo = 0;
-            let hit = false;
-
-            outer:
-            for (const size of [1, 2, 3]) {
-              for (const combo of combinations(fields, size)) {
-                for (const keys of permutations(combo)) {
-                  caseNo += 1;
-                  const code = await probe(supplier, caseNo, keys);
-                  if (code !== 401) {
-                    console.log('=== NON_401_HIT ===');
-                    console.log('hit_case=' + caseNo);
-                    console.log('hit_keys_in_order=' + keys.join(','));
-                    console.log('hit_vendor_code=' + code);
-                    console.log('=== END_NON_401_HIT ===');
-                    hit = true;
-                    break outer;
-                  }
-                  await sleep(70);
-                }
-              }
-            }
-
-            console.log('=== DTO_PROBE_SUMMARY ===');
-            console.log('cases=' + caseNo);
-            console.log('non_401_hit=' + hit);
-            console.log('=== END_DTO_PROBE_SUMMARY ===');
+            await rawGet(
+              supplier,
+              'ORDERNO_NONEMPTY',
+              { orderNo: probe },
+              { orderNo: probe, partnerOrderNo: null },
+            );
+            await rawGet(
+              supplier,
+              'PARTNER_ORDERNO_NONEMPTY',
+              { partnerOrderNo: probe },
+              { orderNo: null, partnerOrderNo: probe },
+            );
+            await rawGet(
+              supplier,
+              'BOTH_NONEMPTY',
+              { orderNo: probe, partnerOrderNo: probe },
+              { orderNo: probe, partnerOrderNo: probe },
+            );
+            await rawGet(
+              supplier,
+              'ORDERNO_EMPTY',
+              { orderNo: '' },
+              { orderNo: '', partnerOrderNo: null },
+            );
+            await rawGet(
+              supplier,
+              'PARTNER_ORDERNO_EMPTY',
+              { partnerOrderNo: '' },
+              { orderNo: null, partnerOrderNo: '' },
+            );
           } finally {
             sqlite.close();
           }
