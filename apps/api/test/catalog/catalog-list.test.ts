@@ -460,6 +460,10 @@ describe('catalogue list query validation', () => {
     await expectInvalidListQuery('?sortBy=code&sortOrder=sideways', ['sortOrder']);
     await expectInvalidListQuery('?mappingState=live', ['mappingState']);
     await expectInvalidListQuery('?displayPriceMinCents=-1', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=0x10', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=1e3', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMaxCents=9007199254740992', ['displayPriceMaxCents']);
     await expectInvalidListQuery('?displayPriceMinCents=1.5', ['displayPriceMinCents']);
     await expectInvalidListQuery('?displayPriceMaxCents=12.5', ['displayPriceMaxCents']);
     await expectInvalidListQuery('?displayPriceMinCents=500&displayPriceMaxCents=100', [
