@@ -80,12 +80,26 @@ jobs:
               continue
             fi
             if [[ "$url" == *"/jse/index-"*".js" ]]; then
-              echo "admin_main_lazy_refs_begin"
-              grep -aoE '[A-Za-z0-9_./-]+-[A-Za-z0-9_-]{5,}\\.js' "$body" \
+              echo "admin_main_js_refs_begin"
+              grep -aoE '[^"'\''[:space:]]+\\.js([^"'\''[:space:]]*)?' "$body" \
                 | awk '!seen[$0]++' \
-                | grep -Ei '(store|data|inrice|order|distribution|benefit|finance|catalog|goods)' \
-                | head -n 120 || true
-              echo "admin_main_lazy_refs_end"
+                | head -n 160 || true
+              grep -aoE 'sourceMappingURL=[^[:space:]]+' "$body" | head -n 5 || true
+              echo "admin_main_js_refs_end"
+
+              map_url="$url.map"
+              map_body="$tmp/main.map"
+              map_status="$(curl -sS --max-time 10 -o "$map_body" -w '%{http_code}' "$map_url" || true)"
+              map_bytes="$(wc -c < "$map_body" 2>/dev/null || echo 0)"
+              echo "admin_main_sourcemap http=$map_status bytes=$map_bytes"
+              if [ "$map_status" = '200' ] && [ "$map_bytes" -gt 10000 ]; then
+                grep -aEo '.{0,240}(/api/open/inrice/v1/orders/query|OpenInriceController|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,520}' "$map_body" \
+                  | head -n 40 \
+                  | tr '\r\n' '  ' \
+                  | sed 's/[[:space:]][[:space:]]*/ /g' \
+                  | sed "s#^#sourcemap_hit #" || true
+                echo
+              fi
             fi
             grep -aEo '.{0,260}(/api/open/inrice/v1/orders/query|OpenInriceController|/admin/inrice/orders|partnerOrderNo|thirdPartyNo|inriceRecordNo|dispatchStatus|fulfillmentSummary).{0,520}' "$body"               | head -n 40               | tr '\r\n' '  '               | sed 's/[[:space:]][[:space:]]*/ /g'               | sed "s#^#admin_hit asset=$url #" || true
             echo
