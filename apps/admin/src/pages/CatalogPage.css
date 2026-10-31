@@ -15,6 +15,27 @@
   min-width: 0;
 }
 
+.catalog-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.catalog-card-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 8px;
+}
+
+.catalog-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
 .catalog-surface {
   overflow: hidden;
   background: #fff;
@@ -22,34 +43,22 @@
   border-radius: 8px;
 }
 
-/* Filters and the create action share one row; the action stays at the right
- * edge even when the filters wrap on narrow screens. */
-.catalog-toolbar-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 8px 12px;
-  padding: 12px 16px;
-  border-bottom: 1px solid #eef0f2;
+/* Filters and the create action are laid out by the shared DataPanel; only the
+ * catalogue's own header, amount alignment and card content live here. */
+.catalog-amount {
+  font-variant-numeric: tabular-nums;
 }
 
+/* Still used by the read-only supplier catalogue panel; the internal product
+ * list now gets the same surface from the shared DataPanel. */
 .catalog-toolbar {
   flex: 1 1 auto;
   min-width: 0;
   row-gap: 8px;
 }
 
-.catalog-create {
-  flex: 0 0 auto;
-  margin-inline-start: auto;
-}
-
 .catalog-feedback {
   padding: 16px;
-}
-
-.catalog-amount {
-  font-variant-numeric: tabular-nums;
 }
 
 /* Shared with the supplier read-only catalogue panel on the supplier page. */

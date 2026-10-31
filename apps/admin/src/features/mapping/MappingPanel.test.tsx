@@ -189,7 +189,10 @@ describe('read-only supplier mapping panel', () => {
     expect(await within(panel).findByText('尚未配置供应商映射')).toBeTruthy();
     expect(within(panel).queryByText('仅完成本地映射校验')).toBeNull();
     expect(within(panel).queryByText(/upstreamVerified/)).toBeNull();
-    expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe(
+    // The product table header carries the same accessible name as the drawer
+    // field, so the drawer input must be resolved inside the dialog.
+    const drawer = await screen.findByRole('dialog');
+    expect((within(drawer).getByLabelText('商品名称') as HTMLInputElement).value).toBe(
       '腾讯出行券 10 元',
     );
 
