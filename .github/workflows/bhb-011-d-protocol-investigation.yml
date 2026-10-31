@@ -18,9 +18,9 @@ permissions:
 jobs:
   inspect-public-upstream:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 4
     steps:
-      - name: Inspect public API metadata and admin chunks without credentials
+      - name: Inspect bounded public API metadata and known admin chunks
         shell: bash
         run: |
           set -euo pipefail
@@ -44,75 +44,43 @@ jobs:
           for path in "${paths[@]}"; do
             out="$tmp/api-body"
             : > "$out"
-            status="$(curl -sS --max-time 12 -o "$out" -w '%{http_code}' "$api_base$path" || true)"
+            status="$(curl -sS --max-time 8 -o "$out" -w '%{http_code}' "$api_base$path" || true)"
             bytes="$(wc -c < "$out" 2>/dev/null || echo 0)"
             printf 'api_probe path=%s http=%s bytes=%s\n' "$path" "$status" "$bytes"
             if [ "$bytes" -gt 0 ] && [ "$bytes" -le 1024 ]; then
               compact="$(tr '\r\n' '  ' < "$out" | sed 's/[[:space:]][[:space:]]*/ /g' | head -c 1000)"
               printf 'api_small_body path=%s body=%s\n' "$path" "$compact"
             fi
-            if [ "$status" = '200' ] && [ "$bytes" -le 5000000 ]; then
-              grep -aEo '.{0,220}(/api/open/inrice/v1/orders/query|OpenInriceController|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,420}' "$out"                 | head -n 20                 | tr '\r\n' '  '                 | sed 's/[[:space:]][[:space:]]*/ /g'                 | sed "s#^#api_hit path=$path #" || true
-              echo
-            fi
           done
 
-          echo '== Public admin bundle crawl =='
+          echo '== Public admin bundle probes =='
           index="$tmp/admin-index.html"
-          curl -fsSL --max-time 15 "$admin_base/" -o "$index"
-          mapfile -t direct_assets < <(
-            grep -aoE '(src|href)=["'\''"][^"'\'' ]+\.js([^"'\'' ]*)?["'\''"]' "$index"               | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//'               | awk '!seen[$0]++'               | head -n 40
+          curl -fsSL --max-time 10 "$admin_base/" -o "$index"
+          mapfile -t assets < <(
+            grep -aoE '(src|href)=["'\''"][^"'\'' ]+\.js([^"'\'' ]*)?["'\''"]' "$index"               | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//'               | awk '!seen[$0]++'               | head -n 20
           )
-          echo "admin_direct_js_asset_count=${#direct_assets[@]}"
-
-          queue=()
-          for asset in "${direct_assets[@]}"; do
-            case "$asset" in
-              http://*|https://*) queue+=("$asset") ;;
-              /*) queue+=("$admin_base$asset") ;;
-              *) queue+=("$admin_base/$asset") ;;
-            esac
-          done
+          assets+=('/js/store-BXhxk7Or.js' '/js/data-CCfayuKr.js')
+          printf 'admin_candidate_js_asset_count=%s\n' "${#assets[@]}"
 
           declare -A seen=()
-          idx=0
-          while [ "$idx" -lt "${#queue[@]}" ] && [ "$idx" -lt 120 ]; do
-            url="${queue[$idx]}"
-            idx=$((idx + 1))
+          for asset in "${assets[@]}"; do
+            case "$asset" in
+              http://*|https://*) url="$asset" ;;
+              /*) url="$admin_base$asset" ;;
+              *) url="$admin_base/$asset" ;;
+            esac
             if [ -n "${seen[$url]:-}" ]; then
               continue
             fi
             seen["$url"]=1
-
-            body="$tmp/asset-$idx.js"
-            if ! curl -fsSL --max-time 15 "$url" -o "$body"; then
+            body="$tmp/asset.js"
+            status="$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' "$url" || true)"
+            printf 'admin_asset path=%s http=%s bytes=%s\n' "$url" "$status" "$(wc -c < "$body" 2>/dev/null || echo 0)"
+            if [ "$status" != '200' ]; then
               continue
             fi
-
-            hits="$tmp/hits-$idx.txt"
-            : > "$hits"
-            grep -aEo '.{0,260}(/api/open/inrice/v1/orders/query|OpenInriceController|/admin/inrice/orders|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,520}' "$body"               | head -n 30 > "$hits" || true
-            if [ -s "$hits" ]; then
-              echo "admin_asset_hit=$url"
-              tr '\r\n' '  ' < "$hits" | sed 's/[[:space:]][[:space:]]*/ /g'
-              echo
-            fi
-
-            mapfile -t refs < <(
-              grep -aoE '[A-Za-z0-9_./-]+-[A-Za-z0-9_-]{5,}\.js' "$body"                 | awk '!seen[$0]++'                 | head -n 80
-            )
-            base_dir="${url%/*}"
-            for ref in "${refs[@]}"; do
-              case "$ref" in
-                http://*|https://*) child="$ref" ;;
-                /*) child="$admin_base$ref" ;;
-                *) child="$base_dir/${ref#./}" ;;
-              esac
-              if [ -z "${seen[$child]:-}" ]; then
-                queue+=("$child")
-              fi
-            done
+            grep -aEo '.{0,260}(/api/open/inrice/v1/orders/query|OpenInriceController|/admin/inrice/orders|partnerOrderNo|thirdPartyNo|inriceRecordNo|dispatchStatus|fulfillmentSummary).{0,520}' "$body"               | head -n 40               | tr '\r\n' '  '               | sed 's/[[:space:]][[:space:]]*/ /g'               | sed "s#^#admin_hit asset=$url #" || true
+            echo
           done
 
-          echo "admin_crawled_js_asset_count=${#seen[@]}"
           echo 'public_probe_complete=true'
