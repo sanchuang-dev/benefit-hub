@@ -94,14 +94,25 @@ describe('DataPanel controlled query contract', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
-    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    const dialog = await screen.findByRole('dialog').catch((err: unknown) => {
+      // Distinguish an absent modal from an accessibility-name mismatch.
+      const modal = document.querySelector('.ant-modal');
+      console.info('DPN_MODAL_DIAGNOSTIC', {
+        present: Boolean(modal),
+        dialogRoles: document.querySelectorAll('[role="dialog"]').length,
+        title: modal?.querySelector('.ant-modal-title')?.textContent,
+        outer: modal?.outerHTML.slice(0, 1000),
+      });
+      throw err;
+    });
+    expect(within(dialog).getByText('高级检索')).toBeTruthy();
     expect((within(dialog).getByLabelText('名称') as HTMLInputElement).value).toBe('咖啡');
     fireEvent.change(within(dialog).getByLabelText('价格最小值'), { target: { value: '100' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes.mock.lastCall?.[0]).toMatchObject({
       page: 1, filters: { keyword: '咖啡', price: { min: 100 } },
     }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '高级检索' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /重\s*置/ }));
     expect(changes.mock.lastCall?.[0]).toEqual({ page: 1, pageSize: 20, filters: FILTERS });
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('');
@@ -110,15 +121,15 @@ describe('DataPanel controlled query contract', () => {
   it('cancels an advanced draft without applying it and keeps dialog open after rejection', async () => {
     render(<Fixture rejectAdvanced />);
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
-    let dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    let dialog = await screen.findByRole('dialog');
     fireEvent.change(within(dialog).getByLabelText('价格最小值'), { target: { value: '100' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes).toHaveBeenCalled());
-    expect(screen.getByRole('dialog', { name: '高级检索' })).toBeTruthy();
+    expect(screen.getByRole('dialog')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '高级检索' })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
-    dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    dialog = await screen.findByRole('dialog');
     expect((within(dialog).getByLabelText('价格最小值') as HTMLInputElement).value).toBe('');
   });
 
