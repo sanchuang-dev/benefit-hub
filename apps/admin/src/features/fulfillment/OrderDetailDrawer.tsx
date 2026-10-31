@@ -2,6 +2,7 @@ import { useState } from 'react';
 import {
   Alert,
   Button,
+  Checkbox,
   Descriptions,
   Drawer,
   Empty,
@@ -38,7 +39,11 @@ import {
 } from './labels';
 import { useOrderDetailQuery } from './use-orders';
 import { useSessionQuery } from '../auth/use-auth';
-import { reissueDirectTopup } from './api';
+import {
+  dispatchDOrder,
+  recoverDOrder,
+  reissueDirectTopup,
+} from './api';
 
 const { Text, Title } = Typography;
 
@@ -174,9 +179,17 @@ export function OrderDetailDrawer({
     refCode: string;
     paymentReference: string;
   }>();
+  const [dForm] = Form.useForm<{
+    mobile: string;
+    paymentReference: string;
+    confirmDebit: boolean;
+  }>();
   const [messageApi, contextHolder] = message.useMessage();
   const [reissueOpen, setReissueOpen] = useState(false);
   const [reissuePending, setReissuePending] = useState(false);
+  const [dDispatchOpen, setDDispatchOpen] = useState(false);
+  const [dDispatchPending, setDDispatchPending] = useState(false);
+  const [dRecoverPending, setDRecoverPending] = useState(false);
   const detailQuery = useOrderDetailQuery(orderId);
   const errorCopy = detailQuery.isError ? detailErrorCopy(detailQuery.error) : null;
   const detail = detailQuery.data;
@@ -203,6 +216,53 @@ export function OrderDetailDrawer({
       void detailQuery.refetch();
     } finally {
       setReissuePending(false);
+    }
+  }
+
+
+  async function handleDDispatch() {
+    if (!orderId) return;
+    let fields: { mobile: string; paymentReference: string; confirmDebit: boolean };
+    try {
+      fields = await dForm.validateFields();
+    } catch {
+      return;
+    }
+    setDDispatchPending(true);
+    try {
+      await dispatchDOrder(orderId, {
+        mobile: fields.mobile,
+        paymentReference: fields.paymentReference,
+      });
+      messageApi.success('D 真实派发已发起；请继续使用“查原单”核实供应商状态');
+      dForm.resetFields();
+      setDDispatchOpen(false);
+      void detailQuery.refetch();
+    } catch (error) {
+      messageApi.error(
+        error instanceof ApiError
+          ? error.message
+          : 'D 派发结果未能确认。请刷新订单并查原单，切勿再次派发。',
+      );
+      void detailQuery.refetch();
+    } finally {
+      setDDispatchPending(false);
+    }
+  }
+
+  async function handleDRecover() {
+    if (!orderId) return;
+    setDRecoverPending(true);
+    try {
+      await recoverDOrder(orderId);
+      messageApi.success('已按原 partnerOrderNo 查询上力');
+    } catch (error) {
+      messageApi.error(
+        error instanceof ApiError ? error.message : '原单查单失败，请稍后重试',
+      );
+    } finally {
+      setDRecoverPending(false);
+      void detailQuery.refetch();
     }
   }
 
@@ -762,6 +822,15 @@ export function OrderDetailDrawer({
                       },
                     ]}
                   />
+                  {session.data?.admin.role === 'admin' &&
+                  detail.dispatch.state !== 'rejected' ? (
+                    <Button
+                      onClick={() => void handleDRecover()}
+                      loading={dRecoverPending}
+                    >
+                      查原单（同一 partnerOrderNo）
+                    </Button>
+                  ) : null}
                   <Alert
                     type={detail.dispatch.state === 'unknown' ? 'warning' : 'info'}
                     showIcon
@@ -774,12 +843,23 @@ export function OrderDetailDrawer({
                   />
                 </Space>
               ) : (
-                <Alert
-                  type="info"
-                  showIcon
-                  title="尚未发起 D 模式权益派发"
-                  description="平台只有本地业务订单，不代表已扣上力权益金额。真实 D 派发必须由服务端明确开启写权限并沿用平台生成的唯一幂等单号。"
-                />
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Alert
+                    type="info"
+                    showIcon
+                    title="尚未发起 D 模式权益派发"
+                    description="平台只有本地业务订单，不代表已扣上力权益金额。真实 D 派发必须由服务端明确开启写权限并沿用平台生成的唯一幂等单号。"
+                  />
+                  {session.data?.admin.role === 'admin' ? (
+                    <Button
+                      type="primary"
+                      danger
+                      onClick={() => setDDispatchOpen(true)}
+                    >
+                      管理员真实派发一次
+                    </Button>
+                  ) : null}
+                </Space>
               )}
             </section>
           ) : null}
@@ -825,6 +905,59 @@ export function OrderDetailDrawer({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可显示的订单详情" />
       )}
       </Drawer>
+      <Modal
+        open={dDispatchOpen}
+        title="确认上力 D 真实派发"
+        okText="确认真实派发一次"
+        okButtonProps={{ danger: true }}
+        confirmLoading={dDispatchPending}
+        onOk={() => void handleDDispatch()}
+        onCancel={() => {
+          if (dDispatchPending) return;
+          dForm.resetFields();
+          setDDispatchOpen(false);
+        }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="这会真实调用上力 D 派发，并可能扣除权益余额"
+          description="系统使用订单创建时冻结的上游商品和平台生成的唯一 partnerOrderNo。提交后无论结果成功、失败或未知，都不要再次派发；后续只使用“查原单”核实同一订单。"
+        />
+        <Form form={dForm} layout="vertical" autoComplete="off" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="mobile"
+            label="测试收件手机号"
+            rules={[{ required: true, pattern: /^1[3-9]\d{9}$/, message: '请输入 11 位手机号' }]}
+          >
+            <Input type="tel" autoComplete="off" placeholder="请输入本次真实验收收件手机号" />
+          </Form.Item>
+          <Form.Item
+            name="paymentReference"
+            label="业务支付或授权凭据号"
+            rules={[{ required: true, pattern: /^[!-~]{1,128}$/, message: '请输入可见 ASCII 凭据号' }]}
+          >
+            <Input autoComplete="off" placeholder="例如 D-LIVE-ACCEPT-20261031" />
+          </Form.Item>
+          <Form.Item
+            name="confirmDebit"
+            valuePropName="checked"
+            rules={[
+              {
+                validator: (_rule, value) =>
+                  value === true
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('请确认这是真实供应商写操作')),
+              },
+            ]}
+          >
+            <Checkbox>
+              我确认这是真实供应商写操作，可能扣除上力权益余额；提交后不重复派发。
+            </Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
+
       <Modal
         open={reissueOpen}
         title="确认 B 模式原单受控补发"

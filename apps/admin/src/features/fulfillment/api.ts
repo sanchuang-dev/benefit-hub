@@ -53,3 +53,31 @@ export async function reissueDirectTopup(
   );
   return body.order;
 }
+
+
+/**
+ * Admin-only D live acceptance. The server requires confirmDispatch=true and
+ * derives provider/product/partnerOrderNo from the frozen platform order.
+ */
+export async function dispatchDOrder(
+  id: string,
+  request: { mobile: string; paymentReference: string },
+): Promise<OperationsOrderDetailDto> {
+  const body = await apiRequest<{ order: OperationsOrderDetailDto }>(
+    "/api/v1/operations/orders/" + encodeURIComponent(id) + "/dispatch",
+    {
+      method: "POST",
+      body: { ...request, confirmDispatch: true },
+    },
+  );
+  return body.order;
+}
+
+/** Admin-only read of the same persisted D partnerOrderNo; never re-dispatches. */
+export async function recoverDOrder(id: string): Promise<OperationsOrderDetailDto> {
+  const body = await apiRequest<{ order: OperationsOrderDetailDto }>(
+    "/api/v1/operations/orders/" + encodeURIComponent(id) + "/dispatch/recover",
+    { method: "POST", body: {} },
+  );
+  return body.order;
+}
