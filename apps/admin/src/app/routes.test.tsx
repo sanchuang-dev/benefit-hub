@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { jsonResponse, mockFetch } from '../test-utils/http';
 import { UI_PREFS_STORAGE_KEY, useUiPrefs } from '../shared/lib/ui-prefs';
 
 const ADMIN = {
@@ -12,27 +13,6 @@ const ADMIN = {
 };
 
 const SESSION = { admin: ADMIN, session: { expiresAt: Date.now() + 8 * 60 * 60 * 1000 } };
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-function mockFetch(
-  handler: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
-): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const response = await handler(url, init);
-    if (!response) throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-    return response;
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
 
 beforeAll(() => installDomStubs());
 
@@ -55,7 +35,7 @@ describe('unauthenticated access', () => {
 
     expect(await screen.findByText('运营后台登录', undefined, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText('权益服务平台')).toBeTruthy();
-    expect(screen.getByText(/SAN CHUANG/)).toBeTruthy();
+    expect(screen.getByText('3C · BENEFIT HUB')).toBeTruthy();
     expect(screen.getByLabelText('账号')).toBeTruthy();
     expect(screen.getByLabelText('密码')).toBeTruthy();
     expect(screen.queryByText('管理员账户')).toBeNull();
@@ -104,7 +84,7 @@ describe('login flow', () => {
 
     expect(await screen.findByRole('heading', { name: '总览' }, { timeout: 5000 })).toBeTruthy();
     expect(screen.queryByText('供应商履约保持禁用')).toBeNull();
-    for (const label of ['总览', '权益中心', '权益商品', '价值换算', '供给中心', '供应商管理', '供货目录', '开放平台', '下游应用', '接口管理', '订单履约', '业务订单', '平台治理', '系统设置']) {
+    for (const label of ['总览', '权益中心', '权益商品', '价值换算', '供给中心', '供应商管理', '供货目录', '开放平台', '下游应用', '接口管理', '订单履约', '业务订单', '平台治理', '账号与权限', '安全与会话', '操作审计', '平台状态']) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
     expect(screen.getAllByText('运维管理员').length).toBeGreaterThan(0);
@@ -178,6 +158,11 @@ describe('login flow', () => {
       if (url.startsWith('/api/v1/catalog/products?')) {
         return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
       }
+      if (url === '/api/v1/suppliers/yangmao') {
+        return jsonResponse(200, {
+          supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: true } },
+        });
+      }
       if (url.startsWith('/api/v1/catalog/supplier-products')) {
         return jsonResponse(200, {
           provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [],
@@ -190,16 +175,103 @@ describe('login flow', () => {
     expect(await screen.findByRole('menuitem', { name: '权益商品' })).toBeTruthy();
     fireEvent.click(screen.getByRole('menuitem', { name: '供货目录' }));
 
-    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+    // 供货目录 opens the supplier detail's 供货商品 sub-tab, and the work tab
+    // keeps its own label instead of collapsing into 供应商管理.
+    await waitFor(() => expect(router.state.location.pathname).toBe('/suppliers/yangmao'));
+    expect(router.state.location.search).toBe('?tab=catalog');
+    expect(await screen.findByRole('heading', { name: '上力' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '供货目录' })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: '供应商商品' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: '供货商品', selected: true })).toBeTruthy();
+
+    // Sub-tab switches clean the URL so the menu highlights the owning entry.
+    fireEvent.click(screen.getByRole('tab', { name: '供应商概览' }));
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(screen.getByRole('tab', { name: '供应商概览', selected: true })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '供应商管理' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('menuitem', { name: '权益商品' }));
-    await waitFor(() => expect(router.state.location.search).toBe(''));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/catalog'));
+    expect(router.state.location.search).toBe('');
     expect(screen.getByRole('tab', { name: '权益商品' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: '供货目录' }));
-    await waitFor(() => expect(router.state.location.search).toBe('?tab=supplier'));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=catalog'));
+    expect(router.state.location.pathname).toBe('/suppliers/yangmao');
+    expect(screen.getByRole('tab', { name: '供货商品', selected: true })).toBeTruthy();
+  }, 45_000);
+
+  it('keeps the click-only supplier detail sub-tabs usable without dirtying the URL', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/suppliers/yangmao') {
+        return jsonResponse(200, {
+          supplier: { key: 'yangmao', name: '上力', catalogRead: { supported: true, configured: true } },
+        });
+      }
+      if (url.startsWith('/api/v1/catalog/supplier-products')) {
+        return jsonResponse(200, {
+          provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [],
+        });
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/suppliers/yangmao?tab=catalog');
+    expect(await screen.findByRole('tab', { name: '供货商品', selected: true })).toBeTruthy();
+
+    // 接入与规则 and 只读联调 are not deep-linkable, but clicking them must still
+    // switch the pane while dropping the tab query.
+    fireEvent.click(screen.getByRole('tab', { name: '接入与规则' }));
+    expect(await screen.findByRole('button', { name: '编辑接入配置' })).toBeTruthy();
+    await waitFor(() => expect(router.state.location.search).toBe(''));
+    expect(screen.getByRole('tab', { name: '接入与规则', selected: true })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('tab', { name: '只读联调' }));
+    expect(await screen.findByRole('textbox', { name: '获授权测试手机号' })).toBeTruthy();
+    expect(router.state.location.search).toBe('');
+    expect(screen.getByRole('tab', { name: '只读联调', selected: true })).toBeTruthy();
+
+    // The URL still governs 供货商品 when it is requested explicitly.
+    fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
+    await waitFor(() => expect(router.state.location.search).toBe('?tab=catalog'));
+    expect(screen.getByRole('tab', { name: '供货商品', selected: true })).toBeTruthy();
+  }, 30_000);
+
+  it('filters the sidebar menu by search and restores it when cleared', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, { orders: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+
+    const search = await screen.findByLabelText('搜索菜单', undefined, { timeout: 5000 });
+    fireEvent.change(search, { target: { value: '订单' } });
+
+    expect(screen.getByRole('menuitem', { name: '业务订单' })).toBeTruthy();
+    expect(screen.queryByRole('menuitem', { name: '权益商品' })).toBeNull();
+    expect(screen.queryByRole('menuitem', { name: '操作审计' })).toBeNull();
+
+    fireEvent.click(screen.getByRole('menuitem', { name: '业务订单' }));
+    expect(await screen.findByRole('heading', { name: '业务订单' })).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '不存在的菜单' } });
+    expect(screen.getByText('未找到匹配的菜单')).toBeTruthy();
+
+    fireEvent.change(search, { target: { value: '' } });
+    expect(screen.getByRole('menuitem', { name: '权益商品' })).toBeTruthy();
+    expect(screen.queryByText('未找到匹配的菜单')).toBeNull();
   }, 20_000);
 
   it('opens each platform destination from grouped navigation with its real capability state', async () => {
@@ -298,7 +370,7 @@ describe('login flow', () => {
     expect(await screen.findByRole('heading', { name: '权益商品' }, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: '权益商品' })).toBeTruthy();
-    expect(screen.queryByRole('tab', { name: '系统设置' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: '账号与权限' })).toBeNull();
   }, 15_000);
 
   it('keeps the 总览 tab when the console is opened directly on a module route', async () => {

@@ -1,42 +1,14 @@
+import { MAPPING_PROVIDERS, type MappingProvider } from '@sanchuang-dev/benefit-contracts';
+
 /**
- * Parsing/formatting for catalogue state that lives in the URL.
+ * The supplier filter is a provider key, not a free-text value. Anything that
+ * is not in the shared `MAPPING_PROVIDERS` whitelist is dropped, so a hand-edited
+ * URL can never make the console request an unknown supplier.
  *
- * URLs are user-editable, so every value is validated against a whitelist and
- * clamped before it reaches a request. Defaults are omitted from the URL to
- * keep shareable links short.
+ * Generic URL parsing lives in `shared/lib/url-state`; this module keeps the
+ * catalogue-only whitelist check next to the domain that owns it.
  */
-
-export type CatalogPageSize = 10 | 20 | 50;
-export const PAGE_SIZE_OPTIONS: CatalogPageSize[] = [10, 20, 50];
-export const DEFAULT_PAGE_SIZE: CatalogPageSize = 20;
-
-const MAX_PAGE = 10_000;
-const MAX_KEYWORD_LENGTH = 100;
-
-export function parsePage(raw: string | null): number {
-  if (raw === null) return 1;
-  const value = Number(raw);
-  return Number.isInteger(value) && value >= 1 && value <= MAX_PAGE ? value : 1;
-}
-
-export function parsePageSize(raw: string | null): CatalogPageSize {
-  const value = Number(raw);
-  return (PAGE_SIZE_OPTIONS as readonly number[]).includes(value)
-    ? (value as CatalogPageSize)
-    : DEFAULT_PAGE_SIZE;
-}
-
-export function parseKeyword(raw: string | null): string {
-  const value = raw?.trim() ?? '';
-  return value.length > MAX_KEYWORD_LENGTH ? value.slice(0, MAX_KEYWORD_LENGTH) : value;
-}
-
-/** Deletes the parameter when it holds the default value. */
-export function setOptionalParam(
-  params: URLSearchParams,
-  key: string,
-  value: string | null | undefined,
-): void {
-  if (value === null || value === undefined || value === '') params.delete(key);
-  else params.set(key, value);
+export function parseSupplier(raw: string | null): MappingProvider | undefined {
+  if (!raw) return undefined;
+  return MAPPING_PROVIDERS.find((provider) => provider === raw);
 }

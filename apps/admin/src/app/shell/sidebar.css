@@ -1,0 +1,120 @@
+/*
+ * Sidebar shell: brand area, menu search and the Ant Design Menu.
+ * The layout hierarchy stays inside the existing white operations console.
+ */
+.app-sider {
+  position: sticky !important;
+  top: 0;
+  height: 100vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+.app-sider::after {
+  content: '';
+  position: absolute;
+  top: 52px;
+  right: 0;
+  bottom: 0;
+  width: 1px;
+  background: #e3e6ea;
+  pointer-events: none;
+}
+
+.app-brand {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  border-bottom: 1px solid #eef0f2;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* Brand mark: the 三创 icon from apps/admin/public/brand/logo-icon-512.png. It
+   carries its own color on transparency, so no background chip is drawn here. */
+.app-brand-mark {
+  flex: 0 0 auto;
+  display: block;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+}
+
+.app-brand-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #1f2937;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/*
+ * The "3C" prefix borrows the mark's blue and a heavier weight, so the icon,
+ * the brand token and the product name read as one lockup instead of a logo
+ * with a separately-set label. 15px / 0.02em keeps the wordmark's stroke
+ * weight and tracking close to the wide, medium-weight SANCHUANG lettering in
+ * the delivered horizontal logo.
+ */
+.app-brand-abbr {
+  color: #2563eb;
+  font-weight: 700;
+  margin-right: 3px;
+}
+
+.app-brand-name {
+  font-weight: 600;
+}
+
+/*
+ * The search row is exactly as tall as the work-tab strip on the right
+ * (38px), so the input sits on the same line as the tabs instead of floating
+ * lower. It deliberately has no bottom border: that divider belongs to the
+ * work-tab strip and stops at the sidebar edge.
+ */
+.app-sidebar-search {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  /* Optical centering: tab labels are 34px tall from the top of the tab strip,
+     so this puts the 32px input on the same text line. */
+  padding: 4px 12px 0;
+}
+
+.app-sidebar-search .ant-input-affix-wrapper {
+  border-radius: 6px;
+}
+
+.app-nav {
+  padding: 8px 0 16px;
+  border-inline-end: 0 !important;
+}
+
+.app-nav .ant-menu-submenu-title {
+  font-weight: 600;
+}
+
+.app-sidebar-empty {
+  margin: 24px 12px;
+}
+
+.app-sidebar-empty .ant-empty-description {
+  color: #64748b;
+  font-size: 12px;
+}
+
+@media (max-width: 991px) {
+  .ant-layout-sider-collapsed .app-brand {
+    justify-content: center;
+    padding-inline: 0;
+  }
+
+  .ant-layout-sider-collapsed .app-brand-text {
+    display: none;
+  }
+}

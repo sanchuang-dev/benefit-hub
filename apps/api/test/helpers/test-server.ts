@@ -35,6 +35,7 @@ export class TestServer {
       businessOrderClients: null,
       verifiedBTravelProducts: {},
       bLiveWritesEnabled: false,
+      buildInfo: { version: null, commit: null, builtAt: null },
       ...overrides,
     };
     this.database = openDatabase(this.file);

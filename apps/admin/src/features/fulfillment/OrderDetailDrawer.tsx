@@ -213,7 +213,7 @@ export function OrderDetailDrawer({
       open={Boolean(orderId)}
       onClose={onClose}
       title="平台订单详情"
-      width={screens.md ? 680 : '100%'}
+      size={screens.md ? 680 : '100%'}
       destroyOnHidden
       className="fulfillment-detail-drawer"
     >
@@ -693,7 +693,7 @@ export function OrderDetailDrawer({
               items={detail.statusEvents.map((event) => ({
                 key: event.id,
                 color: TIMELINE_COLORS[event.status],
-                children: (
+                content: (
                   <Space orientation="vertical" size={2}>
                     <Space size={8} wrap>
                       <Tag color={ORDER_STATUS_COLORS[event.status]}>

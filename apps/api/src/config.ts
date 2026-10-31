@@ -26,6 +26,12 @@ const environmentSchema = z.object({
   // A missing or invalid configuration fails closed; never derive this from display names.
   BENEFIT_B_TRAVEL_PRODUCTS_JSON: z.string().optional(),
   BENEFIT_B_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
+  // Optional build stamp injected by the deployment pipeline. These are facts
+  // for the read-only "平台状态" card; absent values stay null so the console can
+  // say "未注入" instead of inventing a version.
+  BUILD_VERSION: z.string().trim().max(64).optional(),
+  BUILD_COMMIT: z.string().trim().max(64).optional(),
+  BUILD_TIME: z.string().trim().max(64).optional(),
 });
 
 export interface YangmaoInriceConfig {
@@ -53,6 +59,16 @@ export interface BusinessOrderClient {
 
 export interface BusinessOrderClientsConfig {
   clients: readonly BusinessOrderClient[];
+}
+
+/**
+ * Deployment-provided build stamp. Every field is nullable because a local
+ * checkout has no stamp; null means "unknown", never "version 0".
+ */
+export interface BuildInfo {
+  version: string | null;
+  commit: string | null;
+  builtAt: number | null;
 }
 
 export interface AppConfig {
@@ -87,6 +103,8 @@ export interface AppConfig {
   verifiedBTravelProducts: Readonly<Record<string, string>>;
   /** Explicit separate permission for the quota-deducting B write. Default false. */
   bLiveWritesEnabled: boolean;
+  /** Build stamp for the read-only runtime status card; null means not injected. */
+  buildInfo: BuildInfo;
 }
 
 /**
@@ -218,5 +236,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     businessOrderClients: readBusinessOrderClientsConfig(env),
     verifiedBTravelProducts: readVerifiedBTravelProducts(value.BENEFIT_B_TRAVEL_PRODUCTS_JSON),
     bLiveWritesEnabled: value.BENEFIT_B_LIVE_WRITE_ENABLED === 'true',
+    buildInfo: readBuildInfo(value),
+  };
+}
+
+/**
+ * Reads the optional deployment build stamp. A missing value is null; an
+ * unparsable timestamp is also null rather than a fabricated build time.
+ */
+function readBuildInfo(value: {
+  BUILD_VERSION?: string;
+  BUILD_COMMIT?: string;
+  BUILD_TIME?: string;
+}): BuildInfo {
+  const version = value.BUILD_VERSION || null;
+  const commit = value.BUILD_COMMIT || null;
+  const rawTime = value.BUILD_TIME;
+  const builtAt = rawTime ? Date.parse(rawTime) : Number.NaN;
+  return {
+    version,
+    commit,
+    builtAt: Number.isFinite(builtAt) ? builtAt : null,
   };
 }

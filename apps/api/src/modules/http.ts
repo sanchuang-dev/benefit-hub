@@ -1,7 +1,22 @@
 import type { Context } from 'hono';
 import type { z } from 'zod';
 import type { AppEnv } from '../middleware/auth.js';
-import { apiError } from './auth/http.js';
+
+export interface ApiErrorBody {
+  error: string;
+  message: string;
+}
+
+/**
+ * Stable machine-readable error code plus a short user-facing message. Error
+ * bodies never echo submitted credentials or reveal whether an account exists.
+ */
+export function apiError(code: string, message: string): ApiErrorBody {
+  return { error: code, message };
+}
+
+/** Every authenticated read (session, audit, runtime) must bypass caches. */
+export const NO_STORE_HEADERS = { 'cache-control': 'no-store' } as const;
 
 /** Field paths only: submitted values are never echoed back. */
 export function invalidRequest(message: string, fields?: string[]) {

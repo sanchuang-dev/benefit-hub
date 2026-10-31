@@ -1,4 +1,3 @@
-import { createHash, createHmac } from 'node:crypto';
 import {
   YangmaoOpenV1Error,
   type YangmaoOpenV1PurchaseReader,
@@ -14,56 +13,25 @@ import {
   OrderMappingUnavailableError,
   OrderModeUnsupportedError,
   OrderNotFoundError,
-  OrderNotGrantableError,
   type BenefitOrder,
   type PrepaidOrderGrant,
 } from './benefit-orders.js';
-import { createBenefitOrderRepository } from './repository.js';
 import {
-  assertApplicationEntitlement,
-  requireSupplierMasterKey,
-  requireYangmaoClient,
-} from './supplier-access.js';
+  deriveGrantRequestId,
+  hashRecipientPhone,
+  isDefiniteRejection,
+  observedAtMillis,
+} from './grant-mechanics.js';
+import {
+  createGrantPipeline,
+  isInFlight,
+  type GrantContinueInput,
+  type GrantExecuteInput,
+} from './grant-pipeline.js';
+import { createBenefitOrderRepository } from './repository.js';
 
-/**
- * A durable reservation is considered in flight — and must not be raced by a
- * recovery read — for longer than the provider client's maximum request
- * timeout (60s). After that, a process crash or lost response is assumed and a
- * read-only recovery is allowed.
- */
-const RESERVATION_IN_FLIGHT_MS = 2 * 60 * 1000;
-const REQUEST_ID_PREFIX = 'bhA';
-const PHONE_HMAC_DOMAIN = 'benefit-hub:a-prepaid-grant:phone:v1\n';
-
-/**
- * The vendor idempotency key is derived from the immutable platform order id,
- * not from caller input and not regenerated per attempt. That is what makes a
- * retry a recovery of the same intent instead of a second quota deduction.
- */
-export function derivePrepaidGrantRequestId(orderId: string): string {
-  const digest = createHash('sha256')
-    .update(`benefit-hub:a-prepaid-grant:request:${orderId}`, 'utf8')
-    .digest('hex');
-  // 3 + 60 = 63 chars, within the vendor's documented 64-character bound.
-  return `${REQUEST_ID_PREFIX}${digest.slice(0, 60)}`;
-}
-
-/**
- * Keyed, domain-separated digest of the recipient phone. The raw number is
- * never persisted; the digest exists only to reject a conflicting repeated
- * grant input.
- */
-export function hashPrepaidGrantPhone(masterKey: Buffer, phone: string): string {
-  // Derive a dedicated subkey so the master key is not reused directly across
-  // the AES-GCM credential envelope and this phone digest.
-  const subkey = createHmac('sha256', masterKey)
-    .update('benefit-hub:a-prepaid-grant:phone-key:v1', 'utf8')
-    .digest();
-  return createHmac('sha256', subkey)
-    .update(PHONE_HMAC_DOMAIN, 'utf8')
-    .update(phone, 'utf8')
-    .digest('hex');
-}
+const A_MODE_DOMAIN = 'benefit-hub:a-prepaid-grant';
+const A_REQUEST_ID_PREFIX = 'bhA';
 
 export class PurchaseNotEligibleError extends Error {}
 
@@ -98,22 +66,6 @@ export interface PrepaidGrantService {
   recover(command: RecoverPrepaidGrantCommand): Promise<PrepaidGrantOutcome>;
 }
 
-function isDefiniteRejection(error: unknown): boolean {
-  if (!(error instanceof YangmaoOpenV1Error)) return false;
-  if (error.code === 'YANGMAO_OPEN_V1_AUTH_FAILED') return true;
-  if (error.code === 'YANGMAO_OPEN_V1_FORBIDDEN') return true;
-  return (
-    error.code === 'YANGMAO_OPEN_V1_BUSINESS_FAILED' &&
-    error.vendorCode !== undefined &&
-    [400, 401, 403].includes(error.vendorCode)
-  );
-}
-
-function observedAtMillis(observedAt: string, fallback: number): number {
-  const parsed = Date.parse(observedAt);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 /**
  * A-mode prepaid gift-pack execution (BHB-012-C).
  *
@@ -126,6 +78,8 @@ function observedAtMillis(observedAt: string, fallback: number): number {
  *
  * Any indeterminate result stays `unknown`; a retry only performs the vendor's
  * read-only `orders/query` with the same requestId and never re-sends the debit.
+ * Steps 1, 3 (persistence) and 5 (ordering) live in the shared grant pipeline;
+ * this module keeps only A-mode eligibility, frozen-mapping and outcome rules.
  */
 export function createPrepaidGrantService(deps: {
   db: AppDatabase;
@@ -135,15 +89,6 @@ export function createPrepaidGrantService(deps: {
   const repository = createBenefitOrderRepository(deps.db);
   const now = deps.now ?? Date.now;
 
-  function requireOwnedOrder(businessSource: string, orderId: string): BenefitOrder {
-    const order = repository.getById(orderId);
-    // The same response for "does not exist" and "belongs to another source".
-    if (!order || order.businessSource !== businessSource) {
-      throw new OrderNotFoundError('订单不存在');
-    }
-    return order;
-  }
-
   function requireFrozenA(order: BenefitOrder): { productCode: string } {
     const detail = repository.getForOperations(order.id);
     if (!detail) throw new OrderNotFoundError('订单不存在');
@@ -151,7 +96,11 @@ export function createPrepaidGrantService(deps: {
     if (!frozen) {
       throw new OrderMappingUnavailableError('订单没有冻结的供应商映射，不能发起上力下单');
     }
-    if (frozen.provider !== 'yangmao' || frozen.fulfillmentMode !== 'A' || order.fulfillmentMode !== 'A') {
+    if (
+      frozen.provider !== 'yangmao' ||
+      frozen.fulfillmentMode !== 'A' ||
+      order.fulfillmentMode !== 'A'
+    ) {
       throw new OrderModeUnsupportedError('该订单冻结的履约模式不是上力 A 预充值礼包');
     }
     return { productCode: frozen.productCode };
@@ -280,15 +229,15 @@ export function createPrepaidGrantService(deps: {
     return { order: settled.order, grant: settled.grant, observedAt };
   }
 
-  async function resumeExistingGrant(
-    order: BenefitOrder,
-    grant: PrepaidOrderGrant,
-    command: GrantPrepaidOrderCommand,
-    masterKey: Buffer,
-    client: YangmaoOpenV1PurchaseReader,
-  ): Promise<PrepaidGrantOutcome> {
+  async function continueExisting({
+    order,
+    operation: grant,
+    command,
+    masterKey,
+    client,
+  }: GrantContinueInput<PrepaidOrderGrant, GrantPrepaidOrderCommand>): Promise<PrepaidGrantOutcome> {
     const sameInput =
-      grant.phoneHmac === hashPrepaidGrantPhone(masterKey, command.phone) &&
+      grant.phoneHmac === hashRecipientPhone(masterKey, A_MODE_DOMAIN, command.phone) &&
       grant.refCode === command.refCode &&
       grant.paymentReference === command.paymentReference;
     if (!sameInput) {
@@ -297,19 +246,19 @@ export function createPrepaidGrantService(deps: {
     if (grant.state === 'rejected') {
       throw new GrantNotRetryableError('该订单已被上力明确拒绝，不会自动重试');
     }
-    if (grant.state === 'reserved' && now() - grant.updatedAt < RESERVATION_IN_FLIGHT_MS) {
+    if (isInFlight(grant, now())) {
       throw new GrantInProgressError('该订单的上力下单仍在处理中，请稍后用同一订单取回结果');
     }
     return recoverGrant(order, grant, client, command.signal);
   }
 
-  async function executeReservedGrant(
-    order: BenefitOrder,
-    grant: PrepaidOrderGrant,
-    command: GrantPrepaidOrderCommand,
-    productCode: string,
-    client: YangmaoOpenV1PurchaseReader,
-  ): Promise<PrepaidGrantOutcome> {
+  async function executeReserved({
+    order,
+    operation: grant,
+    command,
+    productCode,
+    client,
+  }: GrantExecuteInput<PrepaidOrderGrant, GrantPrepaidOrderCommand>): Promise<PrepaidGrantOutcome> {
     let result;
     try {
       result = await client.createPrepaidOrder(
@@ -351,78 +300,65 @@ export function createPrepaidGrantService(deps: {
     };
   }
 
+  const pipeline = createGrantPipeline<
+    PrepaidOrderGrant,
+    GrantPrepaidOrderCommand,
+    PrepaidGrantOutcome
+  >(
+    { db: deps.db, config: deps.config, repository, now },
+    {
+      actionLabel: '发起上力下单',
+      requireFrozen: requireFrozenA,
+      findOperation: (orderId) => repository.getGrant(orderId),
+      preflight: async ({ command, client }) => {
+        // A is paid, so the live purchase-check must pass before any local
+        // reservation or supplier debit. A restricted phone must not be charged.
+        const eligibility = await client.checkPurchase(command.phone, {
+          signal: command.signal,
+        });
+        if (
+          eligibility.purchaseRestricted ||
+          eligibility.giftUnclaimed ||
+          eligibility.lotteryUnbet
+        ) {
+          throw new PurchaseNotEligibleError(
+            '该手机号当前存在限领或未领取权益，未发起上力下单',
+          );
+        }
+      },
+      reserve: ({ order, command, masterKey }) => {
+        const reservation = repository.reserveGrant({
+          orderId: order.id,
+          applicationCredentialId: command.applicationCredentialId,
+          expectedVersion: order.version,
+          requestId: deriveGrantRequestId(A_MODE_DOMAIN, A_REQUEST_ID_PREFIX, order.id),
+          refCode: command.refCode,
+          phoneHmac: hashRecipientPhone(masterKey, A_MODE_DOMAIN, command.phone),
+          paymentReference: command.paymentReference,
+          occurredAt: now(),
+        });
+        return {
+          created: reservation.created,
+          order: reservation.order,
+          operation: reservation.grant,
+        };
+      },
+      continueExisting,
+      execute: executeReserved,
+      recovery: {
+        recoverExisting: ({ order, operation, client, signal }) =>
+          recoverGrant(order, operation, client, signal),
+        operationNotFoundError: () => new GrantNotFoundError('该订单尚未发起过上力下单'),
+        operationRejectedError: () =>
+          new GrantNotRetryableError('该订单已被上力明确拒绝，没有可恢复的领取链接'),
+        operationInFlightError: () =>
+          new GrantInProgressError('该订单的上力下单仍在处理中，请稍后再取回领取链接'),
+      },
+    },
+  );
+
   return {
-    async grant(command) {
-      const order = requireOwnedOrder(command.businessSource, command.orderId);
-      assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      const frozen = requireFrozenA(order);
-      const masterKey = requireSupplierMasterKey(deps.config);
-      const client = requireYangmaoClient(deps.db, deps.config);
-
-      const existing = repository.getGrant(order.id);
-      if (existing) {
-        return resumeExistingGrant(order, existing, command, masterKey, client);
-      }
-
-      if (order.status !== 'pending') {
-        throw new OrderNotGrantableError(`订单当前状态不允许发起上力下单：${order.status}`);
-      }
-
-      // Live, read-only eligibility must pass before any local reservation or
-      // supplier debit. A restricted phone must not be charged.
-      const eligibility = await client.checkPurchase(command.phone, { signal: command.signal });
-      if (eligibility.purchaseRestricted || eligibility.giftUnclaimed || eligibility.lotteryUnbet) {
-        throw new PurchaseNotEligibleError(
-          '该手机号当前存在限领或未领取权益，未发起上力下单',
-        );
-      }
-
-      const reservation = repository.reserveGrant({
-        orderId: order.id,
-        applicationCredentialId: command.applicationCredentialId,
-        expectedVersion: order.version,
-        requestId: derivePrepaidGrantRequestId(order.id),
-        refCode: command.refCode,
-        phoneHmac: hashPrepaidGrantPhone(masterKey, command.phone),
-        paymentReference: command.paymentReference,
-        occurredAt: now(),
-      });
-
-      if (!reservation.created) {
-        // A concurrent caller won the reservation. Never send a second debit.
-        return resumeExistingGrant(
-          reservation.order,
-          reservation.grant,
-          command,
-          masterKey,
-          client,
-        );
-      }
-
-      return executeReservedGrant(
-        reservation.order,
-        reservation.grant,
-        command,
-        frozen.productCode,
-        client,
-      );
-    },
-
-    async recover(command) {
-      const order = requireOwnedOrder(command.businessSource, command.orderId);
-      assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      requireFrozenA(order);
-      const client = requireYangmaoClient(deps.db, deps.config);
-
-      const grant = repository.getGrant(order.id);
-      if (!grant) throw new GrantNotFoundError('该订单尚未发起过上力下单');
-      if (grant.state === 'rejected') {
-        throw new GrantNotRetryableError('该订单已被上力明确拒绝，没有可恢复的领取链接');
-      }
-      if (grant.state === 'reserved' && now() - grant.updatedAt < RESERVATION_IN_FLIGHT_MS) {
-        throw new GrantInProgressError('该订单的上力下单仍在处理中，请稍后再取回领取链接');
-      }
-      return recoverGrant(order, grant, client, command.signal);
-    },
+    grant: (command) => pipeline.start(command),
+    recover: (command) => pipeline.recover(command),
   };
 }

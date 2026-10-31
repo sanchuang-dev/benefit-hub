@@ -90,8 +90,11 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 | `TRUST_PROXY` | `false`（compose 为 `true`） | 仅当宿主机 Caddy 在容器前时才信任 `X-Forwarded-For` |
 | `YANGMAO_INRICE_BASE_URL` / `YANGMAO_INRICE_APP_KEY` / `YANGMAO_INRICE_APP_SECRET` | 未设置 | 可选的上力 D 商品只读凭证，三项必须同时由服务器侧安全注入；缺失时只读入口明确返回 503，不回退默认值或假数据 |
 | `BENEFIT_ORDER_CLIENTS_JSON` | 未设置 | 兼容用的旧版下游服务凭证映射（`businessSource -> Bearer token`），格式与端点见 [business-order-api.md](./integrations/business-order-api.md)。已登记应用的 `businessSource` 即使仍用环境凭证，也必须服从该应用的启停与商品授权；未登记来源保持兼容。格式非法时应用启动失败；令牌只放服务器侧，禁止进入仓库/CI/日志 |
+| `BUILD_VERSION` / `BUILD_COMMIT` / `BUILD_TIME` | 未设置 | 可选构建标记，仅用于「系统设置 → 平台状态」的只读展示；未注入时页面显示「未注入」，不得用占位版本号代替。当前 CI/Docker 尚未注入，配置注入属后续部署改动 |
 
 登录限速（同一账号 15 分钟 5 次失败、同一来源 15 分钟 20 次）保存在进程内存，重启只会解除锁定，不会放行凭据。
+
+**系统设置页（2026-10-29）**：平台治理下四个只读页面——`/settings/accounts`（运营账号）、`/settings/security`（生效安全策略）、`/settings/audit`（认证/账号审计）、`/settings/runtime`（运行时事实，含 `/api/v1/system/runtime`）。`/settings` 与旧 `?tab=` 链接重定向到对应页面。密钥、令牌和数据库路径不出现在响应或页面；账号创建/重置/停用目前仍用下方 CLI，页面写操作与可编辑策略另行验收。
 
 ### 下游应用机器凭证（2026-10-28）
 
@@ -140,7 +143,7 @@ printf '%s' "$ADMIN_PASSWORD" | docker compose --project-name benefit-hub \
 - 原定运行 UID/GID 10001，首次部署前检查目录权限与宿主机所有权。
 - 使用 SQLite 一致性备份机制（backup API 或 `VACUUM INTO` 等），不能只复制正在使用的主 DB 而忽略 WAL。
 - 数据库 migration 与镜像升级分开审查；回滚镜像不等于回滚数据结构，禁止自动删库/重建。
-- BHB-002/BHB-003 引入的迁移只做 `CREATE TABLE/INDEX`，启动时自动应用并记录；已有管理员账号、会话与审计记录在重启和再次迁移后保留（由 `apps/api/test/db-migrations.test.ts` 验证）。会话存在 SQLite 中，容器重启后仍然有效，直到绝对有效期结束、退出、改密或停用。内部商品及其操作审计同样保存在该文件中，停用商品不会删除行或历史。
+- BHB-002/BHB-003 引入的迁移只做 `CREATE TABLE/INDEX`，启动时自动应用并记录；已有管理员账号、会话与审计记录在重启和再次迁移后保留（由 `apps/api/test/system/db-migrations.test.ts` 验证）。会话存在 SQLite 中，容器重启后仍然有效，直到绝对有效期结束、退出、改密或停用。内部商品及其操作审计同样保存在该文件中，停用商品不会删除行或历史。
 - 避免多个服务实例/容器同时把同一个 SQLite 文件当多主数据库使用。
 - 启用备份保留和实际恢复演练后才可承载真实权益扣减与发放记录。
 

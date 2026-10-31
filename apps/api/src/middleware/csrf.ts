@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie, setCookie } from 'hono/cookie';
 import type { AppConfig } from '../config.js';
-import { apiError, NO_STORE_HEADERS } from '../modules/auth/http.js';
+import { NO_STORE_HEADERS, apiError } from '../modules/http.js';
 
 export const CSRF_COOKIE_NAME = 'bh_csrf';
 export const CSRF_HEADER_NAME = 'x-csrf-token';

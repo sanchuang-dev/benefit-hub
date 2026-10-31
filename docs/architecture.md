@@ -68,6 +68,7 @@
 | API 框架 | Hono | 内部 API，运行于 Node；无需 Fastify |
 | 语言与校验 | TypeScript strict + Zod | HTTP 入参、供应商响应与环境配置都做运行时校验 |
 | 管理端 | React + Vite + Ant Design 6 + Lucide | 不直接引入完整 Ant Design Pro 模板 |
+| 统计图表 | ECharts 6（按需注册 + SVG renderer） | 只用于总览等统计视图，经 `apps/admin/src/shared/charts` 薄封装接入；不引入 @ant-design/plots / Recharts / Chart.js 等第二套图表库 |
 | 路由 | React Router | 页面/URL 查询参数是其职责 |
 | 服务端状态 | TanStack Query | 请求、缓存、轮询、失效；不重复抄到 Zustand |
 | 少量客户端状态 | Zustand | 菜单、弹窗等；局部状态留在 React |
@@ -147,6 +148,7 @@ compose.yaml
 | 映射流程 | Steps + Form + Modal/Popconfirm + Alert / Tag | 新造步骤条、确认框、状态标签 |
 | 加载/空状态/反馈 | Skeleton、Spin、Empty、Result、Alert、App.useApp() 的 message/notification/modal | 自造 Toast、Spinner、Modal provider |
 | 主题/全局尺寸 | ConfigProvider theme.token + theme.components | 大片 CSS 强行覆盖 .ant-* 内部 DOM 或再建一套 token 引擎 |
+| 统计图表 | ECharts 6：`renderer: 'svg'`，按需注册 line/bar/pie 与必要组件，统一走 `shared/charts/EChart.tsx` + `chart-theme.ts` | 自造图表组件、第二套图表库、只在浏览器可用的 canvas 依赖 |
 
 - 默认使用 Ant Design 6 **正式支持的属性、API 与 Design Token**；如实际 lockfile 版本与官方最新文档不一致，以仓库已安装版本为准。
 - 入口以 ConfigProvider（zh_CN、主题）包裹 Ant Design App，并在组件下通过 App.useApp() 获取反馈实例。不要混杂静态 message 调用与另一套自制反馈系统。
@@ -154,9 +156,19 @@ compose.yaml
 - 当前仓库已安装 lucide-react：只作为已有的导航/语义图标方案；不再额外引入多套互相重复的 Icon/UI 组件库。禁止图标仅以颜色表达状态。
 - **暂不引入** Tailwind、shadcn/ui、Material UI、Mantine、Ant Design Pro 整套脚手架、额外 form/table/state/UI 框架。未来如果确有 Ant Design 缺口，先提交具体差异与使用理由，再评审是否引入；本次讨论不授权新增。
 
+### 总览驾驶舱的聚合与图表（2026-10-29）
+
+- **一个聚合接口**：`GET /api/v1/operations/overview?window=today|7d|30d`，返回 `{ overview }`，要求登录会话（只读账号可读）、`no-store`、纯本地 SQLite 聚合、不发起任何上游调用。契约在 `packages/contracts/src/overview.ts`，前后端共用同一份 schema。
+- **为什么必须服务端聚合**：订单列表接口每页上限 50 且没有计数维度，前端拿分页凑「今日订单数」会产生假数；而驾驶舱的核心要求是每个数字都可核对。窗口按固定 +08:00 日界计算（中国无夏令时，不引时区库），`asOf` 是唯一的新鲜度来源。
+- **口径**：`completedRateBp` 分母只含已终态（已完成/失败/部分完成），无终态返回 `null`；`previousTotal` 在 `today` 是昨日同时段、在 `7d`/`30d` 是紧邻等长前窗；`series` 固定 30 个北京日点，`hourly` 固定 24 个北京时间点，缺数据补真实 0。
+- **前端结构**：`features/overview/`（api、use-overview、option 构建器、风险派生、图表组件）、`pages/OverviewPage.tsx`（页面编排）、`shared/charts/`（ECharts 实例封装与配色）。option 构建器是纯函数，单测断言数据与轴配置；图表本身在 jsdom 中渲染为真实 SVG 节点，**不允许 mock 掉图表库来换取绿色**。测试环境为 `HTMLCanvasElement.prototype.getContext` 提供最小桩（仅用于 ECharts 文本测量），断言对象始终是 SVG DOM。
+- **下钻**：订单页支持 `?status=` 预选平台状态，驾驶舱卡片与风险项据此跳转，避免「点进去还要再筛一次」。
+
 ### 页面、路由和状态的所有权
 
-- React Router 管理登录入口、四个主导航页、独立订单详情、浏览器历史与 URL 查询参数。顶部工作页签使用受控 Tabs 与路由映射；路由才是页面位置的来源，避免再复制一套“当前页面”真相源。
+- React Router 管理登录入口、各业务域导航页、独立订单详情、浏览器历史与 URL 查询参数。顶部工作页签使用受控 Tabs 与路由映射；路由才是页面位置的来源，避免再复制一套“当前页面”真相源。
+- 侧栏导航的模型与菜单键解析集中在 `apps/admin/src/app/shell/navigation.ts`（业务域分组、页面、`activeMenuKey()`、搜索过滤），展示层为 `apps/admin/src/app/shell/AppSidebar.tsx`（品牌区、菜单搜索、Ant Design Menu 与折叠）；`AppShell.tsx` 只负责顶栏、工作页签与内容区。菜单搜索是纯展示过滤，不影响路由、页签或 TanStack Query 数据。
+- 页面头部属于壳层固定区：各页面继续渲染自己的 `.page-header`（标题、说明与主操作），壳层样式将它固定在内容区顶部（`position: sticky`）并遮住其下方 16px 间距，页面正文独立滚动；新页面沿用 `.page` + `.page-header` 即自动获得同一行为。
 - TanStack Query 管理 API 读写、分页缓存、失效、重试与可观察的加载/错误状态。**供应商扣额/发放/映射激活等写操作不做乐观成功**。
 - React 局部 useState / Ant Design Form 实例承载当前编辑会话、草稿表单及临时 Drawer 状态。只有确属跨页面共享的 UI 偏好才使用 Zustand；不要把整份列表数据或 Query 缓存搬进 Zustand。
 - 商品两个业务 Tab 分别保持筛选、分页、排序与表格/卡片偏好；卡片和 Table **消费相同的请求结果**。URL 查询参数可分享；用户切换页面不应悄悄丢失条件。

@@ -4,7 +4,7 @@ import type { AppConfig } from '../config.js';
 import type { AppDatabase } from '../db/client.js';
 import { recordAuthEvent } from '../modules/auth/audit.js';
 import type { AdminRole } from '../modules/auth/accounts.js';
-import { apiError, NO_STORE_HEADERS } from '../modules/auth/http.js';
+import { NO_STORE_HEADERS, apiError } from '../modules/http.js';
 import type { SessionPrincipal } from '../modules/auth/principal.js';
 import { findValidSession, SESSION_COOKIE_NAME } from '../modules/auth/session.js';
 

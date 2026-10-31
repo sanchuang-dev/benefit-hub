@@ -1,9 +1,13 @@
 import {
   Alert,
+  Breadcrumb,
   Button,
   Card,
   Descriptions,
   Empty,
+  Form,
+  Input,
+  Select,
   Space,
   Table,
   Tabs,
@@ -11,9 +15,9 @@ import {
   Typography,
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
-import { ArrowLeft, RefreshCw } from 'lucide-react';
-import { useState } from 'react';
-import { useNavigate } from 'react-router';
+import { RefreshCw, RotateCcw, Search } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router';
 import { useSessionQuery } from '../features/auth/use-auth';
 import { SupplierConnectionDrawer } from '../features/suppliers/SupplierConnectionDrawer';
 import { SupplierReadTools } from '../features/suppliers/SupplierReadTools';
@@ -21,12 +25,21 @@ import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel
 import { useSupplierProductsQuery } from '../features/catalog/use-catalog';
 import { useSupplierQuery, useSuppliersQuery, type SupplierSummary } from '../features/suppliers/use-suppliers';
 import { formatDateTime } from '../shared/lib/format-date-time';
+import { parseKeyword, setOptionalParam } from '../shared/lib/url-state';
+import '../shared/styles/data-panel.css';
 
 const { Title, Paragraph, Text } = Typography;
 
 function formatObservedAt(iso: string): string {
   const timestamp = Date.parse(iso);
   return Number.isNaN(timestamp) ? iso : formatDateTime(timestamp);
+}
+
+type SupplierConfigStatus = 'all' | 'configured' | 'unconfigured';
+
+interface FilterFormValues {
+  keyword?: string;
+  status: SupplierConfigStatus;
 }
 
 function supplierConfigLabel(supplier: SupplierSummary) {
@@ -40,94 +53,246 @@ function supplierConfigLabel(supplier: SupplierSummary) {
 /**
  * The registry response is a server-owned integration fact, not a client-side
  * fictitious supplier or an online connectivity claim.
+ *
+ * The list follows the data-panel layout of the catalogue page (design.md §4E):
+ * one white surface, a filter toolbar row on top, and a single table below.
+ * There is no create entry because phase one has no supplier-onboarding
+ * contract, and no table/card switch because the registry has no cover assets.
  */
 export function SuppliersPage() {
   const navigate = useNavigate();
   const suppliers = useSuppliersQuery();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filterForm] = Form.useForm<FilterFormValues>();
+
+  // Listing state is URL-owned so refresh, back/forward and shared links all
+  // reproduce the same view instead of resetting to the unfiltered registry.
+  const keyword = parseKeyword(searchParams.get('q'));
+  const rawStatus = searchParams.get('status');
+  const status: SupplierConfigStatus =
+    rawStatus === 'configured' || rawStatus === 'unconfigured' ? rawStatus : 'all';
+
+  useEffect(() => {
+    filterForm.setFieldsValue({ keyword, status });
+  }, [filterForm, keyword, status]);
+
+  // The registry is a small, complete list: the filters narrow the loaded
+  // snapshot instead of issuing a second request. An unknown keyword or a
+  // status nobody matches is a "no results" empty state, never an error and
+  // never an empty registry.
+  const allSuppliers = suppliers.data?.suppliers ?? [];
+  const normalizedKeyword = keyword.toLowerCase();
+  const visibleSuppliers = allSuppliers.filter((supplier) => {
+    const matchesKeyword =
+      !normalizedKeyword ||
+      supplier.name.toLowerCase().includes(normalizedKeyword) ||
+      supplier.key.toLowerCase().includes(normalizedKeyword);
+    const matchesStatus =
+      status === 'all' ||
+      (status === 'configured'
+        ? supplier.catalogRead.configured
+        : !supplier.catalogRead.configured);
+    return matchesKeyword && matchesStatus;
+  });
+  const sourceIsEmpty = allSuppliers.length === 0;
+
+  const updateSearch = (mutate: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(searchParams);
+    mutate(next);
+    setSearchParams(next, { replace: true });
+  };
+
+  const applyFilters = (values: FilterFormValues) => {
+    const nextKeyword = values.keyword?.trim() ?? '';
+    const nextStatus = values.status ?? 'all';
+    updateSearch((next) => {
+      setOptionalParam(next, 'q', nextKeyword || null);
+      setOptionalParam(next, 'status', nextStatus === 'all' ? null : nextStatus);
+    });
+  };
+
+  const resetFilters = () => {
+    filterForm.resetFields();
+    updateSearch((next) => {
+      next.delete('q');
+      next.delete('status');
+    });
+  };
 
   const columns: ColumnsType<SupplierSummary> = [
     {
-      title: '供货方',
+      title: '供应商',
       key: 'supplier',
+      width: 180,
       render: (_, supplier) => (
-        <Space size={8} wrap>
+        <Space orientation="vertical" size={0}>
           <Text strong>{supplier.name}</Text>
           <Text type="secondary">{supplier.key}</Text>
         </Space>
       ),
     },
     {
-      title: '商品读取配置',
-      key: 'read',
-      render: (_, supplier) => supplierConfigLabel(supplier),
+      title: '目录读取能力',
+      key: 'catalogRead',
+      width: 110,
+      render: (_, supplier) =>
+        supplier.catalogRead.supported ? <Tag color="blue">支持</Tag> : <Tag>不支持</Tag>,
+    },
+    {
+      title: '目录凭证',
+      key: 'configured',
+      width: 130,
+      render: (_, supplier) =>
+        supplier.catalogRead.configured ? <Tag color="blue">已配置</Tag> : <Tag>未配置</Tag>,
     },
     {
       title: '操作',
       key: 'action',
+      width: 116,
+      fixed: 'right',
       render: (_, supplier) => (
-        <Button type="link" onClick={() => navigate('/suppliers/' + supplier.key)}>
+        <Button type="link" size="small" onClick={() => navigate('/suppliers/' + supplier.key)}>
           查看供应商
         </Button>
       ),
     },
   ];
 
+  const emptyText = sourceIsEmpty ? (
+    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚无已登记供应商" />
+  ) : (
+    <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有符合条件的供应商">
+      <Button onClick={resetFilters}>清除筛选</Button>
+    </Empty>
+  );
+
   return (
     <div className="page">
       <header className="page-header">
         <Title level={2}>供应商管理</Title>
-        <Paragraph type="secondary">
-          查看供货方、接入配置与供货商品。
-        </Paragraph>
+        <Paragraph type="secondary">查看供货方、接入配置与供货商品。</Paragraph>
       </header>
 
       <Space orientation="vertical" size={16} className="page-stack">
-        <Card
-          title="已登记供应商"
-          extra={
-            <Button
-              icon={<RefreshCw size={14} />}
-              loading={suppliers.isFetching}
-              onClick={() => void suppliers.refetch()}
+        <section className="panel-surface" aria-label="供应商列表">
+          <div className="panel-toolbar-row">
+            <Form<FilterFormValues>
+              form={filterForm}
+              className="panel-toolbar"
+              layout="inline"
+              initialValues={{ keyword, status }}
+              onFinish={applyFilters}
             >
-              刷新
-            </Button>
-          }
-        >
+              <Form.Item name="keyword" label="关键词">
+                <Input allowClear placeholder="供应商名称或 Provider 标识" style={{ width: 240 }} />
+              </Form.Item>
+              <Form.Item name="status" label="接入状态">
+                <Select
+                  style={{ width: 160 }}
+                  options={[
+                    { value: 'all', label: '全部状态' },
+                    { value: 'configured', label: '凭证已配置' },
+                    { value: 'unconfigured', label: '凭证待配置' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item>
+                <Space size={8}>
+                  <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
+                    查询
+                  </Button>
+                  <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
+                    重置
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+
+            <div className="panel-action">
+              <Button
+                icon={<RefreshCw size={14} />}
+                loading={suppliers.isFetching}
+                onClick={() => void suppliers.refetch()}
+              >
+                刷新
+              </Button>
+            </div>
+          </div>
+
           {suppliers.isError ? (
-            <Alert
-              type="error"
-              showIcon
-              title="无法加载供应商档案"
-              description={suppliers.error.message}
-              action={<Button size="small" onClick={() => void suppliers.refetch()}>重试</Button>}
-            />
+            <div className="panel-feedback">
+              <Alert
+                type="error"
+                showIcon
+                title="无法加载供应商档案"
+                description={suppliers.error.message}
+                action={
+                  <Button size="small" onClick={() => void suppliers.refetch()}>
+                    重试
+                  </Button>
+                }
+              />
+            </div>
           ) : (
             <Table<SupplierSummary>
               size="middle"
               rowKey="key"
               columns={columns}
-              dataSource={suppliers.data?.suppliers ?? []}
-              loading={suppliers.isPending}
-              locale={{ emptyText: <Empty description="尚无已登记供应商" /> }}
+              dataSource={visibleSuppliers}
+              loading={suppliers.isPending || suppliers.isFetching}
+              // While the first request is still in flight there is no
+              // registry fact yet, so the table must not claim "尚无已登记
+              //供应商"; the loading overlay carries that state instead.
+              locale={{ emptyText: suppliers.isPending ? null : emptyText }}
               pagination={false}
-              scroll={{ x: 720 }}
+              scroll={{ x: 640 }}
             />
           )}
-        </Card>
+        </section>
       </Space>
     </div>
   );
 }
 
+type SupplierDetailTab = 'overview' | 'catalog' | 'connection' | 'read-tools';
+
 export function SupplierDetailPage() {
-  const navigate = useNavigate();
-  const [tab, setTab] = useState('overview');
+  const [searchParams, setSearchParams] = useSearchParams();
   const [probeRequested, setProbeRequested] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const session = useSessionQuery();
   const supplier = useSupplierQuery('yangmao');
-  const catalog = useSupplierProductsQuery({ enabled: probeRequested || tab === 'catalog' });
+
+  /**
+   * 供货商品 is the only deep-linkable sub-tab because the 供货目录 navigation
+   * entry targets it. It is URL-owned: `?tab=catalog` selects it and any other
+   * or unknown value falls back to 供应商概览. The remaining sub-tabs are click
+   * state only and keep the URL clean (the sidebar must never keep highlighting
+   * 供货目录 from a stale query). Switching tabs rewrites only the `tab` key
+   * with replace, so the panel's own supplierQ/paging keys survive a round-trip;
+   * the functional updater reads the latest params, so a filter written in the
+   * same tick as the switch is preserved.
+   */
+  const catalogRequested = searchParams.get('tab') === 'catalog';
+  const [tab, setTab] = useState<SupplierDetailTab>(catalogRequested ? 'catalog' : 'overview');
+  const activeTab: SupplierDetailTab = catalogRequested ? 'catalog' : tab;
+
+  const changeTab = (key: string) => {
+    const nextTab: SupplierDetailTab =
+      key === 'catalog' || key === 'connection' || key === 'read-tools' ? key : 'overview';
+    setTab(nextTab);
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        if (nextTab === 'catalog') next.set('tab', 'catalog');
+        else next.delete('tab');
+        return next;
+      },
+      { replace: true },
+    );
+  };
+
+  const catalog = useSupplierProductsQuery({ enabled: probeRequested || activeTab === 'catalog' });
 
   const supplierInfo = supplier.data?.supplier;
   const hasReadResult = probeRequested || catalog.isSuccess || catalog.isError;
@@ -136,7 +301,7 @@ export function SupplierDetailPage() {
     <Tag color="green">本次目录读取成功</Tag>
   ) : catalog.isError ? (
     <Tag color="orange">目录读取失败</Tag>
-  ) : probeRequested || tab === 'catalog' ? (
+  ) : probeRequested || activeTab === 'catalog' ? (
     <Tag>正在读取目录</Tag>
   ) : (
     <Tag>尚未执行目录验证</Tag>
@@ -208,7 +373,7 @@ export function SupplierDetailPage() {
               <Text>返回商品数：{catalog.data.products.length}</Text>
               <Text type="secondary">获取于 {formatObservedAt(catalog.data.observedAt)}</Text>
             </Space>
-            <Button type="primary" onClick={() => setTab('catalog')}>浏览供货商品</Button>
+            <Button type="primary" onClick={() => changeTab('catalog')}>浏览供货商品</Button>
           </Space>
         ) : (
           <Text type="secondary">正在向服务器查询上力目录…</Text>
@@ -241,19 +406,32 @@ export function SupplierDetailPage() {
 
   return (
     <div className="page">
+      {/*
+       * 上力 is a child page of 供应商管理, not a peer of it: the breadcrumb is
+       * the header line here. It owns both the hierarchy and the page heading
+       * (the current crumb carries role=heading), so the page does not repeat
+       * "上力" as a separate title below the crumb, and the parent crumb is the
+       * single back affordance.
+       */}
       <header className="page-header">
-        <Space size={12} align="center">
-          <Button
-            type="text"
-            aria-label="返回供应商列表"
-            icon={<ArrowLeft size={18} />}
-            onClick={() => navigate('/suppliers')}
-          />
-          <div>
-            <Title level={2}>上力</Title>
-            <Paragraph type="secondary">接入配置、商品目录与供货信息。</Paragraph>
-          </div>
-        </Space>
+        <Breadcrumb
+          className="page-breadcrumb"
+          separator=">"
+          items={[
+            { key: 'parent', title: '供应商管理' },
+            { key: 'current', title: '上力' },
+          ]}
+          itemRender={(item) =>
+            item.key === 'current' ? (
+              <span role="heading" aria-level={2} className="page-breadcrumb-current">
+                {item.title}
+              </span>
+            ) : (
+              <Link to="/suppliers">{item.title}</Link>
+            )
+          }
+        />
+        <Paragraph type="secondary">接入配置、商品目录与供货信息。</Paragraph>
       </header>
 
       <Space orientation="vertical" size={16} className="page-stack">
@@ -273,8 +451,8 @@ export function SupplierDetailPage() {
         </Space>
         <SupplierConnectionDrawer open={editorOpen} onClose={() => setEditorOpen(false)} />
         <Tabs
-          activeKey={tab}
-          onChange={setTab}
+          activeKey={activeTab}
+          onChange={changeTab}
           items={[
             { key: 'overview', label: '供应商概览', children: overview },
             { key: 'catalog', label: '供货商品', children: <SupplierProductsPanel /> },

@@ -25,6 +25,7 @@ Benefit Hub 是三创拥有规则主权的权益服务平台，负责内部商�
 | [部署运维方案](docs/operations.md) | 公司新阿里云 2C2G、Docker、Caddy、SQLite 挂载、dev 发布策略 |
 | [AGENTS.md](AGENTS.md) | 项目工程约束、权限、安全红线与两级分支例外 |
 | [UI 设计规范 v0.1](design.md) | 蓝白色 Ant Design 后台、登录封面、商品双视图、映射版本与订单详情、交互状态 |
+| [品牌资产与使用规则](docs/brand/README.md) | 三创 SANCHUANG 图标/横标/manifest 的存放位置、引用方式、替换流程与验证方法 |
 | [前端技术路线](docs/architecture.md#4a-前端技术路线ant-design-first施工强约束) | Ant Design First：组件、状态分工、禁止重复造轮子与验收纪律 |
 
 ## 已确定的工程方向

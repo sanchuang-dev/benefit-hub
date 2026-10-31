@@ -47,7 +47,7 @@ jobs:
           curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
             grep -q '"adminEnabled":true'
           curl --fail --silent http://127.0.0.1:18081/ |
-            grep -q '<title>Benefit Hub'
+            grep -q '<title>3C Benefit Hub'
 
       - name: Export verified image for dev deployment
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'

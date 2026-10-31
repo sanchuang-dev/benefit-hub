@@ -77,7 +77,7 @@ design.md                     # 视觉与交互唯一真相源
 
 ## 3. 代码卫生
 
-- TypeScript strict + Oxlint 作为现行机械门禁；必要时逐步增加规则。**不要同时引入另一套 ESLint 规则体系**。
+- TypeScript strict + Oxlint 作为现行机械门禁；必要时逐步增加规则。**不要同时引入另一套 ESLint 规则体系**。根目录 `.oxlintrc.json` 已把 `no-explicit-any`、`no-console`、`no-empty` 升为 error（`apps/api/src/log.ts` 的结构化日志是唯一豁免）；新增规则先在那里登记并跑一次全量 lint。
 - 禁止无原因的 `any`、不安全强转、空 `catch`、隐藏 API 异常、未处理 Promise、生产日志输出手机号/密钥/卡密、动态假成功、硬编码测试凭证。
 - 业务入参和供应商响应需要运行时 Schema 校验；不得把 TS 类型当外部输入校验。金额用整数最小货币单位，礼包个数和资金余额互不混算。
 - 错误分层：HTTP/供应商错误、业务失败、结果未知是不同状态；未知发券结果不能通过换 `requestId` 盲重试。

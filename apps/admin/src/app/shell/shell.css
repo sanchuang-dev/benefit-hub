@@ -17,71 +17,6 @@
   overflow: hidden;
 }
 
-.app-sider {
-  position: sticky !important;
-  top: 0;
-  height: 100vh;
-  overflow-x: hidden;
-  overflow-y: auto;
-  background: #fff;
-  scrollbar-width: thin;
-}
-
-.app-sider::after {
-  content: '';
-  position: absolute;
-  top: 52px;
-  right: 0;
-  bottom: 0;
-  width: 1px;
-  background: #e3e6ea;
-  pointer-events: none;
-}
-
-.app-brand {
-  height: 52px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 14px;
-  border-bottom: 1px solid #eef0f2;
-  white-space: nowrap;
-  overflow: hidden;
-}
-
-.app-brand-mark {
-  flex: 0 0 auto;
-  display: inline-flex;
-  width: 26px;
-  height: 26px;
-  border-radius: 5px;
-  background: #2563eb;
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-}
-
-.app-brand-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #1f2937;
-  font-size: 14px;
-  font-weight: 600;
-}
-
-.app-nav {
-  padding: 8px 0 16px;
-  border-inline-end: 0 !important;
-}
-
-.app-nav .ant-menu-submenu-title {
-  font-weight: 600;
-}
-
-
 .app-header {
   flex: 0 0 52px;
   height: 52px;
@@ -155,6 +90,28 @@
   background: #e8f1ff;
 }
 
+/*
+ * A hairline separates neighbouring inactive tabs so the strip still reads as
+ * a set of distinct pages. It sits in the 6px gutter between two tabs and is
+ * suppressed on both sides of the active tab, whose filled pill is already the
+ * boundary.
+ */
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: -3px;
+  width: 1px;
+  height: 14px;
+  background: #e3e6ea;
+  pointer-events: none;
+}
+
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active::before,
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active + .ant-tabs-tab::before {
+  display: none;
+}
+
 .app-tabs .ant-tabs-tab-remove {
   margin-inline-start: 7px;
   padding: 2px;
@@ -186,12 +143,32 @@
   width: 100%;
 }
 
+/*
+ * The page header is shell chrome, not scrolling content: it stays pinned to
+ * the top of the work area while the page body scrolls underneath. The ::after
+ * strip fills the 16px gap between header and content so scrolling rows cannot
+ * show through that margin strip.
+ */
 .page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   min-height: 66px;
   margin: 0 -16px 16px;
   padding: 13px 16px 11px;
   background: #fff;
   border-bottom: 1px solid #e8eaed;
+}
+
+.page-header::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -17px;
+  left: 0;
+  height: 16px;
+  background: #f5f6f8;
+  pointer-events: none;
 }
 
 .page-header h2 {
@@ -206,15 +183,42 @@
   font-size: 13px;
 }
 
-@media (max-width: 991px) {
-  .ant-layout-sider-collapsed .app-brand {
-    justify-content: center;
-    padding-inline: 0;
-  }
+/*
+ * Child pages (for example 供应商管理 → 上力) use the breadcrumb as their page
+ * header line instead of repeating the current page as a second title below
+ * it. It is part of the pinned header, so it cannot scroll away from the page
+ * it describes, and the parent crumb is the only back affordance.
+ */
+.page-header .page-breadcrumb {
+  margin-bottom: 2px;
+  font-size: 18px;
+  line-height: 26px;
+}
 
-  .ant-layout-sider-collapsed .app-brand-text {
-    display: none;
-  }
+.page-header .page-breadcrumb .ant-breadcrumb-separator {
+  color: #94a3b8;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a {
+  display: inline;
+  height: auto;
+  padding: 0;
+  margin-inline: 0;
+  color: #64748b;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a:hover {
+  color: #2563eb;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .page-breadcrumb-current {
+  display: inline;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 26px;
 }
 
 @media (max-width: 900px) {

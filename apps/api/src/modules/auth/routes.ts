@@ -9,8 +9,13 @@ import { clearSessionCookie, requireSession, type AppEnv } from '../../middlewar
 import { issueCsrfToken } from '../../middleware/csrf.js';
 import { findAccountByUsername, normalizeUsername, publicAccount } from './accounts.js';
 import { recordAuthEvent } from './audit.js';
-import { apiError, NO_STORE_HEADERS } from './http.js';
+import { apiError, NO_STORE_HEADERS } from '../http.js';
 import { verifyPasswordOrDummy } from './password.js';
+import {
+  LOGIN_FAILURE_PER_ACCOUNT,
+  LOGIN_FAILURE_PER_ADDRESS,
+  LOGIN_FAILURE_WINDOW_MS,
+} from './policy.js';
 import { createFailureRateLimiter } from './rate-limit.js';
 import {
   createSession,
@@ -24,8 +29,6 @@ const loginSchema = z.object({
   username: z.string().trim().min(1).max(64),
   password: z.string().min(1).max(256),
 });
-
-const LOGIN_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
 function setSessionCookie(c: Context, session: IssuedSession, config: AppConfig): void {
   setCookie(c, SESSION_COOKIE_NAME, session.token, {
@@ -59,11 +62,11 @@ export function createAuthRoutes(deps: { db: AppDatabase; config: AppConfig }): 
   const router = new Hono<AppEnv>();
 
   const accountLimiter = createFailureRateLimiter({
-    maxFailures: 5,
+    maxFailures: LOGIN_FAILURE_PER_ACCOUNT,
     windowMs: LOGIN_FAILURE_WINDOW_MS,
   });
   const addressLimiter = createFailureRateLimiter({
-    maxFailures: 20,
+    maxFailures: LOGIN_FAILURE_PER_ADDRESS,
     windowMs: LOGIN_FAILURE_WINDOW_MS,
   });
 

@@ -26,7 +26,7 @@ describe('ui prefs store', () => {
   });
 
   it('persists only UI preferences to the configured storage', () => {
-    useUiPrefs.getState().addTab('/settings');
+    useUiPrefs.getState().addTab('/settings/audit');
     useUiPrefs.getState().setCatalogView('card');
     useUiPrefs.getState().setSupplierView('card');
     useUiPrefs.getState().setMappingTab('history');
@@ -41,7 +41,7 @@ describe('ui prefs store', () => {
     };
 
     expect(stored.version).toBe(UI_PREFS_VERSION);
-    expect(stored.state.openTabs).toEqual(['/', '/settings']);
+    expect(stored.state.openTabs).toEqual(['/', '/settings/audit']);
     expect(stored.state.catalogView).toBe('card');
     expect(stored.state.supplierView).toBe('card');
     expect(stored.state.mappingTab).toBe('history');

@@ -276,56 +276,58 @@ export function ApplicationsPage() {
         ) : null}
 
         <section className="applications-surface" aria-label="下游应用列表">
-          <Form<FilterFormValues>
-            form={filterForm}
-            className="applications-toolbar"
-            layout="inline"
-            initialValues={{ keyword: '', status: 'all' }}
-            onFinish={applyFilters}
-          >
-            <Form.Item name="keyword" label="关键词">
-              <Input allowClear placeholder="应用来源或名称" style={{ width: 240 }} />
-            </Form.Item>
-            <Form.Item name="status" label="配置状态">
-              <Select
-                style={{ width: 140 }}
-                options={[
-                  { value: 'all', label: '全部状态' },
-                  { value: 'enabled', label: '已启用' },
-                  { value: 'disabled', label: '已停用' },
-                ]}
-              />
-            </Form.Item>
-            <Form.Item>
-              <Space size={8}>
-                <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
-                  查询
-                </Button>
-                <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
-                  重置
-                </Button>
-              </Space>
-            </Form.Item>
-          </Form>
-
-          <div className="applications-actions">
-            {isAdmin ? (
-              <Button
-                type="primary"
-                icon={<Plus size={16} />}
-                onClick={() => setDrawer({ mode: 'create' })}
-              >
-                登记应用
-              </Button>
-            ) : (
-              <Tooltip title="只读身份不能登记应用">
-                <span>
-                  <Button type="primary" icon={<Plus size={16} />} disabled>
-                    登记应用
+          <div className="applications-toolbar-row">
+            <Form<FilterFormValues>
+              form={filterForm}
+              className="applications-toolbar"
+              layout="inline"
+              initialValues={{ keyword: '', status: 'all' }}
+              onFinish={applyFilters}
+            >
+              <Form.Item name="keyword" label="关键词">
+                <Input allowClear placeholder="应用来源或名称" style={{ width: 240 }} />
+              </Form.Item>
+              <Form.Item name="status" label="配置状态">
+                <Select
+                  style={{ width: 140 }}
+                  options={[
+                    { value: 'all', label: '全部状态' },
+                    { value: 'enabled', label: '已启用' },
+                    { value: 'disabled', label: '已停用' },
+                  ]}
+                />
+              </Form.Item>
+              <Form.Item>
+                <Space size={8}>
+                  <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
+                    查询
                   </Button>
-                </span>
-              </Tooltip>
-            )}
+                  <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
+                    重置
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+
+            <div className="applications-create">
+              {isAdmin ? (
+                <Button
+                  type="primary"
+                  icon={<Plus size={16} />}
+                  onClick={() => setDrawer({ mode: 'create' })}
+                >
+                  登记应用
+                </Button>
+              ) : (
+                <Tooltip title="只读身份不能登记应用">
+                  <span>
+                    <Button type="primary" icon={<Plus size={16} />} disabled>
+                      登记应用
+                    </Button>
+                  </span>
+                </Tooltip>
+              )}
+            </div>
           </div>
 
           {listQuery.isError && listError ? (

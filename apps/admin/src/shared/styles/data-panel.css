@@ -1,0 +1,39 @@
+/*
+ * Shared data-panel skeleton for list pages: one white surface holding a
+ * filter toolbar and a table, separated by a hairline (design.md §4E).
+ * Mirrors the catalogue page's surface values so list pages do not grow a
+ * second nested card hierarchy; keep the two in sync when either changes.
+ */
+
+.panel-surface {
+  overflow: hidden;
+  background: #fff;
+  border: 1px solid #e8eaed;
+  border-radius: 8px;
+}
+
+/* Filters and the page-level action share one row; the action stays at the
+ * right edge even when the filters wrap on narrow screens. */
+.panel-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #eef0f2;
+}
+
+.panel-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  row-gap: 8px;
+}
+
+.panel-action {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
+}
+
+.panel-feedback {
+  padding: 16px;
+}

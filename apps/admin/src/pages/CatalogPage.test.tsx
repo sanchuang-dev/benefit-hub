@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
-import type { CatalogProduct } from '../features/catalog/api';
+import type {
+  CatalogProductListItem,
+  ProductMappingSummary,
+  SupplierFilterOption,
+} from '../features/catalog/api';
 import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { jsonResponse, mockFetch } from '../test-utils/http';
+import { findButtonText, findButtonTextAsync, queryParams, writeCalls } from '../test-utils/dom';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 24, 2, 0, 0);
@@ -21,18 +27,26 @@ const VIEWER = {
   role: 'viewer' as const,
 };
 
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
 function sessionResponse(admin: typeof ADMIN | typeof VIEWER): Response {
   return jsonResponse(200, { admin, session: { expiresAt: SESSION_EXPIRES_AT } });
 }
 
-function product(overrides: Partial<CatalogProduct> & Pick<CatalogProduct, 'id' | 'code' | 'name'>): CatalogProduct {
+const UNMAPPED: ProductMappingSummary = {
+  state: 'none',
+  provider: null,
+  productCode: null,
+  fulfillmentMode: null,
+  versionNumber: null,
+};
+
+/** Server facet that backs the 供货方 dropdown; displayed name is server data. */
+const DEFAULT_SUPPLIERS: SupplierFilterOption[] = [
+  { key: 'yangmao', name: '上力', configured: true },
+];
+
+function product(
+  overrides: Partial<CatalogProductListItem> & Pick<CatalogProductListItem, 'id' | 'code' | 'name'>,
+): CatalogProductListItem {
   return {
     shortDescription: '',
     status: 'active',
@@ -41,58 +55,21 @@ function product(overrides: Partial<CatalogProduct> & Pick<CatalogProduct, 'id' 
     version: 1,
     createdAt: NOW,
     updatedAt: NOW,
+    mapping: UNMAPPED,
     ...overrides,
   };
 }
 
-function listResponse(products: CatalogProduct[], page = 1, pageSize = 20): Response {
-  return jsonResponse(200, { products, page, pageSize, total: products.length });
+function listResponse(
+  products: CatalogProductListItem[],
+  page = 1,
+  pageSize = 20,
+  suppliers: SupplierFilterOption[] = DEFAULT_SUPPLIERS,
+): Response {
+  return jsonResponse(200, { products, suppliers, page, pageSize, total: products.length });
 }
-
-function mockFetch(
-  handler: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
-): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const response = await handler(url, init);
-    if (!response) throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-    return response;
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
 
 /** Ant Design inserts a space inside two-character button labels; match on text. */
-function findButtonText(text: string): HTMLElement {
-  const element = screen.getByText((content) => content.replace(/\s/g, '') === text);
-  const button = element.closest('button');
-  if (!button) throw new Error(`No button containing ${text}`);
-  return button;
-}
-
-async function findButtonTextAsync(text: string, timeout = 5000): Promise<HTMLElement> {
-  const element = await screen.findByText(
-    (content) => content.replace(/\s/g, '') === text,
-    undefined,
-    { timeout },
-  );
-  const button = element.closest('button');
-  if (!button) throw new Error(`No button containing ${text}`);
-  return button;
-}
-
-function queryParams(url: string): URLSearchParams {
-  return new URL(url, 'http://localhost').searchParams;
-}
-
-function writeCalls(fetchMock: ReturnType<typeof vi.fn>): string[] {
-  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
-    .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
-    .map(([url, init]) => `${init?.method ?? 'GET'} ${url}`);
-}
-
 beforeAll(() => installDomStubs());
 
 afterEach(() => {
@@ -169,7 +146,7 @@ describe('internal product list', () => {
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 
-  it('restores filters, paging and tab from the URL after a refresh', { timeout: 60_000 }, async () => {
+  it('restores filters and paging from the URL after a refresh', { timeout: 60_000 }, async () => {
     const travel = product({ id: 'p-1', code: 'TRAVEL-1', name: '腾讯出行券 10 元' });
     const coffee = product({
       id: 'p-2',
@@ -282,9 +259,255 @@ describe('internal product list', () => {
   });
 });
 
+describe('single internal catalogue', () => {
+  it('renders supplier, mapping status and upstream code without supplier tabs', { timeout: 60_000 }, async () => {
+    const travel = product({
+      id: 'p-1',
+      code: 'TRAVEL-1',
+      name: '腾讯出行券 10 元',
+      mapping: {
+        state: 'active',
+        provider: 'yangmao',
+        productCode: 'YM-1001',
+        fulfillmentMode: 'D',
+        versionNumber: 3,
+      },
+    });
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      status: 'disabled',
+      mapping: {
+        state: 'draft',
+        provider: 'yangmao',
+        productCode: 'YM-2002',
+        fulfillmentMode: 'B',
+        versionNumber: 2,
+      },
+    });
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([travel, coffee]);
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+
+    expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
+
+    // The legacy 内部商品 / 供应商商品 tabs are gone; the supplier catalogue
+    // lives on the supplier detail page only. The global work tabs stay.
+    expect(screen.queryByRole('tab', { name: '内部商品' })).toBeNull();
+    expect(screen.queryByRole('tab', { name: '供应商商品' })).toBeNull();
+    expect(screen.queryByText('内部商品')).toBeNull();
+    expect(screen.queryByText('供应商商品')).toBeNull();
+    expect(screen.getByRole('heading', { name: '权益商品' })).toBeTruthy();
+
+    expect(screen.getByRole('columnheader', { name: '供货方' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '映射状态' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '上游编码' })).toBeTruthy();
+    expect(screen.getByRole('columnheader', { name: '模式' })).toBeTruthy();
+
+    expect(screen.getAllByText('上力').length).toBeGreaterThan(0);
+    expect(screen.getByText('已生效')).toBeTruthy();
+    expect(screen.getByText('v3')).toBeTruthy();
+    expect(screen.getByText('草稿未生效')).toBeTruthy();
+    expect(screen.getByText('YM-1001')).toBeTruthy();
+    expect(screen.getByText('YM-2002')).toBeTruthy();
+    expect(screen.getByText('D')).toBeTruthy();
+  });
+
+  it('sends the selected supplier to the API and resets pagination', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      mapping: {
+        state: 'active',
+        provider: 'yangmao',
+        productCode: 'YM-2002',
+        fulfillmentMode: 'D',
+        versionNumber: 1,
+      },
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog?page=2');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    await waitFor(() => expect(listRequests.at(-1)?.get('page')).toBe('2'), { timeout: 5000 });
+
+    fireEvent.mouseDown(screen.getByLabelText('供货方'));
+    fireEvent.click(await screen.findByTitle('上力', undefined, { timeout: 5000 }));
+    fireEvent.click(findButtonText('查询'));
+
+    await waitFor(
+      () => {
+        const request = listRequests.at(-1);
+        expect(request?.get('supplier')).toBe('yangmao');
+        // Filtering starts a new result set, so page two must not leak over.
+        expect(request?.get('page')).toBe('1');
+      },
+      { timeout: 5000 },
+    );
+    expect(router.state.location.search).toContain('supplier=yangmao');
+    expect(router.state.location.search).not.toContain('page=');
+
+    // Reset clears the supplier filter as well as keyword/status/paging.
+    fireEvent.click(findButtonText('重置'));
+    await waitFor(() => expect(listRequests.at(-1)?.get('supplier')).toBeNull(), {
+      timeout: 5000,
+    });
+    expect(router.state.location.search).not.toContain('supplier=');
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('marks a supplier without credentials as 未配置 in the filter', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      mapping: {
+        state: 'draft',
+        provider: 'yangmao',
+        productCode: 'YM-2002',
+        fulfillmentMode: 'B',
+        versionNumber: 1,
+      },
+    });
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return listResponse([coffee], 1, 20, [
+          { key: 'yangmao', name: '上力', configured: false },
+        ]);
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    expect(screen.getAllByText('未配置').length).toBeGreaterThan(0);
+
+    fireEvent.mouseDown(screen.getByLabelText('供货方'));
+    expect(
+      await screen.findByTitle('上力（未配置）', undefined, { timeout: 5000 }),
+    ).toBeTruthy();
+  });
+
+  it('restores a valid supplier filter from the URL', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      mapping: {
+        state: 'active',
+        provider: 'yangmao',
+        productCode: 'YM-2002',
+        fulfillmentMode: 'D',
+        versionNumber: 1,
+      },
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee]);
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog?supplier=yangmao');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    await waitFor(() => expect(listRequests.at(-1)?.get('supplier')).toBe('yangmao'), {
+      timeout: 5000,
+    });
+    expect(screen.getAllByText('上力').length).toBeGreaterThan(0);
+  });
+
+  it('drops an unknown supplier from a hand-edited URL instead of requesting it', { timeout: 60_000 }, async () => {
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog?supplier=evil&page=2');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    await waitFor(() => expect(listRequests.length).toBeGreaterThan(0), { timeout: 5000 });
+    expect(listRequests.every((params) => params.get('supplier') === null)).toBe(true);
+    expect(listRequests.at(-1)?.get('page')).toBe('2');
+    expect(screen.getAllByText('全部供货方').length).toBeGreaterThan(0);
+  });
+
+  it('redirects the legacy supplier tab to the supplier catalogue page', { timeout: 60_000 }, async () => {
+    const catalogListCalls: string[] = [];
+    const supplier = {
+      key: 'yangmao',
+      name: '上力',
+      catalogRead: { supported: true, configured: true },
+    };
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url === '/api/v1/suppliers') return jsonResponse(200, { suppliers: [supplier] });
+      if (url === '/api/v1/suppliers/yangmao') return jsonResponse(200, { supplier });
+      if (url === '/api/v1/catalog/supplier-products') {
+        return jsonResponse(200, {
+          provider: 'yangmao',
+          currency: 'CNY',
+          observedAt: new Date(NOW).toISOString(),
+          products: [],
+        });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        catalogListCalls.push(url);
+        return listResponse([]);
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog?tab=supplier');
+
+    await waitFor(
+      () => {
+        expect(router.state.location.pathname).toBe('/suppliers/yangmao');
+        expect(router.state.location.search).toBe('?tab=catalog');
+      },
+      { timeout: 5000 },
+    );
+    // The internal product list must not be fetched on the way to the redirect.
+    expect(catalogListCalls).toEqual([]);
+  });
+});
+
 describe('product writes', () => {
   it('creates a product through the API and shows the refetched row after saving', { timeout: 60_000 }, async () => {
-    let created: CatalogProduct | null = null;
+    let created: CatalogProductListItem | null = null;
     let postedBody: Record<string, unknown> | null = null;
 
     const fetchMock = mockFetch((url, init) => {

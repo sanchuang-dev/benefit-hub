@@ -9,14 +9,26 @@
   border-radius: 8px;
 }
 
-.applications-toolbar {
+/* Filter controls and the create action share one toolbar row; the action keeps
+ * its position at the right edge even when the filters wrap on narrow screens. */
+.applications-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
   padding: 12px 16px;
-  row-gap: 8px;
   border-bottom: 1px solid #eef0f2;
 }
 
-.applications-actions {
-  padding: 12px 16px 0;
+.applications-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  row-gap: 8px;
+}
+
+.applications-create {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 
 .applications-table {

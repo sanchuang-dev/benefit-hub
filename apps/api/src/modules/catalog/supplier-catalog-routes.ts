@@ -6,7 +6,7 @@ import type { AppDatabase } from '../../db/client.js';
 import { logEvent } from '../../log.js';
 import { activeYangmaoReadConfig, SupplierCredentialUnavailableError } from '../suppliers/connection.js';
 import { requireSession, type AppEnv } from '../../middleware/auth.js';
-import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
+import { NO_STORE_HEADERS, apiError } from '../http.js';
 import {
   createYangmaoInriceReader,
   toSupplierCatalogDto,
