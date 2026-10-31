@@ -131,6 +131,14 @@
   overflow: auto;
   padding: 0;
   background: #f5f6f8;
+  /*
+   * The work area is the single scroll container for every page, so a tall page
+   * and a short page differ only by whether a vertical scrollbar exists. Without
+   * a reserved gutter the content box is 15px narrower on tall pages, and every
+   * route-tab switch between the two groups shifted the pinned page header
+   * sideways by that 15px. Reserving the gutter keeps the box width constant.
+   */
+  scrollbar-gutter: stable;
 }
 
 .page {
@@ -141,101 +149,6 @@
 
 .page-stack {
   width: 100%;
-}
-
-/*
- * The page header is shell chrome, not scrolling content: it stays pinned to
- * the top of the work area while the page body scrolls underneath. The ::after
- * strip fills the 16px gap between header and content so scrolling rows cannot
- * show through that margin strip.
- */
-.page-header {
-  position: sticky;
-  top: 0;
-  z-index: 10;
-  min-height: 66px;
-  margin: 0 -16px 16px;
-  padding: 13px 16px 11px;
-  background: #fff;
-  border-bottom: 1px solid #e8eaed;
-}
-
-.page-header::after {
-  content: '';
-  position: absolute;
-  right: 0;
-  bottom: -17px;
-  left: 0;
-  height: 16px;
-  background: #f5f6f8;
-  pointer-events: none;
-}
-
-.page-header h2 {
-  margin: 0 0 2px !important;
-  font-size: 18px !important;
-  line-height: 1.4 !important;
-}
-
-.page-header p,
-.page-header .ant-typography-secondary {
-  margin-bottom: 0 !important;
-  font-size: 13px;
-}
-
-/*
- * Child pages (for example 供应商管理 → 上力) use the breadcrumb as their page
- * header line instead of repeating the current page as a second title below
- * it. It is part of the pinned header, so it cannot scroll away from the page
- * it describes, and the parent crumb is the only back affordance.
- */
-.page-header .page-breadcrumb {
-  margin-bottom: 2px;
-  font-size: 18px;
-  line-height: 26px;
-}
-
-.page-header .page-breadcrumb .ant-breadcrumb-separator {
-  color: #94a3b8;
-}
-
-.page-header .page-breadcrumb .ant-breadcrumb-item a {
-  display: inline;
-  height: auto;
-  padding: 0;
-  margin-inline: 0;
-  color: #64748b;
-  background: transparent;
-}
-
-.page-header .page-breadcrumb .ant-breadcrumb-item a:hover {
-  color: #2563eb;
-  background: transparent;
-}
-
-.page-header .page-breadcrumb .page-breadcrumb-current {
-  display: inline;
-  color: #1f2937;
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 26px;
-}
-
-/* Child-page title line: breadcrumb and its live status tags share one row. */
-.page-header .page-header-title {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-}
-
-.page-header .page-header-title .page-breadcrumb {
-  margin-bottom: 0;
-}
-
-/* Status tags are header metadata, so they never add a second prose line. */
-.page-header .page-header-status {
-  margin: 0;
 }
 
 @media (max-width: 900px) {
@@ -249,10 +162,5 @@
 
   .page {
     padding: 0 12px 12px;
-  }
-
-  .page-header {
-    margin-inline: -12px;
-    padding-inline: 12px;
   }
 }

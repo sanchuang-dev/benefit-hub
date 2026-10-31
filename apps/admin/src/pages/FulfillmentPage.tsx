@@ -29,8 +29,9 @@ import { ORDER_STATUS_COLORS, ORDER_STATUS_LABELS } from '../features/fulfillmen
 import { OrderDetailDrawer } from '../features/fulfillment/OrderDetailDrawer';
 import { useOrdersQuery } from '../features/fulfillment/use-orders';
 import './FulfillmentPage.css';
+import { PageHeader } from '../shared/components/PageHeader';
 
-const { Title, Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 type StatusFilter = OrderStatus | 'all';
 
@@ -283,15 +284,11 @@ export function FulfillmentPage() {
 
   return (
     <div className="page">
-      <header className="page-header fulfillment-header">
-        <div>
-          <Title level={2}>业务订单</Title>
-          <Paragraph type="secondary">
-            查看平台订单、冻结履约来源和状态记录。
-          </Paragraph>
-        </div>
-        <Tag color="blue">只读</Tag>
-      </header>
+      <PageHeader
+        title="业务订单"
+        description="查看平台订单、冻结履约来源和状态记录。"
+        actions={<Tag color="blue">只读</Tag>}
+      />
 
       <Space orientation="vertical" size={12} className="page-stack">
         <Alert

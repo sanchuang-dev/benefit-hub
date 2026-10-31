@@ -1,6 +1,7 @@
 import { Alert, Card, Descriptions, Space, Tag, Typography } from 'antd';
+import { PageHeader } from '../shared/components/PageHeader';
 
-const { Title, Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 /**
  * First-level product destinations.
@@ -40,10 +41,7 @@ export function PlatformModulesPage({ module }: { module: PlatformModule }) {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <Title level={2}>{info.title}</Title>
-        <Paragraph type="secondary">{info.description}</Paragraph>
-      </header>
+      <PageHeader title={info.title} description={info.description} />
 
       <Space orientation="vertical" size={16} className="page-stack">
         <Alert

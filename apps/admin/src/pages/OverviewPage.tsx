@@ -33,8 +33,9 @@ import { useOverviewQuery } from '../features/overview/use-overview';
 import { ApiError } from '../shared/lib/api-client';
 import { formatDateTime } from '../shared/lib/format-date-time';
 import './OverviewPage.css';
+import { PageHeader } from '../shared/components/PageHeader';
 
-const { Title, Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 const WINDOW_OPTIONS: Array<{ label: string; value: OverviewWindow }> = [
   { label: '今日', value: 'today' },
@@ -323,32 +324,34 @@ export function OverviewPage() {
 
   return (
     <div className="page">
-      <header className="page-header overview-header">
-        <div className="overview-header-text">
-          <Title level={2}>总览</Title>
-          <Paragraph type="secondary">
+      <PageHeader
+        title="总览"
+        description={
+          <>
             欢迎，{admin?.displayName ?? '运营人员'}。{WINDOW_LABEL[window]}业务与风险概览
             {overview ? ` · 数据截至 ${formatDateTime(overview.asOf)}` : ''}
-          </Paragraph>
-        </div>
-        <div className="overview-header-actions">
-          <Segmented
-            value={window}
-            onChange={(value) => setWindow(value as OverviewWindow)}
-            options={WINDOW_OPTIONS}
-            aria-label="统计时间窗口"
-          />
-          <Button
-            icon={<RefreshCw size={14} />}
-            loading={overviewQuery.isFetching}
-            onClick={() => {
-              void overviewQuery.refetch();
-            }}
-          >
-            刷新
-          </Button>
-        </div>
-      </header>
+          </>
+        }
+        actions={
+          <>
+            <Segmented
+              value={window}
+              onChange={(value) => setWindow(value as OverviewWindow)}
+              options={WINDOW_OPTIONS}
+              aria-label="统计时间窗口"
+            />
+            <Button
+              icon={<RefreshCw size={14} />}
+              loading={overviewQuery.isFetching}
+              onClick={() => {
+                void overviewQuery.refetch();
+              }}
+            >
+              刷新
+            </Button>
+          </>
+        }
+      />
 
       {copy ? (
         <Alert

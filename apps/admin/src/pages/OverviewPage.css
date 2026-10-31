@@ -5,25 +5,6 @@
  * no shadow) so the page reads as an operations console rather than a decorative
  * dashboard; hierarchy comes from number size and spacing, not from effects.
  */
-.overview-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-}
-
-.overview-header-text {
-  min-width: 0;
-}
-
-.overview-header-actions {
-  display: flex;
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 8px;
-}
-
 .overview-body {
   display: flex;
   flex-direction: column;
@@ -193,9 +174,5 @@
 @media (max-width: 767px) {
   .overview-kpis {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .overview-header-actions {
-    width: 100%;
   }
 }

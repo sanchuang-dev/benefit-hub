@@ -2,14 +2,6 @@
  * Fulfillment page adaptation on top of the shared console shell. One content
  * surface holds the filter toolbar and the table, matching the catalogue page.
  */
-.fulfillment-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-}
-
 .fulfillment-surface {
   overflow: hidden;
   background: #fff;

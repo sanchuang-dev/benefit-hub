@@ -3,18 +3,6 @@
  * One content surface holds the filter toolbar and the table so the page does
  * not grow a second nested card hierarchy.
  */
-.catalog-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px 16px;
-}
-
-.catalog-header-text {
-  min-width: 0;
-}
-
 .catalog-surface {
   overflow: hidden;
   background: #fff;

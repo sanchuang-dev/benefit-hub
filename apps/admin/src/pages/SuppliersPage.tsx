@@ -24,11 +24,12 @@ import { SupplierReadTools } from '../features/suppliers/SupplierReadTools';
 import { SupplierProductsPanel } from '../features/catalog/SupplierProductsPanel';
 import { useSupplierProductsQuery } from '../features/catalog/use-catalog';
 import { useSupplierQuery, useSuppliersQuery, type SupplierSummary } from '../features/suppliers/use-suppliers';
+import { PageHeader } from '../shared/components/PageHeader';
 import { formatDateTime } from '../shared/lib/format-date-time';
 import { parseKeyword, setOptionalParam } from '../shared/lib/url-state';
 import '../shared/styles/data-panel.css';
 
-const { Title, Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 function formatObservedAt(iso: string): string {
   const timestamp = Date.parse(iso);
@@ -168,10 +169,10 @@ export function SuppliersPage() {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <Title level={2}>供应商管理</Title>
-        <Paragraph type="secondary">查看供货方、接入配置与供货商品。</Paragraph>
-      </header>
+      <PageHeader
+        title="供应商管理"
+        description="查看供货方、接入配置与供货商品。"
+      />
 
       <Space orientation="vertical" size={16} className="page-stack">
         <section className="panel-surface" aria-label="供应商列表">
@@ -413,8 +414,8 @@ export function SupplierDetailPage() {
        * "上力" as a separate title below the crumb, and the parent crumb is the
        * single back affordance.
        */}
-      <header className="page-header">
-        <div className="page-header-title">
+      <PageHeader
+        breadcrumb={
           <Breadcrumb
             className="page-breadcrumb"
             separator=">"
@@ -432,19 +433,21 @@ export function SupplierDetailPage() {
               )
             }
           />
-          {/*
-           * Integration status belongs to the page position, not to a tab body:
-           * it follows the breadcrumb so operators see credential and catalog
-           * state before choosing a workspace tab.
-           */}
-          <Space size={8} wrap className="page-header-status">
+        }
+        /*
+         * Integration status belongs to the page position, not to a tab body:
+         * it follows the breadcrumb so operators see credential and catalog
+         * state before choosing a workspace tab.
+         */
+        status={
+          <>
             <Tag>Provider: yangmao</Tag>
             {supplierInfo ? supplierConfigLabel(supplierInfo) : <Tag>档案加载中</Tag>}
             {probeStatus}
-          </Space>
-        </div>
-        <Paragraph type="secondary">接入配置、商品目录与供货信息。</Paragraph>
-      </header>
+          </>
+        }
+        description="接入配置、商品目录与供货信息。"
+      />
 
       <Space orientation="vertical" size={16} className="page-stack">
         {supplier.isError ? (

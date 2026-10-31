@@ -1,4 +1,4 @@
-import { Space, Typography } from 'antd';
+import { Space } from 'antd';
 import { Navigate, useSearchParams } from 'react-router';
 import { AccountsPanel } from '../features/settings/AccountsPanel';
 import { AuditEventsPanel } from '../features/settings/AuditEventsPanel';
@@ -10,8 +10,7 @@ import {
   settingsSectionMeta,
   type SettingsSection,
 } from '../features/settings/sections';
-
-const { Title, Paragraph } = Typography;
+import { PageHeader } from '../shared/components/PageHeader';
 
 /**
  * One governance workspace per route. Operator accounts, security, the audit
@@ -24,10 +23,7 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
 
   return (
     <div className="page">
-      <header className="page-header">
-        <Title level={2}>{meta.label}</Title>
-        <Paragraph type="secondary">{meta.description}</Paragraph>
-      </header>
+      <PageHeader title={meta.label} description={meta.description} />
 
       <Space orientation="vertical" size={16} className="page-stack">
         <SettingsPanel section={section} />

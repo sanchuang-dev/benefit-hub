@@ -47,8 +47,9 @@ import { useProductsQuery } from '../features/catalog/use-catalog';
 import { formatDateTime } from '../shared/lib/format-date-time';
 import { useUiPrefs, type CatalogViewMode } from '../shared/lib/ui-prefs';
 import './CatalogPage.css';
+import { PageHeader } from '../shared/components/PageHeader';
 
-const { Title, Paragraph, Text } = Typography;
+const { Text } = Typography;
 
 /**
  * The supplier catalogue is a read-only reference owned by the supplier detail
@@ -468,14 +469,10 @@ function CatalogPageContent() {
 
   return (
     <div className="page">
-      <header className="page-header catalog-header">
-        <div className="catalog-header-text">
-          <Title level={2}>权益商品</Title>
-          <Paragraph type="secondary">
-            管理三创自有权益商品、运营价格与供应商映射。
-          </Paragraph>
-        </div>
-      </header>
+      <PageHeader
+        title="权益商品"
+        description="管理三创自有权益商品、运营价格与供应商映射。"
+      />
 
       <Space orientation="vertical" size={12} className="page-stack">
         {!isAdmin ? (

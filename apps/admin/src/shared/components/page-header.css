@@ -1,0 +1,160 @@
+/*
+ * Route-level page head.
+ *
+ * Every page renders this one header. The geometry below is the contract that
+ * keeps a work-tab switch from looking like the page jumped: the header box is
+ * a fixed height, the title line never re-wraps because of an inline action, and
+ * actions are pinned right instead of stacking under the title and pushing the
+ * body down on some routes.
+ */
+.page-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 66px;
+  margin: 0 -16px 16px;
+  padding: 13px 16px 11px;
+  background: #fff;
+  border-bottom: 1px solid #e8eaed;
+}
+
+/*
+ * Fills the 16px gap between the header and the scrolling body so rows cannot
+ * show through that margin strip while the body scrolls underneath.
+ */
+.page-header::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  bottom: -17px;
+  left: 0;
+  height: 16px;
+  background: #f5f6f8;
+  pointer-events: none;
+}
+
+.page-header-main {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.page-header-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+/* One title line, always the same height, so the body start never moves. */
+.page-header .page-header-heading,
+.page-header h2 {
+  margin: 0 !important;
+  font-size: 18px !important;
+  font-weight: 600;
+  line-height: 1.4 !important;
+}
+
+.page-header .page-header-description,
+.page-header p.ant-typography-secondary {
+  margin: 2px 0 0 !important;
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+  gap: 8px;
+  /* Sits on the title line, so an action never adds a second header row. */
+  min-height: 25px;
+}
+
+/* Child pages use the breadcrumb as the title line (design §4A). */
+.page-header .page-breadcrumb {
+  margin-bottom: 0;
+  font-size: 18px;
+  /*
+   * Matches the h2 line box exactly. A taller breadcrumb line would make the
+   * child page header a fraction taller than every other page, and the body
+   * shifted down on each switch into the supplier detail.
+   */
+  line-height: 1.4;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-separator {
+  color: #94a3b8;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a {
+  display: inline;
+  height: auto;
+  padding: 0;
+  margin-inline: 0;
+  color: #64748b;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a:hover {
+  color: #2563eb;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .page-breadcrumb-current {
+  display: inline;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+/* Status tags are header metadata, so they never add a second prose line. */
+.page-header .page-header-status {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  /*
+   * Status tags wrap inside the title line. They replace the page's own
+   * `<Space wrap>` from the pre-PageHeader markup, and without wrapping three
+   * tags overflowed the 390px header by ~27px.
+   */
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+@media (max-width: 900px) {
+  .page-header {
+    margin-inline: -12px;
+    padding-inline: 12px;
+  }
+}
+
+/*
+ * Narrow viewports cannot hold the title and an action cluster on one line: the
+ * overview switcher alone is wider than a 390px header's content box, so keeping
+ * it inline shrank the title box to a few pixels and stacked the title one
+ * glyph per line. Below 768px the header wraps instead and the actions take
+ * their own full-width row. This is the same trade the removed per-page
+ * `.overview-header-actions { width: 100% }` override made, now stated once for
+ * every page that carries actions.
+ */
+@media (max-width: 767px) {
+  .page-header {
+    flex-wrap: wrap;
+  }
+
+  .page-header-main {
+    flex: 1 1 100%;
+  }
+
+  .page-header-actions {
+    flex: 1 1 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+}
