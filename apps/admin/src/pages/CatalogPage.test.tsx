@@ -910,15 +910,17 @@ describe('configurable catalogue panel', () => {
     expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
     await waitFor(() => expect(listRequests.at(-1)?.get('page')).toBe('2'));
 
-    // Advanced filters are mounted but hidden until the operator asks for them.
+    // Advanced filters live inside a real modal, not in the compact toolbar.
+    expect(screen.queryByLabelText('展示价（元）最小值')).toBeNull();
     fireEvent.click(findButtonText('高级检索'));
-    expect(screen.getByLabelText('展示价（元）最小值').closest('[hidden]')).toBeNull();
+    const advancedDialog = await screen.findByRole('dialog', { name: '高级检索' });
+    expect(within(advancedDialog).getByLabelText('展示价（元）最小值')).toBeTruthy();
 
     fireEvent.mouseDown(screen.getByLabelText('映射状态'));
     fireEvent.click(await screen.findByTitle('已生效'));
     fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '10' } });
     fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
-    fireEvent.click(findButtonText('查询'));
+    fireEvent.click(within(advancedDialog).getByRole('button', { name: /查\\s*询/ }));
 
     await waitFor(() => {
       const request = listRequests.at(-1);
@@ -968,7 +970,8 @@ describe('configurable catalogue panel', () => {
     });
 
     fireEvent.click(findButtonText('高级检索'));
-    expect((screen.getByLabelText('展示价（元）最小值') as HTMLInputElement).value).toBe('10');
+    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    expect((within(dialog).getByLabelText('展示价（元）最小值') as HTMLInputElement).value).toBe('10');
     expect((screen.getByLabelText('展示价（元）最大值') as HTMLInputElement).value).toBe('20');
     // The select shows the parsed state, not the raw URL token.
     expect(screen.getByTitle('草稿未生效')).toBeTruthy();
@@ -993,11 +996,13 @@ describe('configurable catalogue panel', () => {
     const initialCalls = listRequests.length;
 
     fireEvent.click(findButtonText('高级检索'));
+    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
     fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
-    fireEvent.click(findButtonText('查询'));
+    fireEvent.click(within(dialog).getByRole('button', { name: /查\\s*询/ }));
 
     expect(await screen.findByText('展示价最低值不能高于最高值')).toBeTruthy();
+    expect(screen.getByRole('dialog', { name: '高级检索' })).toBeTruthy();
     expect(listRequests).toHaveLength(initialCalls);
     expect(router.state.location.search).toBe('');
     expect(listRequests.every((params) => params.get('displayPriceMinCents') === null)).toBe(true);
