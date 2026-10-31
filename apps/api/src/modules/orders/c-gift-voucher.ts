@@ -1,4 +1,3 @@
-import { createHash, createHmac } from 'node:crypto';
 import {
   YangmaoOpenV1Error,
   type YangmaoOpenV1PurchaseReader,
@@ -15,56 +14,29 @@ import {
   GiftVoucherOutcomeUnknownError,
   OrderMappingUnavailableError,
   OrderNotFoundError,
-  OrderNotGrantableError,
   type BenefitOrder,
 } from './benefit-orders.js';
+import {
+  deriveGrantRequestId,
+  hashRecipientPhone,
+  isDefiniteRejection,
+  observedAtMillis,
+} from './grant-mechanics.js';
+import {
+  createGrantPipeline,
+  isInFlight,
+  type GrantContinueInput,
+  type GrantExecuteInput,
+} from './grant-pipeline.js';
 import { createBenefitOrderRepository, type GiftVoucherOperation } from './repository.js';
 import {
   decryptGiftVoucherData,
   encryptGiftVoucherData,
   type GiftVoucherSecretData,
 } from './gift-voucher-vault.js';
-import {
-  assertApplicationEntitlement,
-  requireSupplierMasterKey,
-  requireYangmaoClient,
-} from './supplier-access.js';
 
-/**
- * A durable reservation is considered in flight — and must not be raced by a
- * recovery read — for longer than the provider client's maximum request
- * timeout (60s). After that, a process crash or lost response is assumed.
- */
-const RESERVATION_IN_FLIGHT_MS = 2 * 60 * 1000;
-const REQUEST_ID_PREFIX = 'bhC';
-const PHONE_HMAC_DOMAIN = 'benefit-hub:c-gift-voucher:phone:v1\n';
-
-/**
- * C-mode `requestId` is derived from the immutable platform order id, never
- * from caller input and never regenerated per attempt. That makes any retry a
- * recovery of the same intent instead of a second `packCount` pre-deduction.
- */
-export function deriveGiftVoucherRequestId(orderId: string): string {
-  const digest = createHash('sha256')
-    .update(`benefit-hub:c-gift-voucher:request:${orderId}`, 'utf8')
-    .digest('hex');
-  // 3 + 60 = 63 chars, within the vendor's documented 64-character bound.
-  return `${REQUEST_ID_PREFIX}${digest.slice(0, 60)}`;
-}
-
-/**
- * Keyed, domain-separated digest of the recipient phone. The raw number is
- * never persisted; the digest only rejects a conflicting repeated issuance.
- */
-export function hashGiftVoucherPhone(masterKey: Buffer, phone: string): string {
-  const subkey = createHmac('sha256', masterKey)
-    .update('benefit-hub:c-gift-voucher:phone-key:v1', 'utf8')
-    .digest();
-  return createHmac('sha256', subkey)
-    .update(PHONE_HMAC_DOMAIN, 'utf8')
-    .update(phone, 'utf8')
-    .digest('hex');
-}
+const C_MODE_DOMAIN = 'benefit-hub:c-gift-voucher';
+const C_REQUEST_ID_PREFIX = 'bhC';
 
 export interface GiftVoucherOutcome {
   order: BenefitOrder;
@@ -103,22 +75,6 @@ export interface GiftVoucherService {
   recover(command: RecoverGiftVoucherCommand): Promise<GiftVoucherOutcome>;
 }
 
-function isDefiniteRejection(error: unknown): boolean {
-  if (!(error instanceof YangmaoOpenV1Error)) return false;
-  if (error.code === 'YANGMAO_OPEN_V1_AUTH_FAILED') return true;
-  if (error.code === 'YANGMAO_OPEN_V1_FORBIDDEN') return true;
-  return (
-    error.code === 'YANGMAO_OPEN_V1_BUSINESS_FAILED' &&
-    error.vendorCode !== undefined &&
-    [400, 401, 403].includes(error.vendorCode)
-  );
-}
-
-function observedAtMillis(observedAt: string, fallback: number): number {
-  const parsed = Date.parse(observedAt);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : fallback;
-}
-
 /**
  * C-mode free gift-voucher issuance (BHB-012-E).
  *
@@ -132,7 +88,9 @@ function observedAtMillis(observedAt: string, fallback: number): number {
  * An unknown outcome is never re-signed with a new requestId. Because the
  * vendor exposes no read-by-requestId recovery for C, only the stored issued
  * code can be re-read; without it the operation stays unknown for authorized
- * investigation.
+ * investigation. Steps 1, 2 (persistence) and 4 (ordering) live in the shared
+ * grant pipeline; this module keeps only C-mode frozen-mapping, vault and
+ * outcome rules.
  */
 export function createGiftVoucherService(deps: {
   db: AppDatabase;
@@ -141,15 +99,6 @@ export function createGiftVoucherService(deps: {
 }): GiftVoucherService {
   const repository = createBenefitOrderRepository(deps.db);
   const now = deps.now ?? Date.now;
-
-  function requireOwnedOrder(businessSource: string, orderId: string): BenefitOrder {
-    const order = repository.getById(orderId);
-    // The same response for "does not exist" and "belongs to another source".
-    if (!order || order.businessSource !== businessSource) {
-      throw new OrderNotFoundError('订单不存在');
-    }
-    return order;
-  }
 
   function requireFrozenC(order: BenefitOrder): { productCode: string } {
     const detail = repository.getForOperations(order.id);
@@ -331,14 +280,16 @@ export function createGiftVoucherService(deps: {
     };
   }
 
-  async function resumeExisting(
-    order: BenefitOrder,
-    voucher: GiftVoucherOperation,
-    command: IssueGiftVoucherCommand,
-    masterKey: Buffer,
-  ): Promise<GiftVoucherOutcome> {
+  async function continueExisting({
+    order,
+    operation: voucher,
+    command,
+    masterKey,
+  }: GrantContinueInput<GiftVoucherOperation, IssueGiftVoucherCommand>): Promise<GiftVoucherOutcome> {
     const commandPhoneHmac =
-      command.phone === undefined ? null : hashGiftVoucherPhone(masterKey, command.phone);
+      command.phone === undefined
+        ? null
+        : hashRecipientPhone(masterKey, C_MODE_DOMAIN, command.phone);
     const sameInput =
       voucher.packCount === command.packCount &&
       voucher.refCode === command.refCode &&
@@ -354,7 +305,7 @@ export function createGiftVoucherService(deps: {
     if (voucher.state === 'issued') {
       return toStoredOutcome(order, voucher, decryptIssued(masterKey, voucher));
     }
-    if (voucher.state === 'reserved' && now() - voucher.updatedAt < RESERVATION_IN_FLIGHT_MS) {
+    if (isInFlight(voucher, now())) {
       throw new GiftVoucherInProgressError('该订单的上力发券仍在处理中，请稍后用同一订单核实');
     }
     // No issued code was persisted: the supplier may already have pre-deducted
@@ -364,14 +315,14 @@ export function createGiftVoucherService(deps: {
     );
   }
 
-  async function executeReserved(
-    order: BenefitOrder,
-    voucher: GiftVoucherOperation,
-    command: IssueGiftVoucherCommand,
-    productCode: string,
-    masterKey: Buffer,
-    client: YangmaoOpenV1PurchaseReader,
-  ): Promise<GiftVoucherOutcome> {
+  async function executeReserved({
+    order,
+    operation: voucher,
+    command,
+    productCode,
+    masterKey,
+    client,
+  }: GrantExecuteInput<GiftVoucherOperation, IssueGiftVoucherCommand>): Promise<GiftVoucherOutcome> {
     let result;
     try {
       result = await client.createGiftVoucher(
@@ -434,67 +385,55 @@ export function createGiftVoucherService(deps: {
     };
   }
 
+  const pipeline = createGrantPipeline<
+    GiftVoucherOperation,
+    IssueGiftVoucherCommand,
+    GiftVoucherOutcome
+  >(
+    { db: deps.db, config: deps.config, repository, now },
+    {
+      actionLabel: '发起上力发券',
+      requireFrozen: requireFrozenC,
+      findOperation: (orderId) => repository.getGiftVoucher(orderId),
+      reserve: ({ order, command, masterKey }) => {
+        const reservation = repository.reserveGiftVoucher({
+          orderId: order.id,
+          applicationCredentialId: command.applicationCredentialId,
+          expectedVersion: order.version,
+          requestId: deriveGrantRequestId(C_MODE_DOMAIN, C_REQUEST_ID_PREFIX, order.id),
+          packCount: command.packCount,
+          refCode: command.refCode,
+          phoneHmac:
+            command.phone === undefined
+              ? null
+              : hashRecipientPhone(masterKey, C_MODE_DOMAIN, command.phone),
+          occurredAt: now(),
+        });
+        return {
+          created: reservation.created,
+          order: reservation.order,
+          operation: reservation.voucher,
+        };
+      },
+      continueExisting,
+      execute: executeReserved,
+      recovery: {
+        recoverExisting: ({ order, operation, masterKey, client, signal }) => {
+          const data = decryptIssued(masterKey, operation);
+          return recoverIssued(order, operation, data, masterKey, client, signal);
+        },
+        operationNotFoundError: () =>
+          new GiftVoucherNotFoundError('该订单尚未发起过上力发券'),
+        operationRejectedError: () =>
+          new GiftVoucherNotRetryableError('该订单已被上力明确拒绝，没有可恢复的券码'),
+        operationInFlightError: () =>
+          new GiftVoucherInProgressError('该订单的上力发券仍在处理中，请稍后再核实'),
+      },
+    },
+  );
+
   return {
-    async issue(command) {
-      const order = requireOwnedOrder(command.businessSource, command.orderId);
-      assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      const frozen = requireFrozenC(order);
-      const masterKey = requireSupplierMasterKey(deps.config);
-      const client = requireYangmaoClient(deps.db, deps.config);
-
-      const existing = repository.getGiftVoucher(order.id);
-      if (existing) {
-        return resumeExisting(order, existing, command, masterKey);
-      }
-
-      if (order.status !== 'pending') {
-        throw new OrderNotGrantableError(`订单当前状态不允许发起上力发券：${order.status}`);
-      }
-
-      const reservation = repository.reserveGiftVoucher({
-        orderId: order.id,
-        applicationCredentialId: command.applicationCredentialId,
-        expectedVersion: order.version,
-        requestId: deriveGiftVoucherRequestId(order.id),
-        packCount: command.packCount,
-        refCode: command.refCode,
-        phoneHmac:
-          command.phone === undefined ? null : hashGiftVoucherPhone(masterKey, command.phone),
-        occurredAt: now(),
-      });
-
-      if (!reservation.created) {
-        // A concurrent caller won the reservation. Never send a second issuance.
-        return resumeExisting(reservation.order, reservation.voucher, command, masterKey);
-      }
-
-      return executeReserved(
-        reservation.order,
-        reservation.voucher,
-        command,
-        frozen.productCode,
-        masterKey,
-        client,
-      );
-    },
-
-    async recover(command) {
-      const order = requireOwnedOrder(command.businessSource, command.orderId);
-      assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      requireFrozenC(order);
-      const masterKey = requireSupplierMasterKey(deps.config);
-      const client = requireYangmaoClient(deps.db, deps.config);
-
-      const voucher = repository.getGiftVoucher(order.id);
-      if (!voucher) throw new GiftVoucherNotFoundError('该订单尚未发起过上力发券');
-      if (voucher.state === 'rejected') {
-        throw new GiftVoucherNotRetryableError('该订单已被上力明确拒绝，没有可恢复的券码');
-      }
-      if (voucher.state === 'reserved' && now() - voucher.updatedAt < RESERVATION_IN_FLIGHT_MS) {
-        throw new GiftVoucherInProgressError('该订单的上力发券仍在处理中，请稍后再核实');
-      }
-      const data = decryptIssued(masterKey, voucher);
-      return recoverIssued(order, voucher, data, masterKey, client, command.signal);
-    },
+    issue: (command) => pipeline.start(command),
+    recover: (command) => pipeline.recover(command),
   };
 }
