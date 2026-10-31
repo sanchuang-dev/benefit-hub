@@ -95,7 +95,10 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
   columns, onRefresh, renderCard, rowActions, toolbarExtra, emptyText,
   pageSizeOptions = [10, 20, 50], pagination = true,
 }: DataPanelProps<Row, Filters, SortKey>) {
-  const [form] = Form.useForm<Filters>();
+  // AntD 6's deep NamePath type cannot prove a runtime schema key is a generic
+  // recursive path. Keep Form's internal instance unparameterized; the public
+  // PanelFilter keys and onFinish values remain typed by DataPanelProps/Filters.
+  const [form] = Form.useForm();
   const [expanded, setExpanded] = useState(false);
   const saved = useUiPrefs((state) => state.dataPanels[id]);
   const setPreference = useUiPrefs((state) => state.setDataPanelPreference);
