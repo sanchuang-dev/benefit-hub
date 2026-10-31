@@ -233,25 +233,28 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
     // The width belongs to the control, NOT the entire labelled Form.Item.
     // Fixing the wrapper width made AntD push input controls beneath labels.
     const controlWidth = mode === 'modal' ? '100%' : (filter.width ?? (filter.kind === 'text' ? 230 : 160));
+    // AntD uses a field's name as its default HTML id. Both Forms render at
+    // once while the modal is open, so they need distinct input/label targets.
+    const fieldId = `${id}-${mode}-${String(filter.key)}`;
     if (filter.kind === 'text') {
-      return <Form.Item name={String(filter.key)} label={filter.label}>
-        <Input allowClear placeholder={filter.placeholder} style={{ width: controlWidth, minWidth: 0 }} />
+      return <Form.Item name={String(filter.key)} label={filter.label} htmlFor={fieldId}>
+        <Input id={fieldId} allowClear placeholder={filter.placeholder} style={{ width: controlWidth, minWidth: 0 }} />
       </Form.Item>;
     }
     if (filter.kind === 'select') {
-      return <Form.Item name={String(filter.key)} label={filter.label}>
-        <Select options={[...filter.options]} style={{ width: controlWidth }} />
+      return <Form.Item name={String(filter.key)} label={filter.label} htmlFor={fieldId}>
+        <Select id={fieldId} options={[...filter.options]} style={{ width: controlWidth }} />
       </Form.Item>;
     }
-    return <Form.Item label={filter.label}>
+    return <Form.Item label={filter.label} htmlFor={`${fieldId}-min`}>
       <Space size={4} wrap={mode === 'modal'}>
         <Form.Item name={[String(filter.key), 'min']} noStyle>
-          <InputNumber min={filter.min} max={filter.max} placeholder="最小值"
+          <InputNumber id={`${fieldId}-min`} min={filter.min} max={filter.max} placeholder="最小值"
             aria-label={`${filter.label}最小值`} style={{ width: mode === 'modal' ? 136 : 104 }} />
         </Form.Item>
         <span aria-hidden="true">—</span>
         <Form.Item name={[String(filter.key), 'max']} noStyle>
-          <InputNumber min={filter.min} max={filter.max} placeholder="最大值"
+          <InputNumber id={`${fieldId}-max`} min={filter.min} max={filter.max} placeholder="最大值"
             aria-label={`${filter.label}最大值`} style={{ width: mode === 'modal' ? 136 : 104 }} />
         </Form.Item>
       </Space>
