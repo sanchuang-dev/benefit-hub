@@ -2,6 +2,9 @@ import type { Context } from 'hono';
 import { Hono } from 'hono';
 import {
   createBusinessOrderRequestSchema,
+  dDispatchRequestSchema,
+  recoverDDispatchRequestSchema,
+  type DDispatchResponse,
   directTopupRequestSchema,
   directTopupReissueRequestSchema,
   type DirectTopupResponse,
@@ -14,7 +17,7 @@ import {
   type GiftVoucherResponse,
   type PrepaidGrantResponse,
 } from '@sanchuang-dev/benefit-contracts';
-import { YangmaoOpenV1Error } from '@sanchuang-dev/provider-yangmao';
+import { YangmaoInriceError, YangmaoOpenV1Error } from '@sanchuang-dev/provider-yangmao';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import type { AppEnv } from '../../middleware/auth.js';
@@ -29,6 +32,17 @@ import {
   type GiftVoucherOutcome,
 } from './c-gift-voucher.js';
 import { GiftVoucherVaultUnavailableError } from './gift-voucher-vault.js';
+import {
+  createDDispatchService,
+  DDispatchInProgressError,
+  DDispatchInputConflictError,
+  DDispatchModeUnsupportedError,
+  DDispatchNotFoundError,
+  DDispatchNotRetryableError,
+  DDispatchStateConflictError,
+  DDispatchWriteDisabledError,
+  type DDispatchOutcome,
+} from './d-dispatch.js';
 import {
   createDirectTopupService,
   DirectTopupProductUnverifiedError,
@@ -85,7 +99,7 @@ export const BUSINESS_ORDER_COLLECTION_PATH = '/api/v1/business/orders';
 
 /** A/C-mode grant, recovery and C issuance subpaths are Bearer-authenticated machine writes. */
 const BUSINESS_ORDER_GRANT_PATH =
-  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover|gift-voucher|gift-voucher\/recover|direct-topup|direct-topup\/reissue)$/;
+  /^\/api\/v1\/business\/orders\/[A-Za-z0-9._:-]{1,128}\/(grant|recover|gift-voucher|gift-voucher\/recover|direct-topup|direct-topup\/reissue|dispatch|dispatch\/recover)$/;
 
 /**
  * Exact machine POST paths exempt from the browser double-submit CSRF token.
@@ -354,6 +368,136 @@ export function handleDirectTopupError(c: Context<AppEnv>, error: unknown) {
   return handleGrantError(c, error);
 }
 
+function toDDispatchResponse(outcome: DDispatchOutcome): DDispatchResponse {
+  return {
+    order: toBusinessOrderDto(outcome.order),
+    dispatch: {
+      state: outcome.dispatch.state,
+      partnerOrderNo: outcome.dispatch.partnerOrderNo,
+      upstreamOrderNo: outcome.dispatch.upstreamOrderNo,
+      providerStatus: outcome.dispatch.providerStatus,
+      lastVerifiedAt: outcome.dispatch.lastVerifiedAt,
+      attemptedAt: outcome.dispatch.attemptedAt,
+      updatedAt: outcome.dispatch.updatedAt,
+    },
+    ...(outcome.observedAt === undefined ? {} : { observedAt: outcome.observedAt }),
+  };
+}
+
+function handleDDispatchError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof DDispatchWriteDisabledError) {
+    return c.json(
+      apiError('D_DISPATCH_WRITE_DISABLED', 'D 真实金额扣减未被维护者单独启用'),
+      503,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchModeUnsupportedError) {
+    return c.json(
+      apiError('ORDER_MODE_UNSUPPORTED', '该订单冻结的履约来源不是上力 D 金额派发'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchInputConflictError) {
+    return c.json(
+      apiError('D_DISPATCH_INPUT_CONFLICT', '重复调用与原始收件手机号或支付凭据不同'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchInProgressError) {
+    return c.json(
+      apiError('D_DISPATCH_IN_PROGRESS', '原 D 派发仍在请求窗口内，未重复扣款'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchNotRetryableError) {
+    return c.json(
+      apiError('D_DISPATCH_NOT_RETRYABLE', '原 D 派发已被明确拒绝，不会自动重试'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchNotFoundError) {
+    return c.json(
+      apiError('D_DISPATCH_NOT_FOUND', '该订单尚未发起 D 派发'),
+      404,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof DDispatchStateConflictError) {
+    return c.json(
+      apiError('D_DISPATCH_STATE_CONFLICT', 'D 派发状态发生冲突，禁止重复扣款'),
+      409,
+      NO_STORE_HEADERS,
+    );
+  }
+  if (error instanceof YangmaoInriceError) {
+    if (error.code === 'YANGMAO_INRICE_TIMEOUT') {
+      return c.json(
+        apiError('SUPPLIER_TIMEOUT', 'D 派发结果未知，禁止重发；请对原单执行只读查单'),
+        504,
+        NO_STORE_HEADERS,
+      );
+    }
+    if (
+      error.code === 'YANGMAO_INRICE_AUTH_FAILED' ||
+      error.code === 'YANGMAO_INRICE_FORBIDDEN'
+    ) {
+      return c.json(
+        {
+          ...apiError('SUPPLIER_AUTH_FAILED', '上力 D 鉴权或权限被拒绝'),
+          ...(error.vendorCode === undefined ? {} : { vendorCode: error.vendorCode }),
+          ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
+        },
+        502,
+        NO_STORE_HEADERS,
+      );
+    }
+    if (
+      error.code === 'YANGMAO_INRICE_BUSINESS_FAILED' ||
+      error.code === 'YANGMAO_INRICE_ORDER_NOT_FOUND'
+    ) {
+      return c.json(
+        {
+          ...apiError('SUPPLIER_BUSINESS_FAILED', '上力 D 返回业务错误，未确认履约成功'),
+          ...(error.vendorCode === undefined ? {} : { vendorCode: error.vendorCode }),
+        },
+        502,
+        NO_STORE_HEADERS,
+      );
+    }
+    if (error.code === 'YANGMAO_INRICE_RESPONSE_INVALID') {
+      return c.json(
+        apiError('SUPPLIER_RESPONSE_UNVERIFIED', '上力 D 响应格式无法验证，结果按未知处理'),
+        502,
+        NO_STORE_HEADERS,
+      );
+    }
+    if (
+      error.code === 'YANGMAO_INRICE_DISPATCH_INPUT_INVALID' ||
+      error.code === 'YANGMAO_INRICE_ORDER_QUERY_INVALID'
+    ) {
+      return c.json(
+        apiError('SUPPLIER_RESPONSE_UNVERIFIED', 'D 供应商请求契约内部校验失败'),
+        502,
+        NO_STORE_HEADERS,
+      );
+    }
+    return c.json(
+      {
+        ...apiError('SUPPLIER_UNAVAILABLE', '上力 D 请求失败或结果未知，请核实原单'),
+        ...(error.httpStatus === undefined ? {} : { httpStatus: error.httpStatus }),
+      },
+      502,
+      NO_STORE_HEADERS,
+    );
+  }
+  return handleGrantError(c, error);
+}
+
 function toPrepaidGrantResponse(outcome: PrepaidGrantOutcome): PrepaidGrantResponse {
   return {
     order: toBusinessOrderDto(outcome.order),
@@ -513,6 +657,7 @@ export function createBusinessOrderRoutes(deps: {
   const grantService = createPrepaidGrantService(deps);
   const directTopupService = createDirectTopupService(deps);
   const giftVoucherService = createGiftVoucherService(deps);
+  const dDispatchService = createDDispatchService(deps);
 
   // Machine credential first: no admin cookie/session is consulted at all.
   router.use('*', requireBusinessClient(deps.db, deps.config));
@@ -682,6 +827,75 @@ export function createBusinessOrderRoutes(deps: {
       return c.json(toDirectTopupResponse(output), 200, NO_STORE_HEADERS);
     } catch (error) {
       return handleDirectTopupError(c, error);
+    }
+  });
+
+  /**
+   * BHB-012-B: D-mode amount-debit dispatch. The provider/product/idempotency
+   * key come only from the frozen platform order; callers provide recipient and
+   * the business authorization fact only.
+   */
+  router.post('/:orderId/dispatch', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) {
+      return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    }
+    const body = await readJson(c);
+    if (!body.ok) {
+      return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    }
+    const parsed = dDispatchRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return c.json(
+        invalidRequest('D 派发参数不正确', issueFields(parsed.error)),
+        400,
+        NO_STORE_HEADERS,
+      );
+    }
+
+    try {
+      const outcome = await dDispatchService.dispatch({
+        businessSource: c.get('businessSource'),
+        applicationCredentialId: c.get('businessCredentialId'),
+        orderId,
+        mobile: parsed.data.mobile,
+        paymentReference: parsed.data.paymentReference,
+        signal: c.req.raw.signal,
+      });
+      return c.json(toDDispatchResponse(outcome), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleDDispatchError(c, error);
+    }
+  });
+
+  /** Read-only D recovery. This endpoint never calls POST /dispatch. */
+  router.post('/:orderId/dispatch/recover', async (c) => {
+    const orderId = readOrderId(c);
+    if (!orderId) {
+      return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+    }
+    const body = await readJson(c);
+    if (!body.ok) {
+      return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+    }
+    const parsed = recoverDDispatchRequestSchema.safeParse(body.value);
+    if (!parsed.success) {
+      return c.json(
+        invalidRequest('D 查单恢复参数不正确', issueFields(parsed.error)),
+        400,
+        NO_STORE_HEADERS,
+      );
+    }
+
+    try {
+      const outcome = await dDispatchService.recover({
+        businessSource: c.get('businessSource'),
+        orderId,
+        signal: c.req.raw.signal,
+      });
+      return c.json(toDDispatchResponse(outcome), 200, NO_STORE_HEADERS);
+    } catch (error) {
+      return handleDDispatchError(c, error);
     }
   });
 
