@@ -93,6 +93,7 @@ describe('DataPanel controlled query contract', () => {
     fireEvent.click(screen.getByRole('button', { name: /重\\s*置/ }));
     expect(changes.mock.lastCall?.[0]).toEqual({ page: 1, pageSize: 20, filters: FILTERS });
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('');
+    expect((screen.getByLabelText('价格最小值') as HTMLInputElement).value).toBe('');
   });
 
   it('emits a server sort without reordering current page rows locally', async () => {
