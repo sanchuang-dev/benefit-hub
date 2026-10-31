@@ -1,4 +1,4 @@
-name: BHB-012-B Inspect Second D Business Rejection
+name: BHB-012-B Disable D Live Gate After Rejected Attempt
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  inspect:
+  disable:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -19,8 +19,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
-
-      - name: Inspect second D rejection and supplier product read-only facts
+      - name: Disable D live-write gate
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -32,106 +31,23 @@ jobs:
           mkdir -m 700 -p "$RUNNER_TEMP/ssh"
           ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
           test "$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw'
-
-          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PreferredAuthentications=password -o PubkeyAuthentication=no -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
           set -eu
           cd /srv/benefit-hub
+          test -f .env
+          test ! -L .env
+          chmod 600 .env
+          if grep -q '^BENEFIT_D_LIVE_WRITE_ENABLED=' .env; then
+            sed -i 's/^BENEFIT_D_LIVE_WRITE_ENABLED=.*/BENEFIT_D_LIVE_WRITE_ENABLED=false/' .env
+          else
+            printf '%s\n' 'BENEFIT_D_LIVE_WRITE_ENABLED=false' >> .env
+          fi
+          docker compose --project-name benefit-hub -f compose.yaml config -q
+          docker compose --project-name benefit-hub -f compose.yaml up -d --no-build >/dev/null
           cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
           test -n "$cid"
-
-          docker exec -i "$cid" node --input-type=module - <<'NODE'
-          import Database from 'better-sqlite3';
-          import { drizzle } from 'drizzle-orm/better-sqlite3';
-          import * as schema from './dist/db/schema.js';
-          import { loadConfig } from './dist/config.js';
-          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
-          import { createHmac } from 'node:crypto';
-
-          const config=loadConfig(process.env);
-          const sqlite=new Database(config.databaseFile,{readonly:true,fileMustExist:true});
-          const db=drizzle(sqlite,{schema});
-          try{
-            const row=sqlite.prepare(`
-              SELECT
-                o.id AS orderId,
-                o.business_order_no AS businessOrderNo,
-                o.status AS orderStatus,
-                d.state AS dispatchState,
-                d.partner_order_no AS partnerOrderNo,
-                d.upstream_order_no AS upstreamOrderNo,
-                d.provider_status AS providerStatus,
-                d.last_verified_at AS lastVerifiedAt,
-                mv.product_code AS supplierProductCode
-              FROM benefit_orders o
-              JOIN benefit_order_dispatches d ON d.order_id=o.id
-              JOIN supplier_product_mapping_versions mv ON mv.id=o.mapping_version_id
-              WHERE o.id='d160d175-4cc9-41fc-853f-8fe3eed25c0e'
-              LIMIT 1
-            `).get();
-            if(!row) throw new Error('second D operation not found');
-
-            console.log('=== SECOND_D_PERSISTED ===');
-            console.log('businessOrderNo='+row.businessOrderNo);
-            console.log('orderStatus='+row.orderStatus);
-            console.log('dispatchState='+row.dispatchState);
-            console.log('partnerOrderNo='+row.partnerOrderNo);
-            console.log('upstreamOrderNoPresent='+(row.upstreamOrderNo?'true':'false'));
-            console.log('providerStatus='+(row.providerStatus??'null'));
-            console.log('lastVerifiedAtPresent='+(row.lastVerifiedAt==null?'false':'true'));
-            console.log('supplierProductCode='+row.supplierProductCode);
-            console.log('=== END_SECOND_D_PERSISTED ===');
-
-            const supplier=activeYangmaoReadConfig(db,config);
-            if(!supplier) throw new Error('supplier config unavailable');
-
-            function sign(ts, body){
-              return createHmac('sha256',supplier.appSecret)
-                .update(ts+'\n'+body,'utf8').digest('base64');
-            }
-
-            // Same partner-order read: read-only.
-            {
-              const queryBody=JSON.stringify({orderNo:null,partnerOrderNo:row.partnerOrderNo});
-              const ts=String(Date.now());
-              const url=supplier.baseUrl+'/api/open/inrice/v1/orders/query?'+new URLSearchParams({partnerOrderNo:row.partnerOrderNo});
-              const response=await fetch(url,{
-                headers:{
-                  'X-App-Key':supplier.appKey,
-                  'X-Timestamp':ts,
-                  'X-Signature':sign(ts,queryBody),
-                  Accept:'application/json'
-                },
-                redirect:'manual',
-                signal:AbortSignal.timeout(10000),
-              });
-              const raw=await response.text();
-              console.log('=== SAME_ORDER_QUERY_RAW ===');
-              console.log('httpStatus='+response.status);
-              console.log('raw='+raw);
-              console.log('=== END_SAME_ORDER_QUERY_RAW ===');
-            }
-
-            // Product detail read: read-only. Preserve raw upstream fields for diagnosis.
-            {
-              const signedBody=JSON.stringify({productCode:row.supplierProductCode});
-              const ts=String(Date.now());
-              const url=supplier.baseUrl+'/api/open/inrice/v1/products/query?'+new URLSearchParams({productCode:row.supplierProductCode});
-              const response=await fetch(url,{
-                headers:{
-                  'X-App-Key':supplier.appKey,
-                  'X-Timestamp':ts,
-                  'X-Signature':sign(ts,signedBody),
-                  Accept:'application/json'
-                },
-                redirect:'manual',
-                signal:AbortSignal.timeout(10000),
-              });
-              const raw=await response.text();
-              console.log('=== PRODUCT_DETAIL_RAW ===');
-              console.log('httpStatus='+response.status);
-              console.log('raw='+raw);
-              console.log('=== END_PRODUCT_DETAIL_RAW ===');
-            }
-          } finally { sqlite.close(); }
-          NODE
+          gate="$(docker exec "$cid" sh -lc 'printf "%s" "$BENEFIT_D_LIVE_WRITE_ENABLED"')"
+          test "$gate" = false
+          curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null
+          echo 'D_LIVE_WRITE_GATE_ENABLED=false'
           REMOTE
