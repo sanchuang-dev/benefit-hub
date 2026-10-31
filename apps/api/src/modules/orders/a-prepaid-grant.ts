@@ -34,6 +34,7 @@ const A_MODE_DOMAIN = 'benefit-hub:a-prepaid-grant';
 const A_REQUEST_ID_PREFIX = 'bhA';
 
 export class PurchaseNotEligibleError extends Error {}
+export class PrepaidGrantWriteDisabledError extends Error {}
 
 export interface PrepaidGrantOutcome {
   order: BenefitOrder;
@@ -311,6 +312,11 @@ export function createPrepaidGrantService(deps: {
       requireFrozen: requireFrozenA,
       findOperation: (orderId) => repository.getGrant(orderId),
       preflight: async ({ command, client }) => {
+        // Shipping code is not authorization to spend supplier pack quota.
+        // Fail before even the read-only purchase-check while the A live gate is off.
+        if (!deps.config.aLiveWritesEnabled) {
+          throw new PrepaidGrantWriteDisabledError('A 真实礼包扣额未被维护者单独启用');
+        }
         // A is paid, so the live purchase-check must pass before any local
         // reservation or supplier debit. A restricted phone must not be charged.
         const eligibility = await client.checkPurchase(command.phone, {

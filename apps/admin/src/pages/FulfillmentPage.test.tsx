@@ -307,6 +307,117 @@ describe('platform order detail drawer', () => {
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 
+  it('lets an admin create A once and then only recover the original requestId', { timeout: 60_000 }, async () => {
+    const pendingA = detail({
+      fulfillmentMode: 'A',
+      status: 'pending',
+      frozenMapping: {
+        id: 'mapping-version-a-live',
+        mappingId: 'mapping-a-live',
+        versionNumber: 1,
+        provider: 'yangmao',
+        productCode: 'YM-PREPAID-A-LIVE',
+        fulfillmentMode: 'A',
+        deductionUnit: 'pack',
+        activatedAt: NOW - 60_000,
+      },
+      grant: null,
+    });
+    const acceptedA = detail({
+      ...pendingA,
+      status: 'awaiting_claim',
+      version: 3,
+      grant: {
+        state: 'accepted',
+        requestId: 'bhA0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab',
+        upstreamOrderNo: 'PKG-A-FICTIONAL-1',
+        attemptedAt: NOW + 1_000,
+        updatedAt: NOW + 2_000,
+      },
+    });
+    const claimUrl = 'https://h5.example.test/claim?orderNo=PKG-A-FICTIONAL-1';
+
+    let current = pendingA;
+    let grantBody: Record<string, unknown> | null = null;
+    let recoverCalls = 0;
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/auth/csrf') {
+        return jsonResponse(200, { csrfToken: 'fictional-csrf-token' });
+      }
+      if (url === '/api/v1/operations/orders/order-1/prepaid-grant' && init?.method === 'POST') {
+        grantBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        current = acceptedA;
+        return jsonResponse(200, { order: acceptedA, claimUrl });
+      }
+      if (
+        url === '/api/v1/operations/orders/order-1/prepaid-grant/recover' &&
+        init?.method === 'POST'
+      ) {
+        recoverCalls += 1;
+        return jsonResponse(200, { order: acceptedA, claimUrl });
+      }
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, { order: current });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(
+          200,
+          listResponse([order({ fulfillmentMode: 'A', status: current.status })]),
+        );
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('上力 A 预充值下单')).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: '管理员真实下单一次' })).toBeTruthy();
+    expect(within(drawer).queryByRole('button', { name: /恢复原领取链接/ })).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+
+    fireEvent.click(within(drawer).getByRole('button', { name: '管理员真实下单一次' }));
+    expect(await screen.findByText('确认上力 A 真实下单')).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+
+    fireEvent.change(screen.getByPlaceholderText('请输入本次真实验收收件手机号'), {
+      target: { value: '13800138000' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('例如 SLD'), {
+      target: { value: 'ref_abc123' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('例如 A-LIVE-ACCEPT-20261031'), {
+      target: { value: 'PAY-FICTIONAL-A-1' },
+    });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '确认真实下单一次' }));
+
+    await waitFor(() => expect(grantBody).not.toBeNull());
+    expect(grantBody).toEqual({
+      phone: '13800138000',
+      refCode: 'ref_abc123',
+      paymentReference: 'PAY-FICTIONAL-A-1',
+      confirmGrant: true,
+    });
+    await waitFor(() =>
+      expect(within(drawer).queryByRole('button', { name: '管理员真实下单一次' })).toBeNull(),
+    );
+    expect(await within(drawer).findByRole('button', { name: /恢复原领取链接/ })).toBeTruthy();
+    expect(within(drawer).getByText(claimUrl)).toBeTruthy();
+
+    fireEvent.click(within(drawer).getByRole('button', { name: /恢复原领取链接/ }));
+    await waitFor(() => expect(recoverCalls).toBe(1));
+    expect(within(drawer).getByText(claimUrl)).toBeTruthy();
+
+    expect(writeCalls(fetchMock)).toEqual([
+      'POST /api/v1/operations/orders/order-1/prepaid-grant',
+      'POST /api/v1/operations/orders/order-1/prepaid-grant/recover',
+    ]);
+  });
+
   it('shows the durable A operation identity without persisting or inventing a claim link', { timeout: 60_000 }, async () => {
     const detailData = detail({
       fulfillmentMode: 'A',

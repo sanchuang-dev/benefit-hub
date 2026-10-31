@@ -45,6 +45,26 @@ describe('server-only Yangmao D configuration', () => {
   });
 });
 
+describe('A live-write authorization gate', () => {
+  it('is disabled by default and enabled only by the exact true value', () => {
+    expect(loadConfig({ ...BASE_ENV }).aLiveWritesEnabled).toBe(false);
+    expect(
+      loadConfig({ ...BASE_ENV, BENEFIT_A_LIVE_WRITE_ENABLED: 'false' })
+        .aLiveWritesEnabled,
+    ).toBe(false);
+    expect(
+      loadConfig({ ...BASE_ENV, BENEFIT_A_LIVE_WRITE_ENABLED: 'true' })
+        .aLiveWritesEnabled,
+    ).toBe(true);
+  });
+
+  it('rejects malformed gate values instead of enabling them loosely', () => {
+    expect(() =>
+      loadConfig({ ...BASE_ENV, BENEFIT_A_LIVE_WRITE_ENABLED: 'TRUE' }),
+    ).toThrowError(/BENEFIT_A_LIVE_WRITE_ENABLED/);
+  });
+});
+
 describe('D live-write authorization gate', () => {
   it('is disabled by default and enabled only by the exact true value', () => {
     expect(loadConfig({ ...BASE_ENV }).dLiveWritesEnabled).toBe(false);

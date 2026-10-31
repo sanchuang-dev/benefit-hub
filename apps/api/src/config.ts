@@ -26,6 +26,9 @@ const environmentSchema = z.object({
   // A missing or invalid configuration fails closed; never derive this from display names.
   BENEFIT_B_TRAVEL_PRODUCTS_JSON: z.string().optional(),
   BENEFIT_B_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
+  // A prepaid order creation deducts one supplier pack quota. Code shipping and
+  // authorizing a live quota write are separate decisions, so this is off by default.
+  BENEFIT_A_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
   // D dispatch deducts the supplier's monetary entitlement balance. Shipping
   // code and authorizing a real debit are separate decisions, so this is off by default.
   BENEFIT_D_LIVE_WRITE_ENABLED: z.enum(['true','false']).default('false'),
@@ -106,6 +109,8 @@ export interface AppConfig {
   verifiedBTravelProducts: Readonly<Record<string, string>>;
   /** Explicit separate permission for the quota-deducting B write. Default false. */
   bLiveWritesEnabled: boolean;
+  /** Explicit separate permission for the quota-deducting A prepaid write. Default false. */
+  aLiveWritesEnabled: boolean;
   /** Explicit separate permission for the amount-deducting D dispatch. Default false. */
   dLiveWritesEnabled: boolean;
   /** Build stamp for the read-only runtime status card; null means not injected. */
@@ -241,6 +246,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     businessOrderClients: readBusinessOrderClientsConfig(env),
     verifiedBTravelProducts: readVerifiedBTravelProducts(value.BENEFIT_B_TRAVEL_PRODUCTS_JSON),
     bLiveWritesEnabled: value.BENEFIT_B_LIVE_WRITE_ENABLED === 'true',
+    aLiveWritesEnabled: value.BENEFIT_A_LIVE_WRITE_ENABLED === 'true',
     dLiveWritesEnabled: value.BENEFIT_D_LIVE_WRITE_ENABLED === 'true',
     buildInfo: readBuildInfo(value),
   };

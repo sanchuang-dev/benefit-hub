@@ -6,7 +6,7 @@ import { type AppConfig } from '../../src/config.js';
 import { createApplication, replaceApplicationProducts } from '../../src/modules/applications/applications.js';
 import { issueApplicationCredential, revokeApplicationCredential } from '../../src/modules/applications/credentials.js';
 import { createProduct } from '../../src/modules/catalog/products.js';
-import { TestServer } from '../helpers/test-server.js';
+import { seedAccount, TEST_PASSWORD, TestClient, TestServer } from '../helpers/test-server.js';
 import { activateMapping, bearer, clientsConfig, countRows, expectNoStore, parseError } from '../helpers/api-fixtures.js';
 
 /**
@@ -176,6 +176,7 @@ function startServer(vendor: Vendor, overrides: Partial<AppConfig> = {}) {
       appSecret: 'fixture-app-secret',
     },
     supplierMasterKey: Buffer.from(FIXTURE_MASTER_KEY_HEX, 'hex'),
+    aLiveWritesEnabled: true,
     ...overrides,
   });
   server = testServer;
@@ -262,6 +263,94 @@ const VALID_GRANT_BODY = {
   refCode: REF_CODE,
   paymentReference: PAYMENT_REFERENCE,
 };
+describe('A-mode live-write gate and admin acceptance', () => {
+  it('blocks before any supplier call while the A live gate is disabled', async () => {
+    const vendor = await fixtureVendor();
+    const testServer = startServer(vendor, { aLiveWritesEnabled: false });
+    try {
+      const product = seedProduct(testServer, 'YM-PREPAID-A-GATE');
+      activateMapping(testServer, product.id, { mode: 'A', productCode: 'YM-PACK-A' });
+      registerApplication(testServer, 'local-life', product.id);
+      const order = await createOrder(testServer, 'LO-A-GATE-1', product.id);
+
+      const response = await grantOrder(testServer, order.id, VALID_GRANT_BODY);
+      expect(response.status).toBe(503);
+      expect(await response.json()).toMatchObject({
+        error: 'PREPAID_GRANT_WRITE_DISABLED',
+      });
+      expect(vendor.calls).toHaveLength(0);
+      expect(grantRow(testServer, order.id)).toBeUndefined();
+    } finally {
+      testServer.close();
+      await vendor.close();
+    }
+  }, 20_000);
+
+  it('lets only an admin confirm one A write, then recovers the same requestId read-only', async () => {
+    const vendor = await fixtureVendor();
+    const testServer = startServer(vendor);
+    try {
+      const product = seedProduct(testServer, 'YM-PREPAID-A-ADMIN');
+      activateMapping(testServer, product.id, { mode: 'A', productCode: 'YM-PACK-A' });
+      registerApplication(testServer, 'local-life', product.id);
+      const order = await createOrder(testServer, 'LO-A-ADMIN-1', product.id);
+
+      await seedAccount(testServer, { username: 'ops.admin.a', role: 'admin' });
+      await seedAccount(testServer, { username: 'ops.viewer.a', role: 'viewer' });
+      const admin = new TestClient(testServer);
+      const viewer = new TestClient(testServer);
+      expect((await admin.login('ops.admin.a', TEST_PASSWORD)).status).toBe(200);
+      expect((await viewer.login('ops.viewer.a', TEST_PASSWORD)).status).toBe(200);
+
+      const viewerDenied = await viewer.post(
+        `/api/v1/operations/orders/${order.id}/prepaid-grant`,
+        { ...VALID_GRANT_BODY, confirmGrant: true },
+      );
+      expect(viewerDenied.status).toBe(403);
+      expect(vendor.calls).toHaveLength(0);
+
+      const missingConfirm = await admin.post(
+        `/api/v1/operations/orders/${order.id}/prepaid-grant`,
+        VALID_GRANT_BODY,
+      );
+      expect(missingConfirm.status).toBe(400);
+      expect(vendor.calls).toHaveLength(0);
+
+      const grantedResponse = await admin.post(
+        `/api/v1/operations/orders/${order.id}/prepaid-grant`,
+        { ...VALID_GRANT_BODY, confirmGrant: true },
+      );
+      expect(grantedResponse.status).toBe(200);
+      const grantedBody = (await grantedResponse.json()) as {
+        order: { status: string; grant: { requestId: string; state: string } | null };
+        claimUrl?: string;
+      };
+      expect(grantedBody.order.status).toBe('awaiting_claim');
+      expect(grantedBody.order.grant?.state).toBe('accepted');
+      expect(grantedBody.claimUrl).toBe(CLAIM_URL);
+      expect(vendor.orderCalls()).toHaveLength(1);
+
+      const requestId = grantedBody.order.grant?.requestId;
+      const recoveredResponse = await admin.post(
+        `/api/v1/operations/orders/${order.id}/prepaid-grant/recover`,
+        {},
+      );
+      expect(recoveredResponse.status).toBe(200);
+      const recoveredBody = (await recoveredResponse.json()) as {
+        order: { grant: { requestId: string } | null };
+        claimUrl?: string;
+      };
+      expect(recoveredBody.order.grant?.requestId).toBe(requestId);
+      expect(recoveredBody.claimUrl).toBe(CLAIM_URL);
+      expect(vendor.orderCalls()).toHaveLength(1);
+      expect(vendor.queryCalls()).toHaveLength(1);
+    } finally {
+      testServer.close();
+      await vendor.close();
+    }
+  }, 20_000);
+});
+
 describe('A-mode prepaid grant happy path', () => {
   it('runs purchase-check then the signed order call once and persists an awaiting_claim fact', async () => {
     const vendor = await fixtureVendor();
