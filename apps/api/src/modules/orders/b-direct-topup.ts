@@ -1,8 +1,6 @@
-import { createHash, createHmac } from 'node:crypto';
-import {
-  YangmaoOpenV1Error,
-  type YangmaoOpenV1DirectTopupResult,
-  type YangmaoOpenV1PurchaseReader,
+import type {
+  YangmaoOpenV1DirectTopupResult,
+  YangmaoOpenV1PurchaseReader,
 } from '@sanchuang-dev/provider-yangmao';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
@@ -11,16 +9,28 @@ import {
   OrderMappingUnavailableError,
   OrderModeUnsupportedError,
   OrderNotFoundError,
-  OrderNotGrantableError,
   type BenefitOrder,
 } from './benefit-orders.js';
 import {
   createDirectTopupRepository,
   DirectTopupConflictError,
-  DirectTopupUnknownError,
   DirectTopupInProgressError,
+  DirectTopupUnknownError,
   type DirectTopupOperation,
 } from './b-direct-topup-repository.js';
+import {
+  deriveGrantRequestId,
+  hashRecipientPhone,
+  isDefiniteRejection,
+  observedAtMillis,
+  requireOwnedOrder,
+} from './grant-mechanics.js';
+import {
+  createGrantPipeline,
+  isInFlight,
+  type GrantContinueInput,
+  type GrantExecuteInput,
+} from './grant-pipeline.js';
 import { createBenefitOrderRepository } from './repository.js';
 import {
   assertApplicationEntitlement,
@@ -28,21 +38,8 @@ import {
   requireYangmaoClient,
 } from './supplier-access.js';
 
-const RESERVATION_IN_FLIGHT_MS = 2 * 60 * 1000;
-
-/** B-mode uses a distinct, immutable supplier idempotency namespace. */
-export function deriveDirectTopupRequestId(orderId: string): string {
-  return 'bhB' + createHash('sha256')
-    .update('benefit-hub:b-direct-topup:request:' + orderId, 'utf8')
-    .digest('hex').slice(0, 60);
-}
-export function hashDirectTopupPhone(masterKey: Buffer, phone: string): string {
-  const subkey = createHmac('sha256', masterKey)
-    .update('benefit-hub:b-direct-topup:phone-key:v1', 'utf8').digest();
-  return createHmac('sha256', subkey)
-    .update('benefit-hub:b-direct-topup:phone:v1\n', 'utf8')
-    .update(phone, 'utf8').digest('hex');
-}
+const B_MODE_DOMAIN = 'benefit-hub:b-direct-topup';
+const B_REQUEST_ID_PREFIX = 'bhB';
 
 export class DirectTopupProductUnverifiedError extends Error {}
 export class DirectTopupWriteDisabledError extends Error {}
@@ -65,31 +62,30 @@ export interface DirectTopupOutcome {
   observedAt?: number;
 }
 
-function isDefiniteRejection(error: unknown): boolean {
-  return error instanceof YangmaoOpenV1Error && (
-    error.code === 'YANGMAO_OPEN_V1_AUTH_FAILED' ||
-    error.code === 'YANGMAO_OPEN_V1_FORBIDDEN' ||
-    (error.code === 'YANGMAO_OPEN_V1_BUSINESS_FAILED' &&
-      error.vendorCode !== undefined && [400, 401, 403].includes(error.vendorCode))
-  );
-}
-
+/**
+ * B-mode direct pack topup.
+ *
+ * The initial debit is a signed grant like A/C, so it runs through the shared
+ * grant pipeline: ownership -> application entitlement -> frozen verified-B
+ * mapping -> one reservation -> exactly one supplier POST -> durable settle.
+ * The pipeline also owns the "never send a second debit" race rule.
+ *
+ * Reissue is deliberately outside that pipeline. It is not a new purchase but
+ * the vendor-documented continuation of the SAME requestId after a verified
+ * partial result, so it must skip the live purchase-check (which would see the
+ * partial order's own unclaimed items) and is gated by persisted evidence
+ * instead. B has no read-by-requestId recovery, so it supplies no recovery spec.
+ */
 export function createDirectTopupService(deps: {
-  db: AppDatabase; config: AppConfig; now?: () => number;
+  db: AppDatabase;
+  config: AppConfig;
+  now?: () => number;
 }) {
   const now = deps.now ?? Date.now;
   const orders = createBenefitOrderRepository(deps.db);
   const topups = createDirectTopupRepository(deps.db);
 
-  function requireOwned(businessSource: string, orderId: string): BenefitOrder {
-    const order = orders.getById(orderId);
-    if (!order || order.businessSource !== businessSource) {
-      throw new OrderNotFoundError('订单不存在');
-    }
-    return order;
-  }
-
-  function requireFrozenVerifiedB(order: BenefitOrder): string {
+  function requireFrozenVerifiedB(order: BenefitOrder): { productCode: string } {
     if (!deps.config.bLiveWritesEnabled) {
       throw new DirectTopupWriteDisabledError('B 真实扣额写操作未单独启用');
     }
@@ -107,13 +103,13 @@ export function createDirectTopupService(deps: {
         '缺少供应商纯腾讯出行礼包的可信核验依据，未发起直充',
       );
     }
-    return frozen.productCode;
+    return { productCode: frozen.productCode };
   }
 
   function requireSameInput(
     topup: DirectTopupOperation, command: DirectTopupCommand, masterKey: Buffer,
   ) {
-    if (topup.phoneHmac !== hashDirectTopupPhone(masterKey, command.phone) ||
+    if (topup.phoneHmac !== hashRecipientPhone(masterKey, B_MODE_DOMAIN, command.phone) ||
         topup.refCode !== command.refCode ||
         topup.paymentReference !== command.paymentReference) {
       throw new DirectTopupInputConflictError('手机号、推广码或支付凭据与原单不一致');
@@ -169,58 +165,74 @@ export function createDirectTopupService(deps: {
       }
       throw error;
     }
-    const settled = topups.settle({
-      orderId, kind, observed: result, occurredAt: now(),
-    });
-    return outcome(orderId, settled.operation, Date.parse(result.observedAt));
+    const verifiedAt = now();
+    const settled = topups.settle({ orderId, kind, observed: result, occurredAt: verifiedAt });
+    return outcome(orderId, settled.operation, observedAtMillis(result.observedAt, verifiedAt));
   }
+
+  async function continueExisting({
+    order, operation, command, masterKey,
+  }: GrantContinueInput<DirectTopupOperation, DirectTopupCommand>): Promise<DirectTopupOutcome> {
+    requireSameInput(operation, command, masterKey);
+    if (isInFlight(operation, now())) {
+      throw new DirectTopupInProgressError('原单仍在调用中');
+    }
+    if (operation.state === 'reserved' || operation.state === 'unknown' ||
+        operation.state === 'retrying') {
+      throw new DirectTopupUnknownError('原单结果待人工核实，禁止盲目重发');
+    }
+    return outcome(order.id, operation);
+  }
+
+  async function executeReserved({
+    order, operation, command, productCode, client,
+  }: GrantExecuteInput<DirectTopupOperation, DirectTopupCommand>): Promise<DirectTopupOutcome> {
+    return callVendor(order.id, operation, command, productCode, client, 'grant');
+  }
+
+  const pipeline = createGrantPipeline<
+    DirectTopupOperation,
+    DirectTopupCommand,
+    DirectTopupOutcome
+  >(
+    { db: deps.db, config: deps.config, repository: orders, now },
+    {
+      actionLabel: '发起 B 直充',
+      requireFrozen: requireFrozenVerifiedB,
+      findOperation: (orderId) => topups.get(orderId),
+      preflight: async ({ command, client }) => requireLiveEligibility(client, command),
+      reserve: ({ order, command, masterKey }) => {
+        const reservation = topups.reserve({
+          order,
+          credentialId: command.applicationCredentialId,
+          requestId: deriveGrantRequestId(B_MODE_DOMAIN, B_REQUEST_ID_PREFIX, order.id),
+          refCode: command.refCode,
+          phoneHmac: hashRecipientPhone(masterKey, B_MODE_DOMAIN, command.phone),
+          paymentReference: command.paymentReference,
+          occurredAt: now(),
+        });
+        return {
+          created: reservation.created,
+          order,
+          operation: reservation.operation,
+        };
+      },
+      continueExisting,
+      execute: executeReserved,
+    },
+  );
 
   return {
     /** Initial B-mode request: never retried as a new vendor operation. */
-    async issue(command: DirectTopupCommand): Promise<DirectTopupOutcome> {
-      const order = requireOwned(command.businessSource, command.orderId);
-      assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      const productCode = requireFrozenVerifiedB(order);
-      const masterKey = requireSupplierMasterKey(deps.config);
-      const client = requireYangmaoClient(deps.db, deps.config);
-      const old = topups.get(order.id);
-      if (old) {
-        requireSameInput(old, command, masterKey);
-        if (old.state === 'reserved' && now() - old.updatedAt < RESERVATION_IN_FLIGHT_MS) {
-          throw new DirectTopupInProgressError('原单仍在调用中');
-        }
-        if (old.state === 'reserved' || old.state === 'unknown' || old.state === 'retrying') {
-          throw new DirectTopupUnknownError('原单结果待人工核实，禁止盲目重发');
-        }
-        return outcome(order.id, old);
-      }
-      if (order.status !== 'pending') {
-        throw new OrderNotGrantableError('订单当前状态不允许发起 B 直充');
-      }
-      await requireLiveEligibility(client, command);
-      const reserved = topups.reserve({
-        order, credentialId: command.applicationCredentialId,
-        requestId: deriveDirectTopupRequestId(order.id),
-        refCode: command.refCode,
-        phoneHmac: hashDirectTopupPhone(masterKey, command.phone),
-        paymentReference: command.paymentReference,
-        occurredAt: now(),
-      });
-      if (!reserved.created) {
-        requireSameInput(reserved.operation, command, masterKey);
-        // Crucially, a racing caller NEVER makes the second supplier write.
-        throw new DirectTopupInProgressError('已有同单直充记录，未重复请求供应商');
-      }
-      return callVendor(order.id, reserved.operation, command, productCode, client, 'grant');
-    },
+    issue: (command: DirectTopupCommand) => pipeline.start(command),
 
     /** Explicit operator/business reissue ONLY after a verified partial result.
      * Unknown responses can never be blindly retried, even with the same id.
      */
     async reissue(command: DirectTopupCommand): Promise<DirectTopupOutcome> {
-      const order = requireOwned(command.businessSource, command.orderId);
+      const order = requireOwnedOrder(orders, command.businessSource, command.orderId);
       assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
-      const productCode = requireFrozenVerifiedB(order);
+      const { productCode } = requireFrozenVerifiedB(order);
       const masterKey = requireSupplierMasterKey(deps.config);
       const client = requireYangmaoClient(deps.db, deps.config);
       const existing = topups.get(order.id);
@@ -241,7 +253,7 @@ export function createDirectTopupService(deps: {
 
     /** Read from local persisted facts: never asks the provider to debit again. */
     get(businessSource: string, orderId: string): DirectTopupOutcome | null {
-      requireOwned(businessSource, orderId);
+      requireOwnedOrder(orders, businessSource, orderId);
       const topup = topups.get(orderId);
       return topup ? outcome(orderId, topup) : null;
     },
