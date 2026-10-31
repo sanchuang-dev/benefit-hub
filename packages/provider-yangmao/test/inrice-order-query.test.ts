@@ -14,6 +14,8 @@ const APP_SECRET = 'test-secret-do-not-use';
 const ORDER_NO = 'D202610310001';
 const PARTNER_ORDER_NO = 'P202610310001';
 
+// Independent HMAC-SHA256/Base64 vectors for FIXED_NOW were cross-checked
+// outside this module against the exact compact JSON bytes used below.
 const ORDER_ONLY_SIGNATURE =
   '2NBRwuMC2dGY1BsTCFGcMUrXo8apJtp5KFfQapogXa0=';
 const PARTNER_ONLY_SIGNATURE =
