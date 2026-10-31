@@ -125,6 +125,18 @@ describe('Yangmao supplier management', () => {
     // duplicate the hierarchy the crumb already expresses.
     expect(screen.queryByRole('button', { name: '返回供应商列表' })).toBeNull();
 
+    // The header line carries the live integration status right after the
+    // breadcrumb; the secondary prose description stays on its own line.
+    const header = screen
+      .getByRole('heading', { name: '上力', level: 2 })
+      .closest('.page-header') as HTMLElement;
+    expect(header).not.toBeNull();
+    expect(within(header).getByText('Provider: yangmao')).toBeTruthy();
+    await waitFor(() => expect(within(header).getByText('目录凭证已配置')).toBeTruthy());
+    expect(within(header).getByText('尚未执行目录验证')).toBeTruthy();
+    expect(within(header).getByText('接入配置、商品目录与供货信息。')).toBeTruthy();
+    expect(within(header).queryByRole('button', { name: '页面说明' })).toBeNull();
+
     fireEvent.click(within(breadcrumb).getByRole('link', { name: '供应商管理' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/suppliers'));
     expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
@@ -145,6 +157,14 @@ describe('Yangmao supplier management', () => {
     expect(screen.queryByText('共 0 条')).toBeNull();
     fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
     expect(await screen.findByText('尚未配置上力只读凭证')).toBeTruthy();
+
+    // The failed catalog read is surfaced in the pinned header, next to the
+    // credential state, instead of only inside the tab body.
+    const header = screen
+      .getByRole('heading', { name: '上力' })
+      .closest('.page-header') as HTMLElement;
+    await waitFor(() => expect(within(header).getByText('目录凭证待配置')).toBeTruthy());
+    await waitFor(() => expect(within(header).getByText('目录读取失败')).toBeTruthy());
   }, 45_000);
   it('runs a real-shaped A/B read only after explicit admin input and reports vendor fields', async () => {
     const calls: { url: string; method: string; body?: unknown }[] = [];

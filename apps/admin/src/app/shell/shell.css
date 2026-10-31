@@ -221,6 +221,23 @@
   line-height: 26px;
 }
 
+/* Child-page title line: breadcrumb and its live status tags share one row. */
+.page-header .page-header-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.page-header .page-header-title .page-breadcrumb {
+  margin-bottom: 0;
+}
+
+/* Status tags are header metadata, so they never add a second prose line. */
+.page-header .page-header-status {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .app-header {
     padding-inline: 12px !important;
