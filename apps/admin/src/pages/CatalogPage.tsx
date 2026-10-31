@@ -1,31 +1,21 @@
-import type { MappingProvider } from '@sanchuang-dev/benefit-contracts';
 import {
   Alert,
+  App as AntdApp,
   Button,
-  Card,
-  Col,
   Empty,
-  Form,
-  Input,
-  Pagination,
-  Row,
-  Segmented,
-  Select,
   Space,
-  Spin,
-  Table,
   Tag,
   Tooltip,
   Typography,
 } from 'antd';
-import type { ColumnsType } from 'antd/es/table';
-import { Plus, RotateCcw, Search } from 'lucide-react';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Plus } from 'lucide-react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { Navigate, useSearchParams } from 'react-router';
 import { useSessionQuery } from '../features/auth/use-auth';
 import type {
   CatalogProductListItem,
   ProductMappingSummary,
+  ProductSortField,
   ProductStatus,
   SupplierFilterOption,
 } from '../features/catalog/api';
@@ -35,17 +25,24 @@ import {
   type ProductDrawerState,
 } from '../features/catalog/ProductEditorDrawer';
 import {
-  DEFAULT_PAGE_SIZE,
-  PAGE_SIZE_OPTIONS,
-  parseKeyword,
-  parsePage,
-  parsePageSize,
-  setOptionalParam,
-} from '../shared/lib/url-state';
-import { parseSupplier } from '../features/catalog/url-state';
+  CATALOG_PANEL_ID,
+  EMPTY_CATALOG_FILTERS,
+  hasActiveCatalogFilters,
+  priceToCents,
+  readCatalogState,
+  writeCatalogState,
+  type CatalogFilters,
+} from '../features/catalog/url-state';
 import { useProductsQuery } from '../features/catalog/use-catalog';
+import {
+  DataPanel,
+  type PanelAction,
+  type PanelColumn,
+  type PanelFilter,
+  type PanelQuery,
+} from '../shared/components/DataPanel';
 import { formatDateTime } from '../shared/lib/format-date-time';
-import { useUiPrefs, type CatalogViewMode } from '../shared/lib/ui-prefs';
+import { PAGE_SIZE_OPTIONS } from '../shared/lib/url-state';
 import './CatalogPage.css';
 
 const { Title, Paragraph, Text } = Typography;
@@ -68,12 +65,6 @@ export function CatalogPage() {
     return <Navigate to={SUPPLIER_CATALOG_REDIRECT_PATH} replace />;
   }
   return <CatalogPageContent />;
-}
-
-interface FilterFormValues {
-  keyword?: string;
-  status: ProductStatus | 'all';
-  supplier: MappingProvider | 'all';
 }
 
 function ProductStatusTag({ status }: { status: ProductStatus }) {
@@ -135,203 +126,131 @@ function ProductMappingCell({ mapping }: { mapping: ProductMappingSummary | unde
   return <Tag>未配置</Tag>;
 }
 
-function InternalProductCards({
-  products,
+/**
+ * Card content only; the shared DataPanel owns the card surface, the list of
+ * cards and the row actions so table and card mode cannot drift apart.
+ */
+function ProductCardBody({
+  product,
   suppliers,
-  isAdmin,
-  loading,
-  emptyText,
-  onView,
-  onEdit,
 }: {
-  products: CatalogProductListItem[];
+  product: CatalogProductListItem;
   suppliers: SupplierFilterOption[];
-  isAdmin: boolean;
-  loading: boolean;
-  emptyText: ReactNode;
-  onView: (id: string) => void;
-  onEdit: (id: string) => void;
 }) {
-  if (loading) {
-    return (
-      <div className="catalog-feedback">
-        <Spin />
-      </div>
-    );
-  }
-
-  if (products.length === 0) {
-    return <div className="catalog-feedback">{emptyText}</div>;
-  }
-
+  const mapping = mappingOf(product);
   return (
-    <Row gutter={[16, 16]} className="catalog-card-grid">
-      {products.map((product) => {
-        const mapping = mappingOf(product);
-        return (
-          <Col key={product.id} xs={24} sm={12} xl={8} xxl={6}>
-            <Card
-              size="small"
-              title={<Text code>{product.code}</Text>}
-              extra={<ProductStatusTag status={product.status} />}
-              actions={[
-                <Button key="view" type="link" size="small" onClick={() => onView(product.id)}>
-                  查看
-                </Button>,
-                ...(isAdmin
-                  ? [
-                      <Button
-                        key="edit"
-                        type="link"
-                        size="small"
-                        onClick={() => onEdit(product.id)}
-                      >
-                        编辑
-                      </Button>,
-                    ]
-                  : []),
-              ]}
-            >
-              <Space orientation="vertical" size={6}>
-                <Text strong>{product.name}</Text>
-                <Space size={12} wrap>
-                  <Space size={4}>
-                    <Text type="secondary">供货方：</Text>
-                    <SupplierCell provider={mapping?.provider ?? null} suppliers={suppliers} />
-                  </Space>
-                  <Space size={4}>
-                    <Text type="secondary">映射：</Text>
-                    <ProductMappingCell mapping={mapping} />
-                  </Space>
-                </Space>
-                <Space size={12} wrap>
-                  <Text type="secondary">
-                    展示价：
-                    {product.displayPriceCents === null
-                      ? '—'
-                      : formatCents(product.displayPriceCents)}
-                  </Text>
-                  <Text type="secondary">
-                    预估成本：
-                    {product.estimatedCostCents === null
-                      ? '—'
-                      : formatCents(product.estimatedCostCents)}
-                  </Text>
-                </Space>
-                <Text type="secondary">更新时间：{formatDateTime(product.updatedAt)}</Text>
-              </Space>
-            </Card>
-          </Col>
-        );
-      })}
-    </Row>
+    <div className="catalog-card-body">
+      <div className="catalog-card-title">
+        <Text code>{product.code}</Text>
+        <ProductStatusTag status={product.status} />
+      </div>
+      <Text strong>{product.name}</Text>
+      <div className="catalog-card-meta">
+        <Space size={4}>
+          <Text type="secondary">供货方：</Text>
+          <SupplierCell provider={mapping?.provider ?? null} suppliers={suppliers} />
+        </Space>
+        <Space size={4}>
+          <Text type="secondary">映射：</Text>
+          <ProductMappingCell mapping={mapping} />
+        </Space>
+      </div>
+      <div className="catalog-card-meta">
+        <Text type="secondary">
+          展示价：
+          {product.displayPriceCents === null ? '—' : formatCents(product.displayPriceCents)}
+        </Text>
+        <Text type="secondary">
+          预估成本：
+          {product.estimatedCostCents === null ? '—' : formatCents(product.estimatedCostCents)}
+        </Text>
+      </div>
+      <Text type="secondary">更新时间：{formatDateTime(product.updatedAt)}</Text>
+    </div>
   );
 }
 
 function CatalogPageContent() {
   const session = useSessionQuery();
   const isAdmin = session.data?.admin.role === 'admin';
+  const { message } = AntdApp.useApp();
 
   const [searchParams, setSearchParams] = useSearchParams();
-
-  // Listing state is URL-owned so refresh, back/forward and shared links all
-  // reproduce the same filtered request instead of resetting to page 1.
-  const keyword = parseKeyword(searchParams.get('q'));
-  const rawStatus = searchParams.get('status');
-  const status: ProductStatus | 'all' =
-    rawStatus === 'active' || rawStatus === 'disabled' ? rawStatus : 'all';
-  // The supplier filter is a provider key from the shared contract whitelist;
-  // an edited URL value that is not a real provider simply means "all".
-  const supplier = parseSupplier(searchParams.get('supplier'));
-  const page = parsePage(searchParams.get('page'));
-  const pageSize = parsePageSize(searchParams.get('pageSize'));
-
-  const [filterForm] = Form.useForm<FilterFormValues>();
-  const catalogView = useUiPrefs((state) => state.catalogView);
-  const setCatalogView = useUiPrefs((state) => state.setCatalogView);
+  // URL is the single owner of list state. The memo keeps the filters object
+  // stable between renders so the panel form is only resynced on navigation,
+  // not while an operator is still typing a query.
+  const panelQuery = useMemo(() => readCatalogState(searchParams), [searchParams]);
+  const { filters, page, pageSize, sort } = panelQuery;
   const [drawer, setDrawer] = useState<ProductDrawerState | null>(null);
 
-  // Keep the visible form in sync when the URL changes through back/forward or
-  // a shared link, not only through the submit button.
-  useEffect(() => {
-    filterForm.setFieldsValue({
-      keyword,
-      status,
-      supplier: supplier ?? 'all',
-    });
-  }, [filterForm, keyword, status, supplier]);
+  const listQuery = useProductsQuery(
+    useMemo(
+      () => ({
+        page,
+        pageSize,
+        keyword: filters.keyword || undefined,
+        status: filters.status === 'all' ? undefined : filters.status,
+        supplier: filters.supplier === 'all' ? undefined : filters.supplier,
+        mappingState: filters.mappingState === 'all' ? undefined : filters.mappingState,
+        displayPriceMinCents: priceToCents(filters.displayPrice.min),
+        displayPriceMaxCents: priceToCents(filters.displayPrice.max),
+        sortBy: sort?.key,
+        sortOrder: sort?.order,
+      }),
+      [page, pageSize, filters, sort],
+    ),
+  );
 
-  const listQuery = useProductsQuery({
-    page,
-    pageSize,
-    keyword: keyword || undefined,
-    status: status === 'all' ? undefined : status,
-    supplier,
-  });
-
-  const hasFilters = keyword !== '' || status !== 'all' || supplier !== undefined;
   const products = listQuery.data?.products ?? [];
   const suppliers = listQuery.data?.suppliers ?? [];
+  const hasFilters = hasActiveCatalogFilters(filters);
 
-  const supplierOptions = [
-    { value: 'all' as const, label: '全部供货方' },
-    ...suppliers.map((option) => ({
-      value: option.key,
-      label: option.configured ? option.name : `${option.name}（未配置）`,
-    })),
-  ];
+  const supplierOptions = useMemo(
+    () => [
+      { value: 'all' as const, label: '全部供货方' },
+      ...suppliers.map((option) => ({
+        value: option.key,
+        label: option.configured ? option.name : `${option.name}（未配置）`,
+      })),
+    ],
+    [suppliers],
+  );
 
-  const updateSearch = (mutate: (next: URLSearchParams) => void) => {
-    const next = new URLSearchParams(searchParams);
-    mutate(next);
-    setSearchParams(next, { replace: true });
+  const updateSearch = (next: PanelQuery<CatalogFilters, ProductSortField>) => {
+    const nextParams = writeCatalogState(searchParams, next);
+    // Re-submitting the same filters must not push a duplicate history entry.
+    if (nextParams.toString() === searchParams.toString()) return;
+    // Filter, paging and sort changes are their own history entries so the
+    // browser back/forward buttons replay exactly the previous request.
+    setSearchParams(nextParams);
   };
 
-  const openCreate = () => setDrawer({ mode: 'create' });
-
-  const applyFilters = (values: FilterFormValues) => {
-    const nextKeyword = values.keyword?.trim() ?? '';
-    const nextStatus = values.status ?? 'all';
-    const nextSupplier = values.supplier ?? 'all';
-    updateSearch((next) => {
-      setOptionalParam(next, 'q', nextKeyword || null);
-      setOptionalParam(next, 'status', nextStatus === 'all' ? null : nextStatus);
-      setOptionalParam(next, 'supplier', nextSupplier === 'all' ? null : nextSupplier);
-      next.delete('page');
-    });
+  const applyPanelQuery = (next: PanelQuery<CatalogFilters, ProductSortField>) => {
+    const minCents = priceToCents(next.filters.displayPrice.min);
+    const maxCents = priceToCents(next.filters.displayPrice.max);
+    if (minCents !== undefined && maxCents !== undefined && minCents > maxCents) {
+      // The API rejects this pair; ignore the submission instead of showing an
+      // error page for an input the operator can still correct in place.
+      void message.error('展示价最低值不能高于最高值');
+      return;
+    }
+    updateSearch(next);
   };
 
   const resetFilters = () => {
-    filterForm.resetFields();
-    updateSearch((next) => {
-      next.delete('q');
-      next.delete('status');
-      next.delete('supplier');
-      next.delete('page');
-    });
+    updateSearch({ filters: EMPTY_CATALOG_FILTERS, page: 1, pageSize, sort });
   };
 
-  const changePage = (nextPage: number, nextPageSize: number) => {
-    updateSearch((next) => {
-      if (nextPageSize !== pageSize) {
-        setOptionalParam(
-          next,
-          'pageSize',
-          nextPageSize === DEFAULT_PAGE_SIZE ? null : String(nextPageSize),
-        );
-        next.delete('page');
-        return;
-      }
-      setOptionalParam(next, 'page', nextPage === 1 ? null : String(nextPage));
-    });
-  };
+  const openDrawer = (next: ProductDrawerState) => setDrawer(next);
 
-  const columns: ColumnsType<CatalogProductListItem> = [
+  const columns: PanelColumn<CatalogProductListItem, ProductSortField>[] = [
     {
       title: '商品编码',
       dataIndex: 'code',
       key: 'code',
       width: 150,
+      hideable: false,
+      sortKey: 'code',
       render: (code: string) => <Text code>{code}</Text>,
     },
     {
@@ -339,12 +258,15 @@ function CatalogPageContent() {
       dataIndex: 'name',
       key: 'name',
       ellipsis: true,
+      hideable: false,
+      sortKey: 'name',
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 96,
+      hideable: false,
       render: (status: ProductStatus) => <ProductStatusTag status={status} />,
     },
     {
@@ -394,6 +316,7 @@ function CatalogPageContent() {
       width: 108,
       align: 'right',
       className: 'catalog-amount',
+      sortKey: 'displayPriceCents',
       render: (cents: number | null) =>
         cents === null ? <Text type="secondary">—</Text> : formatCents(cents),
     },
@@ -412,34 +335,77 @@ function CatalogPageContent() {
       dataIndex: 'updatedAt',
       key: 'updatedAt',
       width: 216,
+      sortKey: 'updatedAt',
       render: (updatedAt: number) => <Text type="secondary">{formatDateTime(updatedAt)}</Text>,
     },
+  ];
+
+  const filterFields: PanelFilter<CatalogFilters>[] = [
     {
-      title: '操作',
-      key: 'actions',
-      width: 108,
-      fixed: 'right',
-      render: (_, product) => (
-        <Space size={0}>
-          <Button
-            type="link"
-            size="small"
-            onClick={() => setDrawer({ mode: 'view', productId: product.id })}
-          >
-            查看
-          </Button>
-          {isAdmin ? (
-            <Button
-              type="link"
-              size="small"
-              onClick={() => setDrawer({ mode: 'edit', productId: product.id })}
-            >
-              编辑
-            </Button>
-          ) : null}
-        </Space>
-      ),
+      key: 'keyword',
+      kind: 'text',
+      label: '关键词',
+      placeholder: '商品编码、名称或描述',
+      width: 240,
     },
+    {
+      key: 'status',
+      kind: 'select',
+      label: '状态',
+      width: 140,
+      options: [
+        { value: 'all', label: '全部状态' },
+        { value: 'active', label: '已启用' },
+        { value: 'disabled', label: '已停用' },
+      ],
+    },
+    {
+      key: 'supplier',
+      kind: 'select',
+      label: '供货方',
+      width: 160,
+      options: supplierOptions,
+    },
+    {
+      key: 'mappingState',
+      kind: 'select',
+      label: '映射状态',
+      advanced: true,
+      width: 160,
+      options: [
+        { value: 'all', label: '全部映射' },
+        { value: 'none', label: '未配置' },
+        { value: 'draft', label: '草稿未生效' },
+        { value: 'active', label: '已生效' },
+      ],
+    },
+    {
+      key: 'displayPrice',
+      kind: 'numberRange',
+      label: '展示价（元）',
+      advanced: true,
+      min: 0,
+      width: 260,
+    },
+  ];
+
+  const rowActions = (
+    _product: CatalogProductListItem,
+  ): readonly PanelAction<CatalogProductListItem>[] => [
+    {
+      key: 'view',
+      label: '查看',
+      onClick: (row) => openDrawer({ mode: 'view', productId: row.id }),
+    },
+    ...(isAdmin
+      ? [
+          {
+            key: 'edit',
+            label: '编辑',
+            onClick: (row: CatalogProductListItem) => openDrawer({ mode: 'edit', productId: row.id }),
+          },
+        ]
+      : []),
   ];
 
   const emptyText = hasFilters ? (
@@ -453,17 +419,22 @@ function CatalogPageContent() {
     />
   );
 
-  const viewSwitcher = (
-    <Form.Item label="视图">
-      <Segmented
-        value={catalogView}
-        onChange={(value) => setCatalogView(value as CatalogViewMode)}
-        options={[
-          { label: '表格', value: 'table' },
-          { label: '卡片', value: 'card' },
-        ]}
-      />
-    </Form.Item>
+  const createAction = isAdmin ? (
+    <Button type="primary" icon={<Plus size={16} />} onClick={() => openDrawer({ mode: 'create' })}>
+      新建商品
+    </Button>
+  ) : (
+    <Tooltip title="只读身份不能新建商品">
+      <span>
+        <Button type="primary" icon={<Plus size={16} />} disabled>
+          新建商品
+        </Button>
+      </span>
+    </Tooltip>
+  );
+
+  const renderCard = (product: CatalogProductListItem): ReactNode => (
+    <ProductCardBody product={product} suppliers={suppliers} />
   );
 
   return (
@@ -487,121 +458,31 @@ function CatalogPageContent() {
           />
         ) : null}
 
-        <section className="catalog-surface" aria-label="内部商品列表">
-          <div className="catalog-toolbar-row">
-            <Form<FilterFormValues>
-              form={filterForm}
-              className="catalog-toolbar"
-              layout="inline"
-              initialValues={{ keyword, status, supplier: supplier ?? 'all' }}
-              onFinish={applyFilters}
-            >
-              <Form.Item name="keyword" label="关键词">
-                <Input allowClear placeholder="商品编码、名称或描述" style={{ width: 240 }} />
-              </Form.Item>
-              <Form.Item name="status" label="状态">
-                <Select
-                  style={{ width: 140 }}
-                  options={[
-                    { value: 'all', label: '全部状态' },
-                    { value: 'active', label: '已启用' },
-                    { value: 'disabled', label: '已停用' },
-                  ]}
-                />
-              </Form.Item>
-              <Form.Item name="supplier" label="供货方">
-                <Select style={{ width: 160 }} options={supplierOptions} />
-              </Form.Item>
-              <Form.Item>
-                <Space size={8}>
-                  <Button type="primary" htmlType="submit" icon={<Search size={14} />}>
-                    查询
-                  </Button>
-                  <Button onClick={resetFilters} icon={<RotateCcw size={14} />}>
-                    重置
-                  </Button>
-                </Space>
-              </Form.Item>
-              {viewSwitcher}
-            </Form>
-
-            <div className="catalog-create">
-              {isAdmin ? (
-                <Button type="primary" icon={<Plus size={16} />} onClick={openCreate}>
-                  新建商品
-                </Button>
-              ) : (
-                <Tooltip title="只读身份不能新建商品">
-                  <span>
-                    <Button type="primary" icon={<Plus size={16} />} disabled>
-                      新建商品
-                    </Button>
-                  </span>
-                </Tooltip>
-              )}
-            </div>
-          </div>
-
-          {listQuery.isError ? (
-            <div className="catalog-feedback">
-              <Alert
-                type="error"
-                showIcon
-                title="商品加载失败"
-                description={listQuery.error.message}
-                action={
-                  <Button size="small" onClick={() => listQuery.refetch()}>
-                    重试
-                  </Button>
-                }
-              />
-            </div>
-          ) : catalogView === 'table' ? (
-            <Table<CatalogProductListItem>
-              rowKey="id"
-              size="middle"
-              columns={columns}
-              dataSource={products}
-              loading={listQuery.isPending || listQuery.isFetching}
-              locale={{ emptyText }}
-              scroll={{ x: 1500 }}
-              pagination={{
-                current: page,
-                pageSize,
-                total: listQuery.data?.total ?? 0,
-                pageSizeOptions: PAGE_SIZE_OPTIONS,
-                showSizeChanger: true,
-                showTotal: (total) => `共 ${total} 条`,
-                onChange: changePage,
-              }}
-            />
-          ) : (
-            <>
-              <InternalProductCards
-                products={products}
-                suppliers={suppliers}
-                isAdmin={Boolean(isAdmin)}
-                loading={listQuery.isPending || listQuery.isFetching}
-                emptyText={emptyText}
-                onView={(id) => setDrawer({ mode: 'view', productId: id })}
-                onEdit={(id) => setDrawer({ mode: 'edit', productId: id })}
-              />
-              {(listQuery.data?.total ?? 0) > 0 ? (
-                <div className="catalog-card-pagination">
-                  <Pagination
-                    current={page}
-                    pageSize={pageSize}
-                    total={listQuery.data?.total ?? 0}
-                    pageSizeOptions={PAGE_SIZE_OPTIONS}
-                    showSizeChanger
-                    showTotal={(total) => `共 ${total} 条`}
-                    onChange={changePage}
-                  />
-                </div>
-              ) : null}
-            </>
-          )}
-        </section>
+        <DataPanel<CatalogProductListItem, CatalogFilters, ProductSortField>
+          id={CATALOG_PANEL_ID}
+          label="内部商品列表"
+          rowKey={(product) => product.id}
+          query={panelQuery}
+          onQueryChange={applyPanelQuery}
+          initialFilters={EMPTY_CATALOG_FILTERS}
+          data={{
+            rows: products,
+            total: listQuery.data?.total ?? 0,
+            loading: listQuery.isPending || listQuery.isFetching,
+            error: listQuery.error ?? undefined,
+          }}
+          filters={filterFields}
+          columns={columns}
+          onRefresh={() => {
+            void listQuery.refetch();
+          }}
+          renderCard={renderCard}
+          rowActions={rowActions}
+          toolbarExtra={createAction}
+          emptyText={emptyText}
+          errorTitle="商品加载失败"
+          pageSizeOptions={PAGE_SIZE_OPTIONS}
+        />
       </Space>
 
       <ProductEditorDrawer

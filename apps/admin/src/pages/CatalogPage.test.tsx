@@ -9,6 +9,7 @@ import type {
 import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
 import { jsonResponse, mockFetch } from '../test-utils/http';
 import { findButtonText, findButtonTextAsync, queryParams, writeCalls } from '../test-utils/dom';
+import { useUiPrefs } from '../shared/lib/ui-prefs';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 24, 2, 0, 0);
@@ -67,6 +68,15 @@ function listResponse(
   suppliers: SupplierFilterOption[] = DEFAULT_SUPPLIERS,
 ): Response {
   return jsonResponse(200, { products, suppliers, page, pageSize, total: products.length });
+}
+
+/**
+ * Sortable table headers expose the same accessible name as the drawer fields
+ * (e.g. 商品名称), so drawer inputs must be queried inside the dialog.
+ */
+async function drawerField(label: string): Promise<HTMLElement> {
+  const dialog = await screen.findByRole('dialog');
+  return within(dialog).getByLabelText(label);
 }
 
 /** Ant Design inserts a space inside two-character button labels; match on text. */
@@ -540,8 +550,8 @@ describe('product writes', () => {
     expect(await screen.findByText('请输入商品编码')).toBeTruthy();
     expect(writeCalls(fetchMock)).toEqual([]);
 
-    fireEvent.change(screen.getByLabelText('商品编码'), { target: { value: 'new-1' } });
-    fireEvent.change(screen.getByLabelText('商品名称'), { target: { value: '新商品' } });
+    fireEvent.change(await drawerField('商品编码'), { target: { value: 'new-1' } });
+    fireEvent.change(await drawerField('商品名称'), { target: { value: '新商品' } });
     fireEvent.change(screen.getByLabelText('展示价（元）'), { target: { value: '12.50' } });
     fireEvent.click(findButtonText('保存'));
 
@@ -579,14 +589,14 @@ describe('product writes', () => {
     expect(await screen.findByText('还没有内部商品', undefined, { timeout: 5000 })).toBeTruthy();
 
     fireEvent.click(findButtonText('新建商品'));
-    fireEvent.change(await screen.findByLabelText('商品编码'), { target: { value: 'dup-1' } });
-    fireEvent.change(screen.getByLabelText('商品名称'), { target: { value: '重复商品' } });
+    fireEvent.change(await drawerField('商品编码'), { target: { value: 'dup-1' } });
+    fireEvent.change(await drawerField('商品名称'), { target: { value: '重复商品' } });
     fireEvent.click(findButtonText('保存'));
 
     expect(await screen.findByText('商品编码已存在', undefined, { timeout: 5000 })).toBeTruthy();
     expect(screen.queryByText('商品已保存')).toBeNull();
     expect(screen.getByText('新建内部商品')).toBeTruthy();
-    expect((screen.getByLabelText('商品编码') as HTMLInputElement).value).toBe('dup-1');
+    expect(((await drawerField('商品编码')) as HTMLInputElement).value).toBe('dup-1');
   });
 
   it('does not report success when the API fails', { timeout: 60_000 }, async () => {
@@ -604,8 +614,8 @@ describe('product writes', () => {
     expect(await screen.findByText('还没有内部商品', undefined, { timeout: 5000 })).toBeTruthy();
 
     fireEvent.click(findButtonText('新建商品'));
-    fireEvent.change(await screen.findByLabelText('商品编码'), { target: { value: 'fail-1' } });
-    fireEvent.change(screen.getByLabelText('商品名称'), { target: { value: '故障商品' } });
+    fireEvent.change(await drawerField('商品编码'), { target: { value: 'fail-1' } });
+    fireEvent.change(await drawerField('商品名称'), { target: { value: '故障商品' } });
     fireEvent.click(findButtonText('保存'));
 
     expect(await screen.findByText('服务器内部错误', undefined, { timeout: 5000 })).toBeTruthy();
@@ -661,7 +671,7 @@ describe('product writes', () => {
       displayPriceCents: 1250,
     });
     expect(screen.queryByText('商品已保存')).toBeNull();
-    expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe('咖啡券（新版）');
+    expect(((await drawerField('商品名称')) as HTMLInputElement).value).toBe('咖啡券（新版）');
   });
 
   it('disables a product with its current version and shows the persisted state', { timeout: 60_000 }, async () => {
@@ -733,7 +743,7 @@ describe('product writes', () => {
 
     expect(await screen.findByText('内部商品详情', undefined, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText('只读身份可以查看商品，但不能保存或启停；服务端同时拒绝越权写入。')).toBeTruthy();
-    const nameInput = (await screen.findByLabelText('商品名称')) as HTMLInputElement;
+    const nameInput = (await drawerField('商品名称')) as HTMLInputElement;
     expect(nameInput.value).toBe('咖啡券');
     expect(nameInput.disabled).toBe(true);
     expect(
@@ -858,7 +868,7 @@ describe('product writes', () => {
     expect(await screen.findByText('还没有内部商品', undefined, { timeout: 5000 })).toBeTruthy();
 
     fireEvent.click(findButtonText('新建商品'));
-    fireEvent.change(await screen.findByLabelText('商品名称'), {
+    fireEvent.change(await drawerField('商品名称'), {
       target: { value: '尚未保存的商品' },
     });
     fireEvent.click(findButtonText('关闭'));
@@ -866,7 +876,7 @@ describe('product writes', () => {
     expect((await screen.findAllByText('放弃未保存的修改？')).length).toBeGreaterThan(0);
     fireEvent.click(findButtonText('继续编辑'));
     expect(await screen.findByText('新建内部商品')).toBeTruthy();
-    expect((screen.getByLabelText('商品名称') as HTMLInputElement).value).toBe('尚未保存的商品');
+    expect(((await drawerField('商品名称')) as HTMLInputElement).value).toBe('尚未保存的商品');
 
     fireEvent.click(findButtonText('关闭'));
     expect((await screen.findAllByText('放弃未保存的修改？')).length).toBeGreaterThan(0);
@@ -874,4 +884,305 @@ describe('product writes', () => {
     await waitFor(() => expect(screen.queryByText('新建内部商品')).toBeNull());
   });
 
+});
+
+describe('configurable catalogue panel', () => {
+  it('sends advanced filters, resets paging and keeps them shareable in the URL', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      displayPriceCents: 1500,
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog?page=2');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    await waitFor(() => expect(listRequests.at(-1)?.get('page')).toBe('2'));
+
+    // Advanced filters are mounted but hidden until the operator asks for them.
+    fireEvent.click(findButtonText('高级检索'));
+    expect(screen.getByLabelText('展示价（元）最小值').closest('[hidden]')).toBeNull();
+
+    fireEvent.mouseDown(screen.getByLabelText('映射状态'));
+    fireEvent.click(await screen.findByTitle('已生效'));
+    fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '10' } });
+    fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
+    fireEvent.click(findButtonText('查询'));
+
+    await waitFor(() => {
+      const request = listRequests.at(-1);
+      expect(request?.get('mappingState')).toBe('active');
+      expect(request?.get('displayPriceMinCents')).toBe('1000');
+      expect(request?.get('displayPriceMaxCents')).toBe('2000');
+      // A filter change starts a new result set instead of staying on page two.
+      expect(request?.get('page')).toBe('1');
+    });
+
+    const search = new URLSearchParams(router.state.location.search);
+    expect(search.get('mappingState')).toBe('active');
+    expect(search.get('displayPriceMinCents')).toBe('1000');
+    expect(search.get('displayPriceMaxCents')).toBe('2000');
+    expect(search.get('page')).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
+  it('restores mapping state, price range and server sort from a shared URL', { timeout: 60_000 }, async () => {
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    renderRoutes(
+      '/catalog?mappingState=draft&displayPriceMinCents=1000&displayPriceMaxCents=2000' +
+        '&sortBy=updatedAt&sortOrder=desc&page=2',
+    );
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    await waitFor(() => {
+      const request = listRequests.at(-1);
+      expect(request?.get('mappingState')).toBe('draft');
+      expect(request?.get('displayPriceMinCents')).toBe('1000');
+      expect(request?.get('displayPriceMaxCents')).toBe('2000');
+      expect(request?.get('sortBy')).toBe('updatedAt');
+      expect(request?.get('sortOrder')).toBe('desc');
+      expect(request?.get('page')).toBe('2');
+    });
+
+    fireEvent.click(findButtonText('高级检索'));
+    expect((screen.getByLabelText('展示价（元）最小值') as HTMLInputElement).value).toBe('10');
+    expect((screen.getByLabelText('展示价（元）最大值') as HTMLInputElement).value).toBe('20');
+    // The select shows the parsed state, not the raw URL token.
+    expect(screen.getByTitle('草稿未生效')).toBeTruthy();
+  });
+
+  it('refuses a contradictory price range instead of sending an invalid request', { timeout: 60_000 }, async () => {
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee]);
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    const initialCalls = listRequests.length;
+
+    fireEvent.click(findButtonText('高级检索'));
+    fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '30' } });
+    fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
+    fireEvent.click(findButtonText('查询'));
+
+    expect(await screen.findByText('展示价最低值不能高于最高值')).toBeTruthy();
+    expect(listRequests).toHaveLength(initialCalls);
+    expect(router.state.location.search).toBe('');
+    expect(listRequests.every((params) => params.get('displayPriceMinCents') === null)).toBe(true);
+  });
+
+  it('sorts through the server whitelist and resets to page one on a sort change', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      displayPriceCents: 1250,
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee], Number(params.get('page') ?? '1'));
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog?page=2');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    await waitFor(() => expect(listRequests.at(-1)?.get('page')).toBe('2'));
+
+    fireEvent.click(screen.getByRole('columnheader', { name: /展示价/ }));
+    await waitFor(() => {
+      const request = listRequests.at(-1);
+      expect(request?.get('sortBy')).toBe('displayPriceCents');
+      expect(request?.get('sortOrder')).toBe('asc');
+      expect(request?.get('page')).toBe('1');
+    });
+    expect(router.state.location.search).toContain('sortBy=displayPriceCents');
+
+    fireEvent.click(screen.getByRole('columnheader', { name: /展示价/ }));
+    await waitFor(() => expect(listRequests.at(-1)?.get('sortOrder')).toBe('desc'));
+    expect(router.state.location.search).toContain('sortOrder=desc');
+  });
+
+  it('drops invalid list parameters from a hand-edited URL', { timeout: 60_000 }, async () => {
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee]);
+      }
+      return undefined;
+    });
+
+    renderRoutes(
+      '/catalog?status=deleted&mappingState=evil&displayPriceMinCents=abc' +
+        '&displayPriceMaxCents=1.5&sortBy=evil&sortOrder=desc&page=abc&pageSize=999',
+    );
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    await waitFor(() => expect(listRequests.length).toBeGreaterThan(0));
+    for (const request of listRequests) {
+      expect(request.get('status')).toBeNull();
+      expect(request.get('mappingState')).toBeNull();
+      expect(request.get('displayPriceMinCents')).toBeNull();
+      expect(request.get('displayPriceMaxCents')).toBeNull();
+      expect(request.get('sortBy')).toBeNull();
+      expect(request.get('sortOrder')).toBeNull();
+      expect(request.get('page')).toBe('1');
+      expect(request.get('pageSize')).toBe('20');
+    }
+    expect(screen.getAllByText('全部状态').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('全部映射').length).toBeGreaterThan(0);
+  });
+
+  it('replays filters through browser back and forward', { timeout: 60_000 }, async () => {
+    const travel = product({ id: 'p-1', code: 'TRAVEL-1', name: '腾讯出行券 10 元' });
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        const keyword = params.get('keyword');
+        const rows = keyword === '咖啡' ? [coffee] : keyword === '出行' ? [travel] : [travel, coffee];
+        return listResponse(rows);
+      }
+      return undefined;
+    });
+
+    const { router } = renderRoutes('/catalog');
+    expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '咖啡' } });
+    fireEvent.click(findButtonText('查询'));
+    await waitFor(() => expect(listRequests.at(-1)?.get('keyword')).toBe('咖啡'));
+
+    fireEvent.change(screen.getByLabelText('关键词'), { target: { value: '出行' } });
+    fireEvent.click(findButtonText('查询'));
+    await waitFor(() => expect(listRequests.at(-1)?.get('keyword')).toBe('出行'));
+
+    await router.navigate(-1);
+    await waitFor(() => expect(listRequests.at(-1)?.get('keyword')).toBe('咖啡'));
+    expect((screen.getByLabelText('关键词') as HTMLInputElement).value).toBe('咖啡');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    await router.navigate(1);
+    await waitFor(() => expect(listRequests.at(-1)?.get('keyword')).toBe('出行'));
+    expect((screen.getByLabelText('关键词') as HTMLInputElement).value).toBe('出行');
+    expect(await screen.findByText('腾讯出行券 10 元', undefined, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it('renders table and card views from the same query with independent view prefs', { timeout: 60_000 }, async () => {
+    const coffee = product({
+      id: 'p-2',
+      code: 'COFFEE-1',
+      name: '咖啡券',
+      displayPriceCents: 1250,
+      mapping: {
+        state: 'active',
+        provider: 'yangmao',
+        productCode: 'YM-2002',
+        fulfillmentMode: 'D',
+        versionNumber: 2,
+      },
+    });
+    const listRequests: URLSearchParams[] = [];
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        const params = queryParams(url);
+        listRequests.push(params);
+        return listResponse([coffee]);
+      }
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+    const callsBeforeSwitch = listRequests.length;
+
+    fireEvent.click(screen.getByText('卡片'));
+    const cards = await screen.findByRole('list', { name: '数据卡片' });
+    expect(within(cards).getByText('咖啡券')).toBeTruthy();
+    expect(cards.textContent).toContain('¥12.50');
+    expect(within(cards).getByText('已生效')).toBeTruthy();
+    expect(cards.textContent).toContain('v2');
+    // The view switch only changes local display preference, not the query.
+    expect(listRequests).toHaveLength(callsBeforeSwitch);
+    expect(useUiPrefs.getState().dataPanels['catalog-products']?.view).toBe('card');
+
+    fireEvent.click(within(cards).getByRole('button', { name: /查\s*看/ }));
+    expect(await screen.findByText('内部商品详情', undefined, { timeout: 5000 })).toBeTruthy();
+  });
+
+  it('keeps core columns visible while column management hides optional ones', { timeout: 60_000 }, async () => {
+    const coffee = product({ id: 'p-2', code: 'COFFEE-1', name: '咖啡券' });
+
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse(ADMIN);
+      if (url.startsWith('/api/v1/catalog/products?')) return listResponse([coffee]);
+      return undefined;
+    });
+
+    renderRoutes('/catalog');
+    expect(await screen.findByText('咖啡券', undefined, { timeout: 5000 })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: '列设置' }));
+    const nameCheckbox = (await screen.findByRole('checkbox', { name: '商品名称' })) as HTMLInputElement;
+    const codeCheckbox = screen.getByRole('checkbox', { name: '商品编码' }) as HTMLInputElement;
+    expect(nameCheckbox.disabled).toBe(true);
+    expect(codeCheckbox.disabled).toBe(true);
+
+    fireEvent.click(screen.getByRole('checkbox', { name: '映射状态' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('columnheader', { name: '映射状态' })).toBeNull(),
+    );
+    expect(useUiPrefs.getState().dataPanels['catalog-products']?.visibleKeys).not.toContain(
+      'mappingState',
+    );
+    expect(screen.getByRole('columnheader', { name: '商品名称' })).toBeTruthy();
+  });
 });

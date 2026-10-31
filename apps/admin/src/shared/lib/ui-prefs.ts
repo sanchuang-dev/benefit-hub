@@ -30,7 +30,6 @@ export type MappingTabKey = 'current' | 'history';
 export interface UiPrefs {
   /** Route keys of the open work tabs; the shell always keeps '/' (总览). */
   openTabs: string[];
-  catalogView: CatalogViewMode;
   supplierView: CatalogViewMode;
   mappingTab: MappingTabKey;
   dataPanels: Record<string, DataPanelPreference>;
@@ -39,7 +38,6 @@ export interface UiPrefs {
 export interface UiPrefsActions {
   addTab: (key: string) => void;
   closeTab: (key: string) => void;
-  setCatalogView: (view: CatalogViewMode) => void;
   setSupplierView: (view: CatalogViewMode) => void;
   setMappingTab: (tab: MappingTabKey) => void;
   setDataPanelPreference: (id: string, value: DataPanelPreference) => void;
@@ -50,7 +48,6 @@ export type UiPrefsState = UiPrefs & UiPrefsActions;
 
 const INITIAL_PREFS: UiPrefs = {
   openTabs: ['/'],
-  catalogView: 'table',
   supplierView: 'table',
   mappingTab: 'current',
   dataPanels: {},
@@ -84,7 +81,6 @@ export function sanitizePersistedUiPrefs(value: unknown): Partial<UiPrefs> {
     );
     sanitized.openTabs = [...new Set(tabs)].slice(0, MAX_RESTORED_TABS);
   }
-  if (isViewMode(candidate.catalogView)) sanitized.catalogView = candidate.catalogView;
   if (isViewMode(candidate.supplierView)) sanitized.supplierView = candidate.supplierView;
   if (isMappingTab(candidate.mappingTab)) sanitized.mappingTab = candidate.mappingTab;
   if ('dataPanels' in candidate) sanitized.dataPanels = sanitizePanelPreferences(candidate.dataPanels);
@@ -114,7 +110,6 @@ export function mergePersistedUiPrefs(
   return {
     ...currentState,
     openTabs: openTabs.slice(0, MAX_RESTORED_TABS),
-    catalogView: persisted.catalogView ?? currentState.catalogView,
     supplierView: persisted.supplierView ?? currentState.supplierView,
     mappingTab: persisted.mappingTab ?? currentState.mappingTab,
     dataPanels: { ...(persisted.dataPanels ?? {}), ...currentState.dataPanels },
@@ -131,7 +126,6 @@ export const useUiPrefs = create<UiPrefsState>()(
         ),
       closeTab: (key) =>
         set((state) => ({ openTabs: state.openTabs.filter((item) => item !== key) })),
-      setCatalogView: (catalogView) => set({ catalogView }),
       setSupplierView: (supplierView) => set({ supplierView }),
       setMappingTab: (mappingTab) => set({ mappingTab }),
       setDataPanelPreference: (id, value) =>
@@ -147,7 +141,6 @@ export const useUiPrefs = create<UiPrefsState>()(
       storage: createUiPrefsStorage(),
       partialize: (state): UiPrefs => ({
         openTabs: state.openTabs,
-        catalogView: state.catalogView,
         supplierView: state.supplierView,
         mappingTab: state.mappingTab,
         dataPanels: state.dataPanels,

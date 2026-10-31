@@ -27,7 +27,9 @@ describe('ui prefs store', () => {
 
   it('persists only UI preferences to the configured storage', () => {
     useUiPrefs.getState().addTab('/settings/audit');
-    useUiPrefs.getState().setCatalogView('card');
+    useUiPrefs
+      .getState()
+      .setDataPanelPreference('catalog-products', { view: 'card', visibleKeys: ['name'] });
     useUiPrefs.getState().setSupplierView('card');
     useUiPrefs.getState().setMappingTab('history');
 
@@ -42,7 +44,9 @@ describe('ui prefs store', () => {
 
     expect(stored.version).toBe(UI_PREFS_VERSION);
     expect(stored.state.openTabs).toEqual(['/', '/settings/audit']);
-    expect(stored.state.catalogView).toBe('card');
+    expect(stored.state.dataPanels).toEqual({
+      'catalog-products': { view: 'card', visibleKeys: ['name'] },
+    });
     expect(stored.state.supplierView).toBe('card');
     expect(stored.state.mappingTab).toBe('history');
     // Actions and any server data must never be written to browser storage.
@@ -58,12 +62,12 @@ describe('ui prefs store', () => {
 
   it('resets back to a single 总览 tab on demand', () => {
     useUiPrefs.getState().addTab('/catalog');
-    useUiPrefs.getState().setCatalogView('card');
+    useUiPrefs.getState().setSupplierView('card');
 
     useUiPrefs.getState().reset();
 
     expect(useUiPrefs.getState().openTabs).toEqual(['/']);
-    expect(useUiPrefs.getState().catalogView).toBe('table');
+    expect(useUiPrefs.getState().supplierView).toBe('table');
   });
 });
 
@@ -99,16 +103,16 @@ describe('persisted prefs validation', () => {
     // Persisted order first, session-only tabs appended, no duplicates.
     expect(merged.openTabs).toEqual(['/', '/catalog', '/suppliers']);
     expect(typeof merged.addTab).toBe('function');
-    expect(merged.catalogView).toBe('table');
+    expect(merged.supplierView).toBe('table');
   });
 
   it('keeps current preferences when storage has no valid values', () => {
-    useUiPrefs.getState().setCatalogView('card');
+    useUiPrefs.getState().setSupplierView('card');
     const current = useUiPrefs.getState();
 
     const merged = mergePersistedUiPrefs({}, current);
 
-    expect(merged.catalogView).toBe('card');
+    expect(merged.supplierView).toBe('card');
     expect(merged.openTabs).toEqual(['/']);
   });
 });

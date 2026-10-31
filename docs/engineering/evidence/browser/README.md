@@ -87,3 +87,38 @@ HTTP 响应与浏览器导航结果。被测对象：`pnpm build` 之后的 `app
 - 该证据只覆盖路由挂载与 HTTP 边界，不代表新的视觉设计，也不替代真实部署验收；
   `site.webmanifest` 的 `start_url: "/"` 按品牌文档保持原样，安装后的 PWA 会跟随
   根路径 302。
+
+## DPN-003 权益商品页迁移 DataPanel（2026-10-31）
+
+Captured on the Worker runner with headless Chromium 156 (CDP), the Vite dev
+server for `apps/admin`, the real Hono API and a temporary SQLite file. A Noto
+Sans CJK font was installed locally so the screenshots render Chinese labels;
+the font is runner-only and not part of the repository.
+
+- Fixtures are fictional local test data: products `TRAVEL-10` / `COFFEE-1` /
+  `MOVIE-5`, an active Yangmao D mapping (`YM-TRAVEL-10`, v1), a draft-only B
+  mapping (`YM-COFFEE-1`) and one product without a mapping. The supplier facet
+  reports `configured: false`, so every screenshot correctly shows `未配置`
+  instead of a fabricated ready state.
+- Viewports: 1366×900 and 390×844 (deviceScaleFactor 1).
+- Flow: open `/admin/catalog` → expand 高级检索 → filter keyword `咖啡` →
+  浏览器后退/前进 → 重置 → click 展示价 header (server sort) → switch to
+  卡片 → narrow to 390px → switch to 表格 → open 列设置 and hide/restore
+  映射状态 → filter keyword `不存在的商品` for the empty state.
+- Observed: keyword filter changes the URL to `?q=%E5%92%96%E5%95%A1` and the
+  browser back/forward replay the unfiltered and filtered states; sorting writes
+  `?sortBy=displayPriceCents&sortOrder=asc`, the header reports `aria-sort`
+  `ascending`, and the rows arrive in server price order (500 / 1000 / 1250).
+  Card and table both render the same three rows. `documentElement.scrollWidth`
+  equals `innerWidth` at both 1366 (1366) and 390 (390) in card, table and empty
+  states. Hiding an optional column removes its header while required columns
+  remain; restoring it brings the header back. No JavaScript exception or
+  `console.error` was recorded.
+- Files: `dpn-003-catalog-table-1366.png`,
+  `dpn-003-catalog-filtered-1366.png`, `dpn-003-catalog-card-1366.png`,
+  `dpn-003-catalog-card-390.png`, `dpn-003-catalog-table-390.png`,
+  `dpn-003-catalog-columns-1366.png`, `dpn-003-catalog-empty-1366.png`,
+  `dpn-003-catalog-empty-390.png`.
+- These screenshots prove the rendered UI states only. Error and first-load
+  states are covered by the jsdom route tests, not by these screenshots, and
+  this is not Issue acceptance, deployment or real supplier fulfillment.

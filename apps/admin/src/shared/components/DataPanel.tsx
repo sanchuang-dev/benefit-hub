@@ -85,6 +85,8 @@ export interface DataPanelProps<Row extends object, Filters extends object, Sort
   rowActions?: (row: Row) => readonly PanelAction<Row>[];
   toolbarExtra?: ReactNode;
   emptyText?: ReactNode;
+  /** Page-owned copy for a failed read; the retry action stays on the panel. */
+  errorTitle?: string;
   pageSizeOptions?: number[];
   /** Disable paging for complete, small datasets such as supplier registry. */
   pagination?: boolean;
@@ -93,7 +95,7 @@ export interface DataPanelProps<Row extends object, Filters extends object, Sort
 export function DataPanel<Row extends object, Filters extends object, SortKey extends string>({
   id, label, rowKey, query, onQueryChange, initialFilters, data, filters,
   columns, onRefresh, renderCard, rowActions, toolbarExtra, emptyText,
-  pageSizeOptions = [10, 20, 50], pagination = true,
+  errorTitle = '数据加载失败', pageSizeOptions = [10, 20, 50], pagination = true,
 }: DataPanelProps<Row, Filters, SortKey>) {
   // AntD 6's deep NamePath type cannot prove a runtime schema key is a generic
   // recursive path. Keep Form's internal instance unparameterized; the public
@@ -312,7 +314,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
       </div>
       {error ? (
         <div className="panel-feedback">
-          <Alert type="error" showIcon title="数据加载失败" description={error.message}
+          <Alert type="error" showIcon title={errorTitle} description={error.message}
             action={onRefresh ? <Button size="small" onClick={onRefresh}>重试</Button> : undefined} />
         </div>
       ) : prefs.view === 'card' && renderCard ? (
