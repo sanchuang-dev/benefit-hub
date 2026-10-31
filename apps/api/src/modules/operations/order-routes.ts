@@ -280,7 +280,7 @@ export function createOperationsOrderRoutes(deps: {
         if (!refreshed) throw new Error('D 派发订单不存在');
         return c.json({ order: toDetailDto(refreshed) }, 200, NO_STORE_HEADERS);
       } catch (error) {
-        return handleDDispatchError(c, error);
+        return handleDDispatchError(c, error, { includeVendorMessage: true });
       }
     });
 
@@ -318,7 +318,7 @@ export function createOperationsOrderRoutes(deps: {
         if (!refreshed) throw new Error('D 查单订单不存在');
         return c.json({ order: toDetailDto(refreshed) }, 200, NO_STORE_HEADERS);
       } catch (error) {
-        return handleDDispatchError(c, error);
+        return handleDDispatchError(c, error, { includeVendorMessage: true });
       }
     });
 

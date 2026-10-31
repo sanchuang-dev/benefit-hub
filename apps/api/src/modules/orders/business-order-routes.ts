@@ -384,7 +384,11 @@ function toDDispatchResponse(outcome: DDispatchOutcome): DDispatchResponse {
   };
 }
 
-export function handleDDispatchError(c: Context<AppEnv>, error: unknown) {
+export function handleDDispatchError(
+  c: Context<AppEnv>,
+  error: unknown,
+  options: { includeVendorMessage?: boolean } = {},
+) {
   if (error instanceof DDispatchWriteDisabledError) {
     return c.json(
       apiError('D_DISPATCH_WRITE_DISABLED', 'D 真实金额扣减未被维护者单独启用'),
@@ -462,7 +466,12 @@ export function handleDDispatchError(c: Context<AppEnv>, error: unknown) {
     ) {
       return c.json(
         {
-          ...apiError('SUPPLIER_BUSINESS_FAILED', '上力 D 返回业务错误，未确认履约成功'),
+          ...apiError(
+            'SUPPLIER_BUSINESS_FAILED',
+            options.includeVendorMessage && error.vendorMessage
+              ? `上力 D 返回业务错误：${error.vendorMessage}`
+              : '上力 D 返回业务错误，未确认履约成功',
+          ),
           ...(error.vendorCode === undefined ? {} : { vendorCode: error.vendorCode }),
         },
         502,

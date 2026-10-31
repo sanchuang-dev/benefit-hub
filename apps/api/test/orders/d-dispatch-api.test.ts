@@ -203,12 +203,16 @@ function bearer(token = SOURCE_TOKEN) {
   };
 }
 
-async function createOrder(server: TestServer, productId: string) {
+async function createOrder(
+  server: TestServer,
+  productId: string,
+  businessOrderNo = 'D-ORDER-FICTIONAL-1',
+) {
   const response = await server.app.request(ORIGIN, {
     method: 'POST',
     headers: bearer(),
     body: JSON.stringify({
-      businessOrderNo: 'D-ORDER-FICTIONAL-1',
+      businessOrderNo,
       productId,
     }),
   });
@@ -387,14 +391,18 @@ describe('D-mode dispatch Hono → mock supplier (never real balance)', () => {
     }
   }, 20_000);
 
-  it('persists an explicit supplier business rejection and never retries it', async () => {
+  it('persists an explicit supplier business rejection, keeps machine errors stable, and shows safe vendor detail only to admins', async () => {
     const vendor = await mockVendor();
     vendor.state.dispatchMode = 'business400';
     const server = startServer(vendor);
     try {
-      const order = await createOrder(server, seedDProduct(server));
+      const productId = seedDProduct(server);
+      const order = await createOrder(server, productId, 'D-ORDER-FICTIONAL-MACHINE');
       const rejected = await dispatch(server, order.id);
       expect(rejected.status).toBe(502);
+      const machineBody = await rejected.text();
+      expect(machineBody).toContain('上力 D 返回业务错误，未确认履约成功');
+      expect(machineBody).not.toContain('fictional rejected');
       expect(dispatchRow(server, order.id)?.state).toBe('rejected');
       expect(vendor.writes()).toHaveLength(1);
 
@@ -402,6 +410,20 @@ describe('D-mode dispatch Hono → mock supplier (never real balance)', () => {
       expect((await recover(server, order.id)).status).toBe(409);
       expect(vendor.writes()).toHaveLength(1);
       expect(vendor.reads()).toHaveLength(0);
+
+      await seedAccount(server, { username: 'ops.admin.d.reject', role: 'admin' });
+      const admin = new TestClient(server);
+      expect((await admin.login('ops.admin.d.reject', TEST_PASSWORD)).status).toBe(200);
+      const adminOrder = await createOrder(server, productId, 'D-ORDER-FICTIONAL-ADMIN');
+      const adminRejected = await admin.post(
+        `/api/v1/operations/orders/${adminOrder.id}/dispatch`,
+        { mobile: MOBILE, paymentReference: PAYMENT_REFERENCE, confirmDispatch: true },
+      );
+      expect(adminRejected.status).toBe(502);
+      const adminBody = await adminRejected.text();
+      expect(adminBody).toContain('上力 D 返回业务错误：fictional rejected');
+      expect(dispatchRow(server, adminOrder.id)?.state).toBe('rejected');
+      expect(vendor.writes()).toHaveLength(2);
     } finally {
       server.close();
       await vendor.close();

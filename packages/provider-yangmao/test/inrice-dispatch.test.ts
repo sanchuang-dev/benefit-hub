@@ -116,6 +116,7 @@ describe('D-mode dispatch signature/body', () => {
     );
     expect(error.code).toBe(expected);
     expect(error.vendorCode).toBe(code);
+    expect(error.vendorMessage).toBe(code === 400 || code === 500 ? 'failure' : undefined);
   });
 
   it('does not follow redirects for a debit-capable POST', async () => {
