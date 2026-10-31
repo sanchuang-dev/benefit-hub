@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
+import { directTopupSummarySchema, type DirectTopupSummaryDto } from '@sanchuang-dev/benefit-contracts';
 import {
+  benefitOrderDirectTopupObservations,
+  benefitOrderDirectTopups,
   benefitOrderGiftVouchers,
   benefitOrderGrants,
   benefitOrders,
@@ -261,6 +264,7 @@ export interface OperationsOrderDetail {
   grant: PrepaidOrderGrant | null;
   /** C-mode operation identity, when one was ever reserved. */
   giftVoucher: GiftVoucherOperation | null;
+  directTopup: DirectTopupSummaryDto | null;
   statusEvents: OrderStatusEvent[];
   attempts: FulfillmentAttempt[];
 }
@@ -573,7 +577,7 @@ type OrderWriteTransaction = Parameters<Parameters<AppDatabase['transaction']>[0
  * potentially billable supplier attempt. Reused by every mode so a revocation
  * or allowlist change can never be bypassed by a between-request gap.
  */
-function assertApplicationWriteAccess(
+export function assertApplicationWriteAccess(
   tx: OrderWriteTransaction,
   input: {
     businessSource: string;
@@ -1651,6 +1655,8 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
 
       const grantRow = loadGrantRow(db, order.id);
       const giftVoucherRow = loadGiftVoucherRow(db, order.id);
+      const bTopupRow = db.select().from(benefitOrderDirectTopups)
+        .where(eq(benefitOrderDirectTopups.orderId, order.id)).get();
 
       return {
         order,
@@ -1667,6 +1673,28 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           : null,
         grant: grantRow ? toPrepaidGrant(grantRow) : null,
         giftVoucher: giftVoucherRow ? toGiftVoucherOperation(giftVoucherRow) : null,
+        directTopup: bTopupRow ? directTopupSummarySchema.parse({
+          state: bTopupRow.state,
+          requestId: bTopupRow.requestId,
+          upstreamOrderNo: bTopupRow.upstreamOrderNo,
+          successCount: bTopupRow.successCount,
+          totalCount: bTopupRow.totalCount,
+          items: bTopupRow.itemsSummaryJson === null ? [] : JSON.parse(bTopupRow.itemsSummaryJson),
+          observations: db.select().from(benefitOrderDirectTopupObservations)
+            .where(eq(benefitOrderDirectTopupObservations.orderId, order.id))
+            .orderBy(asc(benefitOrderDirectTopupObservations.observedAt),
+              asc(benefitOrderDirectTopupObservations.id)).all().map((entry) => ({
+              operation: entry.operation,
+              upstreamOrderNo: entry.upstreamOrderNo,
+              successCount: entry.successCount,
+              totalCount: entry.totalCount,
+              items: JSON.parse(entry.itemsSummaryJson),
+              observedAt: entry.observedAt,
+            })),
+          lastVerifiedAt: bTopupRow.lastVerifiedAt,
+          attemptedAt: bTopupRow.attemptedAt,
+          updatedAt: bTopupRow.updatedAt,
+        }) : null,
         statusEvents: loadStatusEvents(db, order.id),
         attempts: loadAttempts(db, order.id),
       };

@@ -13,6 +13,8 @@ const config: AppConfig = {
   yangmaoInrice: null,
   supplierMasterKey: null,
   businessOrderClients: null,
+  verifiedBTravelProducts: {},
+      bLiveWritesEnabled: false,
 };
 
 function createBootstrapApp() {

@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 export const OPEN_V1_PURCHASE_CHECK_PATH = '/open/v1/prepaid/purchase-check';
 /** A-mode `POST /open/v1/prepaid/orders`: deducts one prepaid gift pack. */
 export const OPEN_V1_PREPAID_ORDER_PATH = '/open/v1/prepaid/orders';
+/** B-mode direct topup: may consume one pack and issue multiple travel items. */
+export const OPEN_V1_DIRECT_TOPUP_PATH = '/open/v1/prepaid/direct-topup';
 /** A-mode read-only link recovery by the original `requestId`. */
 export const OPEN_V1_PREPAID_ORDER_QUERY_PATH = '/open/v1/prepaid/orders/query';
 /** C-mode voucher issuance. The supplier pre-deducts `packCount` packs here. */
@@ -173,4 +175,14 @@ export function buildGiftVoucherSignedFields(
     ...(input.phone ? { phone: input.phone } : {}),
     ...(input.productCode ? { productCode: input.productCode } : {}),
   };
+}
+
+
+/** B-mode has the same canonical fields as A, but productCode is mandatory. */
+export function buildDirectTopupSignedFields(
+  identity: OpenV1RequestIdentity,
+  input: { phone: string; refCode: string; productCode: string; requestId: string },
+): OpenV1SigningFields {
+  if (!input.productCode) throw new TypeError('B 模式 productCode 不能为空');
+  return buildPrepaidOrderSignedFields(identity, input);
 }

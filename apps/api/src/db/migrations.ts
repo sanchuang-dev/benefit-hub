@@ -569,4 +569,63 @@ export const migrations: readonly Migration[] = [
       END;
     `,
   },
+
+  {
+    id: '0011_benefit_order_direct_topups',
+    sql: `
+      -- A B-mode request deducts one pack; persisting the immutable identity
+      -- BEFORE the signed write prevents a timeout from causing a second debit.
+      CREATE TABLE IF NOT EXISTS benefit_order_direct_topups (
+        order_id TEXT PRIMARY KEY NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 64),
+        ref_code TEXT NOT NULL CHECK (length(ref_code) BETWEEN 1 AND 64),
+        phone_hmac TEXT NOT NULL CHECK (length(phone_hmac)=64 AND phone_hmac NOT GLOB '*[^0-9a-f]*'),
+        payment_reference TEXT NOT NULL CHECK (length(payment_reference) BETWEEN 1 AND 128),
+        state TEXT NOT NULL CHECK (state IN ('reserved','unknown','partial','completed','rejected','retrying')),
+        upstream_order_no TEXT CHECK (upstream_order_no IS NULL OR length(upstream_order_no) BETWEEN 1 AND 128),
+        success_count INTEGER CHECK (success_count IS NULL OR success_count >= 0),
+        total_count INTEGER CHECK (total_count IS NULL OR total_count > 0),
+        items_summary_json TEXT,
+        last_verified_at INTEGER,
+        attempted_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        CHECK (success_count IS NULL OR total_count IS NULL OR success_count <= total_count)
+      );
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_direct_topups_state_updated
+        ON benefit_order_direct_topups(state, updated_at);
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_direct_topups_identity_immutable
+      BEFORE UPDATE OF order_id, request_id, ref_code, phone_hmac, payment_reference
+      ON benefit_order_direct_topups
+      BEGIN
+        SELECT RAISE(ABORT, 'B direct topup identity is immutable');
+      END;
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_direct_topups_no_delete
+      BEFORE DELETE ON benefit_order_direct_topups
+      BEGIN
+        SELECT RAISE(ABORT, 'B direct topup attempts are never deleted');
+      END;
+      -- Immutable sanitized snapshots preserve past successful items when a
+      -- reissue response returns only a subset without stable supplier item IDs.
+      CREATE TABLE IF NOT EXISTS benefit_order_direct_topup_observations (
+        id TEXT PRIMARY KEY NOT NULL,
+        order_id TEXT NOT NULL REFERENCES benefit_order_direct_topups(order_id) ON DELETE RESTRICT,
+        operation TEXT NOT NULL CHECK (operation IN ('grant','reissue')),
+        upstream_order_no TEXT NOT NULL CHECK(length(upstream_order_no) BETWEEN 1 AND 128),
+        success_count INTEGER NOT NULL CHECK (success_count >= 0),
+        total_count INTEGER NOT NULL CHECK (total_count >= 1),
+        items_summary_json TEXT NOT NULL,
+        observed_at INTEGER NOT NULL,
+        CHECK (success_count <= total_count)
+      );
+      CREATE INDEX IF NOT EXISTS idx_direct_topup_observations_order_observed
+        ON benefit_order_direct_topup_observations(order_id, observed_at);
+      CREATE TRIGGER IF NOT EXISTS trg_direct_topup_observations_no_update
+      BEFORE UPDATE ON benefit_order_direct_topup_observations
+      BEGIN SELECT RAISE(ABORT, 'B provider observations are append-only'); END;
+      CREATE TRIGGER IF NOT EXISTS trg_direct_topup_observations_no_delete
+      BEFORE DELETE ON benefit_order_direct_topup_observations
+      BEGIN SELECT RAISE(ABORT, 'B provider observations are never deleted'); END;
+
+    `,
+  },
 ];
