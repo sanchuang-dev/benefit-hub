@@ -45,6 +45,8 @@
 }
 
 .app-brand-text {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   color: #1f2937;
@@ -108,13 +110,27 @@
   font-size: 12px;
 }
 
+.app-sidebar-toggle {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  color: #64748b;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.app-sidebar-toggle:hover { background: #edf3ff; color: #2563eb; }
+.app-sidebar-toggle:focus-visible { outline: 2px solid #2563eb; outline-offset: 2px; }
+.app-brand-collapsed { gap: 4px; padding-inline: 6px; }
+.app-brand-collapsed .app-brand-text { display: none; }
+.app-sidebar-drawer { background: #fff; min-height: 100%; }
+.app-sidebar-drawer .app-brand { display: none; }
+.app-sidebar-drawer .app-sidebar-search { margin-top: 8px; }
 @media (max-width: 991px) {
-  .ant-layout-sider-collapsed .app-brand {
-    justify-content: center;
-    padding-inline: 0;
-  }
-
-  .ant-layout-sider-collapsed .app-brand-text {
-    display: none;
-  }
+  .app-sider.ant-layout-sider-collapsed .app-brand-text { display: none; }
 }

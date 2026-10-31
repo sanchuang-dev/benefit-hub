@@ -416,6 +416,7 @@ export function SupplierDetailPage() {
       <header className="page-header">
         <Breadcrumb
           className="page-breadcrumb"
+          aria-label="面包屑"
           separator=">"
           items={[
             { key: 'parent', title: '供应商管理' },

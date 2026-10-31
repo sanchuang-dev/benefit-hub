@@ -103,3 +103,11 @@
     padding: 24px 16px 40px;
   }
 }
+
+@media (max-width: 600px) {
+  .login-brand { padding: 20px 20px 12px; gap: 4px; }
+  .login-brand-logo { width: 110px; margin-bottom: 0; }
+  .login-brand-title { font-size: 24px !important; }
+  .login-brand-lead, .login-brand-footnote, .login-brand-points { display: none; }
+  .login-panel { align-items: flex-start; padding: 20px 16px 32px; }
+}

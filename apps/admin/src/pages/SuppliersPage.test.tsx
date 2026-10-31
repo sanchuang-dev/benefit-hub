@@ -118,7 +118,7 @@ describe('Yangmao supplier management', () => {
     // page must not repeat 上力 as a second heading below the breadcrumb.
     expect(await screen.findByRole('heading', { name: '上力', level: 2 })).toBeTruthy();
 
-    const breadcrumb = screen.getByRole('navigation');
+    const breadcrumb = screen.getByRole('navigation', { name: '面包屑' });
     expect(within(breadcrumb).getByText('供应商管理')).toBeTruthy();
     expect(within(breadcrumb).getByRole('heading', { name: '上力', level: 2 })).toBeTruthy();
     // The breadcrumb is the only back affordance; a second back button would
