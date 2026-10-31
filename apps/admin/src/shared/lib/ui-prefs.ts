@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { sanitizePanelPreferences, type DataPanelPreference } from './data-panel-state';
 import { UI_PREFS_STORAGE_KEY, createUiPrefsStorage } from './ui-prefs-storage';
 
 /**
@@ -18,7 +19,7 @@ import { UI_PREFS_STORAGE_KEY, createUiPrefsStorage } from './ui-prefs-storage';
  */
 export { UI_PREFS_STORAGE_KEY };
 
-export const UI_PREFS_VERSION = 1;
+export const UI_PREFS_VERSION = 2;
 
 /** Bounds restored tabs so a corrupted/hand-edited store cannot grow forever. */
 const MAX_RESTORED_TABS = 20;
@@ -32,6 +33,7 @@ export interface UiPrefs {
   catalogView: CatalogViewMode;
   supplierView: CatalogViewMode;
   mappingTab: MappingTabKey;
+  dataPanels: Record<string, DataPanelPreference>;
 }
 
 export interface UiPrefsActions {
@@ -40,6 +42,7 @@ export interface UiPrefsActions {
   setCatalogView: (view: CatalogViewMode) => void;
   setSupplierView: (view: CatalogViewMode) => void;
   setMappingTab: (tab: MappingTabKey) => void;
+  setDataPanelPreference: (id: string, value: DataPanelPreference) => void;
   reset: () => void;
 }
 
@@ -50,6 +53,7 @@ const INITIAL_PREFS: UiPrefs = {
   catalogView: 'table',
   supplierView: 'table',
   mappingTab: 'current',
+  dataPanels: {},
 };
 
 const VIEW_MODES: readonly CatalogViewMode[] = ['table', 'card'];
@@ -83,6 +87,7 @@ export function sanitizePersistedUiPrefs(value: unknown): Partial<UiPrefs> {
   if (isViewMode(candidate.catalogView)) sanitized.catalogView = candidate.catalogView;
   if (isViewMode(candidate.supplierView)) sanitized.supplierView = candidate.supplierView;
   if (isMappingTab(candidate.mappingTab)) sanitized.mappingTab = candidate.mappingTab;
+  if ('dataPanels' in candidate) sanitized.dataPanels = sanitizePanelPreferences(candidate.dataPanels);
 
   return sanitized;
 }
@@ -112,6 +117,7 @@ export function mergePersistedUiPrefs(
     catalogView: persisted.catalogView ?? currentState.catalogView,
     supplierView: persisted.supplierView ?? currentState.supplierView,
     mappingTab: persisted.mappingTab ?? currentState.mappingTab,
+    dataPanels: { ...(persisted.dataPanels ?? {}), ...currentState.dataPanels },
   };
 }
 
@@ -128,6 +134,10 @@ export const useUiPrefs = create<UiPrefsState>()(
       setCatalogView: (catalogView) => set({ catalogView }),
       setSupplierView: (supplierView) => set({ supplierView }),
       setMappingTab: (mappingTab) => set({ mappingTab }),
+      setDataPanelPreference: (id, value) =>
+        set((state) => ({
+          dataPanels: sanitizePanelPreferences({ ...state.dataPanels, [id]: value }),
+        })),
       // Used on logout so the next operator never inherits this session's tabs.
       reset: () => set({ ...INITIAL_PREFS }),
     }),
@@ -140,6 +150,7 @@ export const useUiPrefs = create<UiPrefsState>()(
         catalogView: state.catalogView,
         supplierView: state.supplierView,
         mappingTab: state.mappingTab,
+        dataPanels: state.dataPanels,
       }),
       merge: (persistedState, currentState) =>
         mergePersistedUiPrefs(persistedState, currentState),

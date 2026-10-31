@@ -1,0 +1,22 @@
+/* DataPanel reuses the existing single-surface panel shell and AntD tokens. */
+.data-panel-toolbar-row { gap: 8px 12px; }
+.data-panel-form { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
+.data-panel-filter { min-width: 0; max-width: 100%; }
+.data-panel-filter[hidden] { display: none; }
+.data-panel-filter .ant-form-item { margin-inline-end: 0; margin-bottom: 0; }
+.data-panel-form-actions { margin-bottom: 0; }
+.data-panel-tools { min-width: 0; }
+.data-panel-settings { min-width: 250px; max-width: min(350px, 82vw); }
+.data-panel-settings-title { font-weight: 600; margin: 8px 0; }
+.data-panel-settings-row { display: flex; align-items: center; gap: 2px; padding: 2px 0; }
+.data-panel-settings-row .ant-checkbox-wrapper { flex: 1; min-width: 0; }
+.data-panel-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; padding: 16px; }
+.data-panel-card { border: 1px solid #e8eaed; border-radius: 6px; min-width: 0; padding: 12px; }
+.data-panel-pagination { display: flex; justify-content: flex-end; padding: 0 16px 16px; }
+@media (max-width: 600px) {
+  .data-panel-toolbar-row { padding: 12px; }
+  .data-panel-form { width: 100%; }
+  .data-panel-filter { flex: 1 1 100%; width: 100% !important; }
+  .data-panel-filter .ant-form-item-control, .data-panel-filter .ant-select { min-width: 0; }
+  .data-panel-tools { margin-inline-start: 0; width: 100%; }
+}
