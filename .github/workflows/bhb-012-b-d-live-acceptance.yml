@@ -1,4 +1,4 @@
-name: BHB-012-B D Dispatch Signature Permutation Probe
+name: BHB-012-B Prepare Second D Live Acceptance Order
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  probe:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Probe D DTO serialization with impossible product and mobile
+      - name: Create second pending D order through real platform API only
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -40,75 +40,85 @@ jobs:
           test -n "$cid"
 
           docker exec -i "$cid" node --input-type=module - <<'NODE'
-          import { createHmac } from 'node:crypto';
           import Database from 'better-sqlite3';
           import { drizzle } from 'drizzle-orm/better-sqlite3';
           import * as schema from './dist/db/schema.js';
           import { loadConfig } from './dist/config.js';
-          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import { findApplicationBySource } from './dist/modules/applications/applications.js';
+          import { issueApplicationCredential, revokeApplicationCredential } from './dist/modules/applications/credentials.js';
 
           const config=loadConfig(process.env);
-          const sqlite=new Database(config.databaseFile,{readonly:true,fileMustExist:true});
+          if(!config.dLiveWritesEnabled) throw new Error('D live gate is not enabled');
+          const sqlite=new Database(config.databaseFile,{fileMustExist:true});
           const db=drizzle(sqlite,{schema});
+          let issued=null;
           try{
-            const supplier=activeYangmaoReadConfig(db,config);
-            if(!supplier) throw new Error('supplier config unavailable');
-
-            const values={
-              partnerOrderNo:'BHB-D-SIGN-PROBE-20261031',
-              productCode:'BHB_NO_SUCH_D_PRODUCT_20261031',
-              mobile:'00000000000',
-            };
-            const orders=[
-              ['partnerOrderNo','productCode','mobile'],
-              ['partnerOrderNo','mobile','productCode'],
-              ['productCode','partnerOrderNo','mobile'],
-              ['productCode','mobile','partnerOrderNo'],
-              ['mobile','partnerOrderNo','productCode'],
-              ['mobile','productCode','partnerOrderNo'],
-            ];
-
-            console.log('=== D_SIGNATURE_PERMUTATION_PROBE ===');
-            for(let i=0;i<orders.length;i++){
-              const keys=orders[i];
-              const signed={};
-              for(const key of keys) signed[key]=values[key];
-              const signedBody=JSON.stringify(signed);
-              // HTTP body remains the documented request shape; only HMAC DTO
-              // serialization order changes between probes.
-              const requestBody=JSON.stringify({
-                partnerOrderNo:values.partnerOrderNo,
-                productCode:values.productCode,
-                mobile:values.mobile,
-              });
-              const timestamp=String(Date.now());
-              const signature=createHmac('sha256',supplier.appSecret)
-                .update(timestamp+'\n'+signedBody,'utf8').digest('base64');
-              const response=await fetch(supplier.baseUrl+'/api/open/inrice/v1/dispatch',{
-                method:'POST',
-                headers:{
-                  'X-App-Key':supplier.appKey,
-                  'X-Timestamp':timestamp,
-                  'X-Signature':signature,
-                  'Content-Type':'application/json',
-                  Accept:'application/json',
-                },
-                body:requestBody,
-                redirect:'manual',
-                signal:AbortSignal.timeout(10000),
-              });
-              const raw=await response.text();
-              let vendorCode='unparsed';
-              try{ vendorCode=String(JSON.parse(raw)?.code ?? 'missing'); }catch{}
-              console.log('case='+(i+1)+' signedOrder='+keys.join(','));
-              console.log('httpStatus='+response.status+' vendorCode='+vendorCode);
-              console.log('raw='+raw);
-              if(vendorCode!=='401'){
-                console.log('firstNon401Case='+(i+1));
-                break;
-              }
+            const existing=sqlite.prepare(
+              "SELECT id,status,fulfillment_mode AS fulfillmentMode,mapping_version_id AS mappingVersionId FROM benefit_orders WHERE business_source='local-life' AND business_order_no='D-LIVE-ACCEPT-20261031-002'"
+            ).get();
+            if(existing){
+              console.log('=== SECOND_D_ORDER ===');
+              console.log('created=false');
+              console.log('orderId='+existing.id);
+              console.log('status='+existing.status);
+              console.log('fulfillmentMode='+existing.fulfillmentMode);
+              console.log('mappingVersionIdPresent='+(existing.mappingVersionId?'true':'false'));
+              console.log('=== END_SECOND_D_ORDER ===');
+              process.exit(0);
             }
-            console.log('=== END_D_SIGNATURE_PERMUTATION_PROBE ===');
-          }finally{sqlite.close();}
+
+            const product=sqlite.prepare(
+              "SELECT id FROM catalog_products WHERE code='D-LIVE-ACCEPT-20261031' AND status='active'"
+            ).get();
+            if(!product) throw new Error('acceptance D product missing');
+            const mapping=sqlite.prepare(`
+              SELECT mv.fulfillment_mode AS mode,mv.deduction_unit AS unit
+              FROM supplier_product_mappings m
+              JOIN supplier_product_mapping_versions mv ON mv.id=m.active_version_id
+              WHERE m.product_id=?
+            `).get(product.id);
+            if(!mapping || mapping.mode!=='D' || mapping.unit!=='amount'){
+              throw new Error('acceptance D mapping unavailable');
+            }
+
+            const actor=sqlite.prepare(
+              "SELECT id FROM admin_accounts WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1"
+            ).get();
+            if(!actor) throw new Error('no active admin actor');
+            const app=findApplicationBySource(db,'local-life');
+            if(!app || app.status!=='enabled') throw new Error('local-life app unavailable');
+
+            issued=issueApplicationCredential(db,app.id,actor.id);
+            const response=await fetch('http://127.0.0.1:3000/api/v1/business/orders',{
+              method:'POST',
+              headers:{
+                Authorization:'Bearer '+issued.secret,
+                'Content-Type':'application/json',
+              },
+              body:JSON.stringify({
+                businessOrderNo:'D-LIVE-ACCEPT-20261031-002',
+                productId:product.id,
+              }),
+            });
+            const raw=await response.text();
+            if(!response.ok) throw new Error('order create failed HTTP '+response.status+' '+raw);
+            const body=JSON.parse(raw);
+            console.log('=== SECOND_D_ORDER ===');
+            console.log('created=true');
+            console.log('orderId='+body.order.id);
+            console.log('status='+body.order.status);
+            console.log('fulfillmentMode='+body.order.fulfillmentMode);
+            console.log('mappingVersionIdPresent='+(body.order.mappingVersionId?'true':'false'));
+            console.log('=== END_SECOND_D_ORDER ===');
+          }finally{
+            if(issued){
+              const actor=sqlite.prepare(
+                "SELECT id FROM admin_accounts WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1"
+              ).get();
+              const app=findApplicationBySource(db,'local-life');
+              if(actor && app) revokeApplicationCredential(db,app.id,issued.credential.id,actor.id);
+            }
+            sqlite.close();
+          }
           NODE
           REMOTE
