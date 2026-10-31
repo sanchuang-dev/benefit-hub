@@ -114,7 +114,7 @@ export function AppSidebar({ activeKey, onNavigate, variant = 'sider' }: AppSide
             prefix={<Search size={14} aria-hidden="true" />}
           />
         </div>
-      )}
+      ) : null}
 
       <nav aria-label="主导航">
       {items.length === 0 ? (
