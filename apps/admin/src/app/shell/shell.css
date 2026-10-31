@@ -225,6 +225,22 @@
   line-height: 26px;
 }
 
+/* Supplier detail: status tags follow the breadcrumb and wrap on narrow screens. */
+.page-header .page-header-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.page-header .page-header-title .page-breadcrumb {
+  margin-bottom: 0;
+}
+
+.page-header .page-header-status {
+  margin: 0;
+}
+
 @media (max-width: 900px) {
   .app-header {
     padding-inline: 12px !important;

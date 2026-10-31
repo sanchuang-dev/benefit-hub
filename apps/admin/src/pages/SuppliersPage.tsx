@@ -414,24 +414,31 @@ export function SupplierDetailPage() {
        * single back affordance.
        */}
       <header className="page-header">
-        <Breadcrumb
-          className="page-breadcrumb"
-          aria-label="面包屑"
-          separator=">"
-          items={[
-            { key: 'parent', title: '供应商管理' },
-            { key: 'current', title: '上力' },
-          ]}
-          itemRender={(item) =>
-            item.key === 'current' ? (
-              <span role="heading" aria-level={2} className="page-breadcrumb-current">
-                {item.title}
-              </span>
-            ) : (
-              <Link to="/suppliers">{item.title}</Link>
-            )
-          }
-        />
+        <div className="page-header-title">
+          <Breadcrumb
+            className="page-breadcrumb"
+            aria-label="面包屑"
+            separator=">"
+            items={[
+              { key: 'parent', title: '供应商管理' },
+              { key: 'current', title: '上力' },
+            ]}
+            itemRender={(item) =>
+              item.key === 'current' ? (
+                <span role="heading" aria-level={2} className="page-breadcrumb-current">
+                  {item.title}
+                </span>
+              ) : (
+                <Link to="/suppliers">{item.title}</Link>
+              )
+            }
+          />
+          <Space size={8} wrap className="page-header-status">
+            <Tag>Provider: yangmao</Tag>
+            {supplierInfo ? supplierConfigLabel(supplierInfo) : <Tag>档案加载中</Tag>}
+            {probeStatus}
+          </Space>
+        </div>
         <Paragraph type="secondary">接入配置、商品目录与供货信息。</Paragraph>
       </header>
 
@@ -445,11 +452,6 @@ export function SupplierDetailPage() {
             action={<Button size="small" onClick={() => void supplier.refetch()}>重试</Button>}
           />
         ) : null}
-        <Space size={8} wrap>
-          <Tag>Provider: yangmao</Tag>
-          {supplierInfo ? supplierConfigLabel(supplierInfo) : <Tag>档案加载中</Tag>}
-          {probeStatus}
-        </Space>
         <SupplierConnectionDrawer open={editorOpen} onClose={() => setEditorOpen(false)} />
         <Tabs
           activeKey={activeTab}
