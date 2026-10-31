@@ -1,0 +1,119 @@
+name: BHB-011-D Read-only Protocol Investigation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/bhb-011-d-order-query-investigation-20261031
+    paths:
+      - .github/workflows/bhb-011-d-protocol-investigation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-public-upstream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Inspect public API metadata without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          api_base='https://dev-api.isunpow.com'
+          admin_base='https://dev-admin.isunpow.com'
+          tmp="${RUNNER_TEMP}/bhb011d"
+          mkdir -p "$tmp"
+
+          echo '== API metadata probes =='
+          paths=(
+            '/v3/api-docs'
+            '/v3/api-docs/open'
+            '/v3/api-docs/open-api'
+            '/swagger-ui/index.html'
+            '/swagger-ui.html'
+            '/doc.html'
+            '/swagger-resources'
+            '/actuator'
+            '/actuator/mappings'
+          )
+          for path in "${paths[@]}"; do
+            out="$tmp/api-body"
+            status="$(curl -sS --max-time 12 -o "$out" -w '%{http_code}' "$api_base$path" || true)"
+            bytes="$(wc -c < "$out" 2>/dev/null || echo 0)"
+            type="$(curl -sSI --max-time 8 "$api_base$path" 2>/dev/null | awk -F': ' 'tolower($1)=="content-type"{gsub("\r","",$2); print $2; exit}' || true)"
+            printf 'api_probe path=%s http=%s bytes=%s content_type=%s\n' "$path" "$status" "$bytes" "${type:-unknown}"
+            if [ "$status" = '200' ] && [ "$bytes" -le 5000000 ]; then
+              python3 - "$path" "$out" <<'PY'
+import re, sys
+path, filename = sys.argv[1], sys.argv[2]
+text = open(filename, 'rb').read().decode('utf-8', 'replace')
+needles = [
+    '/api/open/inrice/v1/orders/query',
+    'OpenInriceController',
+    'partnerOrderNo',
+    'dispatchStatus',
+    'fulfillmentSummary',
+]
+for needle in needles:
+    for m in list(re.finditer(re.escape(needle), text, re.I))[:3]:
+        a=max(0,m.start()-220); b=min(len(text),m.end()+420)
+        snippet=re.sub(r'[\x00-\x1f\x7f]+',' ',text[a:b])
+        snippet=re.sub(r'\s+',' ',snippet)
+        print(f'api_hit path={path} needle={needle} snippet={snippet[:900]}')
+PY
+            fi
+          done
+
+          echo '== Public admin bundle probes =='
+          index="$tmp/admin-index.html"
+          curl -fsSL --max-time 15 "$admin_base/" -o "$index"
+          mapfile -t assets < <(
+            python3 - "$index" <<'PY'
+import re, sys
+html=open(sys.argv[1],encoding='utf-8',errors='replace').read()
+seen=[]
+for value in re.findall(r'(?:src|href)=["\x27]([^"\x27]+\.js(?:\?[^"\x27]*)?)', html):
+    if value not in seen:
+        seen.append(value)
+for value in seen[:80]:
+    print(value)
+PY
+          )
+          echo "admin_js_asset_count=${#assets[@]}"
+          found=0
+          for asset in "${assets[@]}"; do
+            case "$asset" in
+              http://*|https://*) url="$asset" ;;
+              /*) url="$admin_base$asset" ;;
+              *) url="$admin_base/$asset" ;;
+            esac
+            body="$tmp/asset.js"
+            if ! curl -fsSL --max-time 15 "$url" -o "$body"; then
+              continue
+            fi
+            python3 - "$url" "$body" <<'PY'
+import re, sys
+url, filename = sys.argv[1], sys.argv[2]
+text = open(filename, 'rb').read().decode('utf-8', 'replace')
+needles = [
+    '/api/open/inrice/v1/orders/query',
+    'OpenInriceController',
+    '/admin/inrice/orders',
+    'partnerOrderNo',
+    'dispatchStatus',
+    'fulfillmentSummary',
+]
+for needle in needles:
+    matches=list(re.finditer(re.escape(needle), text, re.I))
+    if not matches:
+        continue
+    for m in matches[:4]:
+        a=max(0,m.start()-260); b=min(len(text),m.end()+520)
+        snippet=re.sub(r'[\x00-\x1f\x7f]+',' ',text[a:b])
+        snippet=re.sub(r'\s+',' ',snippet)
+        print(f'admin_hit asset={url} needle={needle} snippet={snippet[:1100]}')
+PY
+          done
+
+          echo 'public_probe_complete=true'
