@@ -1,11 +1,7 @@
-name: BHB-011-D Read-only Protocol Investigation
+name: BHB-011-D Read-only Order Query Guess Matrix
 
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [dev]
-    paths:
-      - .github/workflows/bhb-011-d-protocol-investigation.yml
   push:
     branches:
       - feat/bhb-011-d-order-query-investigation-20261031
@@ -16,93 +12,181 @@ permissions:
   contents: read
 
 jobs:
-  inspect-public-upstream:
+  signed-order-query-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 4
+    timeout-minutes: 10
     steps:
-      - name: Inspect bounded public API metadata and known admin chunks
+      - name: Install SSH transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Run bounded read-only query/signature field matrix
         shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
         run: |
           set -euo pipefail
-          api_base='https://dev-api.isunpow.com'
-          admin_base='https://dev-admin.isunpow.com'
-          tmp="${RUNNER_TEMP}/bhb011d"
-          mkdir -p "$tmp"
 
-          echo '== API metadata probes =='
-          paths=(
-            '/v3/api-docs'
-            '/v3/api-docs/open'
-            '/v3/api-docs/open-api'
-            '/swagger-ui/index.html'
-            '/swagger-ui.html'
-            '/doc.html'
-            '/swagger-resources'
-            '/actuator'
-            '/actuator/mappings'
-          )
-          for path in "${paths[@]}"; do
-            out="$tmp/api-body"
-            : > "$out"
-            status="$(curl -sS --max-time 8 -o "$out" -w '%{http_code}' "$api_base$path" || true)"
-            bytes="$(wc -c < "$out" 2>/dev/null || echo 0)"
-            printf 'api_probe path=%s http=%s bytes=%s\n' "$path" "$status" "$bytes"
-            if [ "$bytes" -gt 0 ] && [ "$bytes" -le 1024 ]; then
-              compact="$(tr '\r\n' '  ' < "$out" | sed 's/[[:space:]][[:space:]]*/ /g' | head -c 1000)"
-              printf 'api_small_body path=%s body=%s\n' "$path" "$compact"
-            fi
-          done
+          test -n "$SSHPASS" && test -n "$TARGET_USER" && test -n "$TARGET_PORT"
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Unexpected host"; exit 1 ;;
+          esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
 
-          echo '== Public admin bundle probes =='
-          index="$tmp/admin-index.html"
-          curl -fsSL --max-time 10 "$admin_base/" -o "$index"
-          mapfile -t assets < <(
-            grep -aoE '(src|href)=["'\''"][^"'\'' ]+\.js([^"'\'' ]*)?["'\''"]' "$index"               | sed -E 's/^(src|href)=["'\'']//; s/["'\'']$//'               | awk '!seen[$0]++'               | head -n 20
-          )
-          assets+=('/js/store-BXhxk7Or.js' '/js/data-CCfayuKr.js')
-          printf 'admin_candidate_js_asset_count=%s\n' "${#assets[@]}"
+          mkdir -m 700 -p "$RUNNER_TEMP/bhb_ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          test -s "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/bhb_ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' || {
+            echo "::error::SSH host fingerprint mismatch"
+            exit 1
+          }
 
-          declare -A seen=()
-          for asset in "${assets[@]}"; do
-            case "$asset" in
-              http://*|https://*) url="$asset" ;;
-              /*) url="$admin_base$asset" ;;
-              *) url="$admin_base/$asset" ;;
-            esac
-            if [ -n "${seen[$url]:-}" ]; then
-              continue
-            fi
-            seen["$url"]=1
-            body="$tmp/asset.js"
-            status="$(curl -sS --max-time 10 -o "$body" -w '%{http_code}' "$url" || true)"
-            printf 'admin_asset path=%s http=%s bytes=%s\n' "$url" "$status" "$(wc -c < "$body" 2>/dev/null || echo 0)"
-            if [ "$status" != '200' ]; then
-              continue
-            fi
-            if [[ "$url" == *"/jse/index-"*".js" ]]; then
-              echo "admin_main_js_refs_begin"
-              grep -aoE '[^"'\''[:space:]]+\\.js([^"'\''[:space:]]*)?' "$body" \
-                | awk '!seen[$0]++' \
-                | head -n 160 || true
-              grep -aoE 'sourceMappingURL=[^[:space:]]+' "$body" | head -n 5 || true
-              echo "admin_main_js_refs_end"
+          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/bhb_ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -o ConnectTimeout=15             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          test "$(id -u)" -eq 0 || { echo 'Expected root deploy identity'; exit 1; }
+          cd /srv/benefit-hub
+          cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
+          test -n "$cid" || { echo 'Benefit Hub container missing'; exit 1; }
 
-              map_url="$url.map"
-              map_body="$tmp/main.map"
-              map_status="$(curl -sS --max-time 10 -o "$map_body" -w '%{http_code}' "$map_url" || true)"
-              map_bytes="$(wc -c < "$map_body" 2>/dev/null || echo 0)"
-              echo "admin_main_sourcemap http=$map_status bytes=$map_bytes"
-              if [ "$map_status" = '200' ] && [ "$map_bytes" -gt 10000 ]; then
-                grep -aEo '.{0,240}(/api/open/inrice/v1/orders/query|OpenInriceController|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,520}' "$map_body" \
-                  | head -n 40 \
-                  | tr '\r\n' '  ' \
-                  | sed 's/[[:space:]][[:space:]]*/ /g' \
-                  | sed "s#^#sourcemap_hit #" || true
-                echo
-              fi
-            fi
-            grep -aEo '.{0,260}(/api/open/inrice/v1/orders/query|OpenInriceController|/admin/inrice/orders|partnerOrderNo|thirdPartyNo|inriceRecordNo|dispatchStatus|fulfillmentSummary).{0,520}' "$body"               | head -n 40               | tr '\r\n' '  '               | sed 's/[[:space:]][[:space:]]*/ /g'               | sed "s#^#admin_hit asset=$url #" || true
-            echo
-          done
+          docker exec -i "$cid" node --input-type=module - <<'NODE'
+          import Database from 'better-sqlite3';
+          import { drizzle } from 'drizzle-orm/better-sqlite3';
+          import * as schema from './dist/db/schema.js';
+          import { loadConfig } from './dist/config.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import {
+            createInriceSignature,
+            createYangmaoInriceCatalogClient,
+          } from '@sanchuang-dev/provider-yangmao';
 
-          echo 'public_probe_complete=true'
+          const config = loadConfig(process.env);
+          const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
+
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+          const probeValue = 'BHB011D_READONLY_PROBE_20261031_NO_ORDER';
+
+          const queryKeys = [
+            'partnerOrderNo',
+            'orderNo',
+            'thirdPartyNo',
+            'recordNo',
+            'inriceRecordNo',
+            'externalOrderNo',
+            'outOrderNo',
+            'merchantOrderNo',
+            'requestId',
+            'tradeNo',
+          ];
+
+          const signedKeys = [
+            'partnerOrderNo',
+            'orderNo',
+            'thirdPartyNo',
+            'recordNo',
+            'inriceRecordNo',
+            'externalOrderNo',
+            'outOrderNo',
+            'merchantOrderNo',
+            'requestId',
+            'tradeNo',
+          ];
+
+          try {
+            const db = drizzle(sqlite, { schema });
+            const supplier = activeYangmaoReadConfig(db, config);
+            if (!supplier) throw new Error('Supplier read configuration unavailable');
+
+            const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
+            console.log('=== POSITIVE_CONTROL ===');
+            console.log('D_products=success');
+            console.log('D_product_count=' + catalog.products.length);
+            console.log('=== END_POSITIVE_CONTROL ===');
+
+            let caseNo = 0;
+            let non401 = 0;
+
+            for (const queryKey of queryKeys) {
+              for (const signedKey of signedKeys) {
+                caseNo += 1;
+                const timestamp = String(Date.now());
+                const signedBody = JSON.stringify({ [signedKey]: probeValue });
+                const signature = createInriceSignature(
+                  supplier.appSecret,
+                  timestamp,
+                  signedBody,
+                );
+
+                const url = new URL(
+                  '/api/open/inrice/v1/orders/query',
+                  supplier.baseUrl,
+                );
+                url.searchParams.set(queryKey, probeValue);
+
+                let status = null;
+                let rawBody = '';
+                let transportError = null;
+
+                try {
+                  const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                      'X-App-Key': supplier.appKey,
+                      'X-Timestamp': timestamp,
+                      'X-Signature': signature,
+                      Accept: 'application/json',
+                    },
+                    redirect: 'manual',
+                    signal: AbortSignal.timeout(10_000),
+                  });
+                  status = response.status;
+                  rawBody = await response.text();
+                } catch (error) {
+                  transportError =
+                    error instanceof Error ? error.message : String(error);
+                }
+
+                let vendorCode = null;
+                if (rawBody) {
+                  try {
+                    const parsed = JSON.parse(rawBody);
+                    if (Number.isInteger(parsed?.code)) vendorCode = parsed.code;
+                  } catch {}
+                }
+
+                if (vendorCode !== 401) non401 += 1;
+
+                console.log('=== CASE ' + String(caseNo).padStart(3, '0') + ' ===');
+                console.log('query_key=' + queryKey);
+                console.log('signed_key=' + signedKey);
+                console.log('signed_json=' + signedBody);
+                console.log('http_status=' + (status ?? 'transport_error'));
+                console.log('vendor_code=' + (vendorCode ?? 'unparsed'));
+                if (transportError) {
+                  console.log('transport_error_raw=' + transportError);
+                }
+                console.log('response_body_raw_begin');
+                console.log(rawBody);
+                console.log('response_body_raw_end');
+                console.log('=== END_CASE ===');
+
+                await sleep(80);
+              }
+            }
+
+            console.log('=== MATRIX_SUMMARY ===');
+            console.log('cases=' + caseNo);
+            console.log('non_401_cases=' + non401);
+            console.log('=== END_MATRIX_SUMMARY ===');
+          } finally {
+            sqlite.close();
+          }
+          NODE
+          REMOTE
