@@ -252,7 +252,7 @@ export function ApplicationsPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <Title level={2}>下游应用</Title>
+        <Title level={1}>下游应用</Title>
         <Paragraph type="secondary">
           登记调用方应用、配置可下单的三创内部商品并签发机器凭证。服务端在每次调用时校验应用启停、凭证有效性与商品授权。
         </Paragraph>

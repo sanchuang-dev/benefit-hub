@@ -14,6 +14,13 @@ interface AppSidebarProps {
   /** Menu key of the current route, resolved by `activeMenuKey()`. */
   activeKey: string;
   onNavigate: (key: string) => void;
+  /**
+   * `sider` is the persistent desktop rail (collapsible at the `lg` breakpoint).
+   * `drawer` is the same navigation rendered inside the compact-screen drawer,
+   * where an icon rail would waste width; it is always expanded and keeps the
+   * search input available.
+   */
+  variant?: 'sider' | 'drawer';
 }
 
 function buildMenuItems(groups: readonly NavGroup[]): MenuItems {
@@ -32,12 +39,13 @@ function buildMenuItems(groups: readonly NavGroup[]): MenuItems {
  * Sidebar shell: brand, menu search and the Ant Design Menu. The search only
  * narrows what is visible; routes, work tabs and page data stay untouched.
  */
-export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
+export function AppSidebar({ activeKey, onNavigate, variant = 'sider' }: AppSidebarProps) {
   const [query, setQuery] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
     NAV_GROUPS.map((group) => group.key),
   );
   const [collapsed, setCollapsed] = useState(false);
+  const isDrawer = variant === 'drawer';
 
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
@@ -75,51 +83,8 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
   // operator's own expansion state is restored as soon as the query clears.
   const openKeys = searching ? visibleGroups.map((group) => group.key) : expandedGroups;
 
-  return (
-    <Sider
-      className="app-sider"
-      theme="light"
-      width={216}
-      collapsedWidth={56}
-      breakpoint="lg"
-      onCollapse={(nextCollapsed) => {
-        setCollapsed(nextCollapsed);
-        // The collapsed rail cannot show the input; clear the filter so the
-        // icon-only menu is never silently narrowed by an invisible query.
-        if (nextCollapsed) setQuery('');
-      }}
-    >
-      <div className="app-brand">
-        {/* Brand mark from public/brand. Decorative: the wordmark next to it and
-            the document title carry the accessible name. */}
-        <img
-          className="app-brand-mark"
-          src="/brand/logo-icon-512.png"
-          alt=""
-          aria-hidden="true"
-          width={26}
-          height={26}
-        />
-        <span className="app-brand-text">
-          <span className="app-brand-abbr">3C</span>{' '}
-          <span className="app-brand-name">Benefit Hub</span>
-        </span>
-      </div>
-
-      {collapsed ? null : (
-        <div className="app-sidebar-search">
-          <Input
-            allowClear
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索菜单"
-            aria-label="搜索菜单"
-            autoComplete="off"
-            prefix={<Search size={14} aria-hidden="true" />}
-          />
-        </div>
-      )}
-
+  const navigation = (
+    <nav className="app-nav-region" aria-label="主导航">
       {items.length === 0 ? (
         <Empty
           className="app-sidebar-empty"
@@ -140,6 +105,70 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
           onClick={({ key }) => onNavigate(key)}
         />
       )}
+    </nav>
+  );
+
+  // The drawer is rendered by AppShell with its own title bar, so the brand
+  // lockup would repeat the dialog header there.
+  const brand = isDrawer ? null : (
+    <div className="app-brand">
+      {/* Brand mark from public/brand. Decorative: the wordmark next to it and
+          the document title carry the accessible name. */}
+      <img
+        className="app-brand-mark"
+        src="/brand/logo-icon-512.png"
+        alt=""
+        aria-hidden="true"
+        width={26}
+        height={26}
+      />
+      <span className="app-brand-text">
+        <span className="app-brand-abbr">3C</span>{' '}
+        <span className="app-brand-name">Benefit Hub</span>
+      </span>
+    </div>
+  );
+
+  const search = isDrawer || !collapsed ? (
+    <div className="app-sidebar-search">
+      <Input
+        allowClear
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="搜索菜单"
+        aria-label="搜索菜单"
+        autoComplete="off"
+        prefix={<Search size={14} aria-hidden="true" />}
+      />
+    </div>
+  ) : null;
+
+  if (isDrawer) {
+    return (
+      <div className="app-sidebar-drawer">
+        {search}
+        {navigation}
+      </div>
+    );
+  }
+
+  return (
+    <Sider
+      className="app-sider"
+      theme="light"
+      width={216}
+      collapsedWidth={56}
+      breakpoint="lg"
+      onCollapse={(nextCollapsed) => {
+        setCollapsed(nextCollapsed);
+        // The collapsed rail cannot show the input; clear the filter so the
+        // icon-only menu is never silently narrowed by an invisible query.
+        if (nextCollapsed) setQuery('');
+      }}
+    >
+      {brand}
+      {search}
+      {navigation}
     </Sider>
   );
 }

@@ -103,3 +103,37 @@
     padding: 24px 16px 40px;
   }
 }
+
+/*
+ * Design §4: on narrow screens the cover must yield space to the form. The
+ * stacked layout still shows the blue cover above 600px, but a phone viewport
+ * kept 338px of brand above a 432px card. Compact the lockup so the form starts
+ * within the first screen even with the on-screen keyboard open.
+ */
+@media (max-width: 600px) {
+  .login-brand {
+    gap: 4px;
+    padding: 16px 20px;
+  }
+
+  .login-brand-logo {
+    width: 120px;
+  }
+
+  .login-brand-title {
+    font-size: 24px !important;
+  }
+
+  /* The eyebrow repeats the wordmark inside the logo; drop it on phones so the
+     form, not the lockup, owns the first screen. */
+  .login-brand-eyebrow,
+  .login-brand-lead,
+  .login-brand-points,
+  .login-brand-footnote {
+    display: none;
+  }
+
+  .login-panel {
+    padding: 20px 16px 32px;
+  }
+}

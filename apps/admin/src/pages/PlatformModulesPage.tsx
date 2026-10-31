@@ -41,7 +41,7 @@ export function PlatformModulesPage({ module }: { module: PlatformModule }) {
   return (
     <div className="page">
       <header className="page-header">
-        <Title level={2}>{info.title}</Title>
+        <Title level={1}>{info.title}</Title>
         <Paragraph type="secondary">{info.description}</Paragraph>
       </header>
 

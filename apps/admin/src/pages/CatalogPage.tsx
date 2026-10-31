@@ -470,7 +470,7 @@ function CatalogPageContent() {
     <div className="page">
       <header className="page-header catalog-header">
         <div className="catalog-header-text">
-          <Title level={2}>权益商品</Title>
+          <Title level={1}>权益商品</Title>
           <Paragraph type="secondary">
             管理三创自有权益商品、运营价格与供应商映射。
           </Paragraph>

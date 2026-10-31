@@ -32,6 +32,16 @@
   gap: 6px;
 }
 
+/*
+ * Compact navigation trigger (below 768px). The header keeps its right-aligned
+ * identity block; the auto margin pins the hamburger to the left edge without
+ * introducing a second flex container.
+ */
+.app-nav-trigger {
+  margin-right: auto;
+  margin-left: -6px;
+}
+
 .app-tabs-bar {
   position: relative;
   flex: 0 0 38px;
@@ -112,8 +122,18 @@
   display: none;
 }
 
+/*
+ * A 12px glyph padded to a 16x17px hit area is below the 24px target guideline
+ * (and hard to hit with a trackpad or on touch). Keep the icon the same size and
+ * grow only the invisible button box.
+ */
 .app-tabs .ant-tabs-tab-remove {
-  margin-inline-start: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin-inline-start: 3px;
   padding: 2px;
   border-radius: 50%;
   color: #7b8491;
@@ -171,6 +191,7 @@
   pointer-events: none;
 }
 
+.page-header h1,
 .page-header h2 {
   margin: 0 0 2px !important;
   font-size: 18px !important;

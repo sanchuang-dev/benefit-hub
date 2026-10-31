@@ -53,3 +53,37 @@ assets and a temporary SQLite volume. Files are `bhb-014-b-*.png`.
   only `关闭` and disabled fields, with no issue/revoke/save controls.
 - These screenshots prove the rendered UI states only. They are not Issue
   acceptance, staging/production deployment, or real supplier fulfillment.
+
+## Admin console UX pass (2026-10-31)
+
+Captured 2026-10-31 on the maintainer workstation with headless Chrome 156 over
+CDP against the local dev stack (Vite admin + tsx Hono API, local SQLite). Files
+are `bhb-admin-ux-*.png`.
+
+- Scope: shell navigation at the 768px breakpoint, the compact-screen navigation
+  drawer, login cover compaction at ≤600px, secondary-text contrast, page heading
+  semantics, navigation landmarks and the work-tab close hit area. Fixtures are
+  the local development database only (empty catalog and orders); no production
+  record, supplier credential or issued benefit is present, and no supplier
+  request was made.
+- Viewports: 1366×900 and 390×844 (deviceScaleFactor 1).
+- `bhb-admin-ux-runtime-1366.png`: desktop shell with 主导航/已打开页面 navigation
+  landmarks, one `h1` per page, 24×24 tab-close target and a named 更多页面 overflow
+  trigger.
+- `bhb-admin-ux-shell-390.png`: below 768px the permanent 56px rail is gone and
+  the content area uses the full 390px width; the header hamburger exposes
+  `aria-expanded="false"` and the page has no horizontal overflow.
+- `bhb-admin-ux-drawer-390.png`: drawer opened from the shell header — 280px left
+  panel titled 导航菜单 with the search input and the same Ant Design Menu. Escape
+  closes it and returns keyboard focus to the hamburger (verified via CDP).
+- `bhb-admin-ux-login-390.png`: compact login cover at ≤600px; the form card stays
+  inside the 844px viewport instead of starting 338px down the page.
+- Observed browser results: zero JavaScript exceptions and zero
+  `console.error`/failed requests across the flows; `document.documentElement.scrollWidth`
+  equals the viewport at 390, 768 and 1366. Secondary text computes to `#64748B`
+  (4.76:1 on white) instead of the previous `rgba(0,0,0,0.45)` 3.35:1. Ant Design
+  preset semantic tags (green ≈3.4:1) and the Segmented control's unselected
+  labels (≈4.4:1 on its grey track) remain residual contrast gaps; they are
+  recorded, not claimed as WCAG AA.
+- These screenshots prove rendered UI states only. They are not Issue acceptance,
+  staging/production deployment or real supplier fulfillment.

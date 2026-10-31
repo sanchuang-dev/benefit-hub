@@ -95,6 +95,10 @@
   border-inline-end: 0 !important;
 }
 
+.app-nav-region {
+  min-height: 0;
+}
+
 .app-nav .ant-menu-submenu-title {
   font-weight: 600;
 }
@@ -106,6 +110,29 @@
 .app-sidebar-empty .ant-empty-description {
   color: #64748b;
   font-size: 12px;
+}
+
+/*
+ * Compact navigation drawer (design §9: below 768px the sidebar becomes a
+ * drawer). It contains the same search row and Ant Design Menu, but unlike the
+ * collapsed rail it keeps labels and the search input available, and lets the
+ * menu scroll independently of the drawer header.
+ */
+.app-sidebar-drawer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #fff;
+}
+
+.app-sidebar-drawer .app-sidebar-search {
+  padding-top: 8px;
+}
+
+.app-sidebar-drawer .app-nav-region {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding-bottom: 16px;
 }
 
 @media (max-width: 991px) {

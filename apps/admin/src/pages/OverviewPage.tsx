@@ -325,7 +325,7 @@ export function OverviewPage() {
     <div className="page">
       <header className="page-header overview-header">
         <div className="overview-header-text">
-          <Title level={2}>总览</Title>
+          <Title level={1}>总览</Title>
           <Paragraph type="secondary">
             欢迎，{admin?.displayName ?? '运营人员'}。{WINDOW_LABEL[window]}业务与风险概览
             {overview ? ` · 数据截至 ${formatDateTime(overview.asOf)}` : ''}

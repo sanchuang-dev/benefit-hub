@@ -25,7 +25,7 @@ export function SettingsPage({ section }: { readonly section: SettingsSection })
   return (
     <div className="page">
       <header className="page-header">
-        <Title level={2}>{meta.label}</Title>
+        <Title level={1}>{meta.label}</Title>
         <Paragraph type="secondary">{meta.description}</Paragraph>
       </header>
 

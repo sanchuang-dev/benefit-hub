@@ -169,7 +169,7 @@ export function SuppliersPage() {
   return (
     <div className="page">
       <header className="page-header">
-        <Title level={2}>供应商管理</Title>
+        <Title level={1}>供应商管理</Title>
         <Paragraph type="secondary">查看供货方、接入配置与供货商品。</Paragraph>
       </header>
 
@@ -416,6 +416,7 @@ export function SupplierDetailPage() {
       <header className="page-header">
         <Breadcrumb
           className="page-breadcrumb"
+          aria-label="面包屑"
           separator=">"
           items={[
             { key: 'parent', title: '供应商管理' },
@@ -423,7 +424,7 @@ export function SupplierDetailPage() {
           ]}
           itemRender={(item) =>
             item.key === 'current' ? (
-              <span role="heading" aria-level={2} className="page-breadcrumb-current">
+              <span role="heading" aria-level={1} className="page-breadcrumb-current">
                 {item.title}
               </span>
             ) : (
