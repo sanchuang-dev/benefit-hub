@@ -39,6 +39,28 @@ describe('database migrations', () => {
     expect(after).toEqual(before);
   });
 
+  it('installs the immutable D dispatch table and migration exactly once', () => {
+    server = new TestServer();
+
+    expect(migrations.at(-1)?.id).toBe('0012_benefit_order_dispatches');
+    expect(
+      server.database.sqlite
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'benefit_order_dispatches'",
+        )
+        .get(),
+    ).toEqual({ name: 'benefit_order_dispatches' });
+    const triggers = server.database.sqlite
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg_benefit_order_dispatches_%' ORDER BY name",
+      )
+      .all() as { name: string }[];
+    expect(triggers.map((row) => row.name)).toEqual([
+      'trg_benefit_order_dispatches_identity_immutable',
+      'trg_benefit_order_dispatches_no_delete',
+    ]);
+  });
+
   it('keeps the database in WAL mode on the persistent file', () => {
     server = new TestServer();
     const mode = server.database.sqlite.pragma('journal_mode', { simple: true });
@@ -65,6 +87,7 @@ describe('database migrations', () => {
     expect(names).toContain('benefit_orders');
     expect(names).toContain('benefit_order_status_events');
     expect(names).toContain('benefit_order_grants');
+    expect(names).toContain('benefit_order_dispatches');
     expect(names).toContain('fulfillment_attempts');
     expect(names).toContain('supplier_product_mappings');
     expect(names).toContain('supplier_product_mapping_versions');
