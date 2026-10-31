@@ -23,6 +23,29 @@ export function buildInriceProductDetailSignedBody(productCode: string): string 
   return JSON.stringify({ productCode });
 }
 
+/** D-mode read-only order query path. */
+export const INRICE_ORDER_QUERY_PATH = '/api/open/inrice/v1/orders/query';
+
+export interface InriceOrderQuerySignedInput {
+  orderNo?: string | null;
+  partnerOrderNo?: string | null;
+}
+
+/**
+ * Exact signed DTO recovered from the authorized 2026-10-31 dev probe.
+ * Field order is part of the HMAC bytes. Missing query fields serialize as
+ * explicit nulls; omitting either property makes the vendor reject the
+ * signature before business validation.
+ */
+export function buildInriceOrderQuerySignedBody(
+  input: InriceOrderQuerySignedInput,
+): string {
+  return JSON.stringify({
+    orderNo: input.orderNo ?? null,
+    partnerOrderNo: input.partnerOrderNo ?? null,
+  });
+}
+
 /**
  * D-mode string to sign: `<timestamp>\n<compact JSON>`.
  *

@@ -10,9 +10,17 @@ import {
   type YangmaoInriceProductDetail,
 } from './inrice-product-detail.js';
 import {
+  normalizeInriceOrderQueryInput,
+  parseInriceOrderQueryData,
+  type YangmaoInriceOrderQueryInput,
+  type YangmaoInriceOrderQueryResult,
+} from './inrice-order-query.js';
+import {
+  buildInriceOrderQuerySignedBody,
   buildInriceProductDetailSignedBody,
   createInriceSignature,
   INRICE_LIST_SIGNED_BODY,
+  INRICE_ORDER_QUERY_PATH,
   INRICE_PRODUCTS_PATH,
   INRICE_PRODUCT_DETAIL_PATH,
 } from './inrice-signature.js';
@@ -48,6 +56,18 @@ export interface YangmaoInriceReadOptions {
 /** Backwards-compatible name for the existing list reader options. */
 export type YangmaoInriceListOptions = YangmaoInriceReadOptions;
 
+export interface YangmaoInriceOrderReader {
+  /**
+   * Read-only D order lookup. The provider status token is preserved without
+   * inventing terminal semantics; until those are verified the result state
+   * remains `unknown`.
+   */
+  queryOrder(
+    input: YangmaoInriceOrderQueryInput,
+    options?: YangmaoInriceReadOptions,
+  ): Promise<YangmaoInriceOrderQueryResult>;
+}
+
 export interface YangmaoInriceCatalogReader {
   /** Read-only snapshot. Never implies supplier dispatch or fulfilment success. */
   listProducts(options?: YangmaoInriceReadOptions): Promise<YangmaoInriceCatalog>;
@@ -70,8 +90,14 @@ const MAX_TIMEOUT_MS = 60_000;
 // catalogue array still fails the product-shape check below.
 const envelopeSchema = z.object({
   code: z.number().int(),
+  message: z.unknown().optional(),
   data: z.unknown().optional(),
 });
+
+type BusinessFailureClassifier = (
+  vendorCode: number,
+  vendorMessage: string | undefined,
+) => YangmaoInriceError | undefined;
 
 const LOOPBACK_HOSTNAMES = new Set(['localhost', '127.0.0.1', '[::1]']);
 
@@ -116,7 +142,9 @@ function normalizeTimeout(value: number | undefined): number {
   return value;
 }
 
-class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
+class YangmaoInriceCatalogClient
+  implements YangmaoInriceCatalogReader, YangmaoInriceOrderReader
+{
   private readonly baseUrl: string;
   private readonly appKey: string;
   private readonly appSecret: string;
@@ -185,6 +213,49 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
     };
   }
 
+  async queryOrder(
+    input: YangmaoInriceOrderQueryInput,
+    options: YangmaoInriceReadOptions = {},
+  ): Promise<YangmaoInriceOrderQueryResult> {
+    const normalized = normalizeInriceOrderQueryInput(input);
+    if (normalized === null) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_ORDER_QUERY_INVALID');
+    }
+
+    const query = new URLSearchParams();
+    if (normalized.orderNo !== undefined) query.set('orderNo', normalized.orderNo);
+    if (normalized.partnerOrderNo !== undefined) {
+      query.set('partnerOrderNo', normalized.partnerOrderNo);
+    }
+
+    const pathWithQuery = `${INRICE_ORDER_QUERY_PATH}?${query.toString()}`;
+    const data = await this.readSignedData(
+      pathWithQuery,
+      buildInriceOrderQuerySignedBody(normalized),
+      options.signal,
+      (vendorCode, vendorMessage) => {
+        if (vendorCode === 400 && vendorMessage === '订单不存在') {
+          return new YangmaoInriceError('YANGMAO_INRICE_ORDER_NOT_FOUND', {
+            vendorCode,
+          });
+        }
+        return undefined;
+      },
+    );
+
+    const order = parseInriceOrderQueryData(data, normalized);
+    if (order === null) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_RESPONSE_INVALID');
+    }
+
+    return {
+      provider: 'yangmao',
+      observedAt: new Date(this.clock()).toISOString(),
+      query: normalized,
+      ...order,
+    };
+  }
+
   /**
    * Shared signed-GET pipeline for every D read: D headers only, no redirect
    * following, then four independent gates in order — HTTP status, JSON
@@ -196,6 +267,7 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
     pathWithQuery: string,
     signedBody: string,
     callerSignal: AbortSignal | undefined,
+    businessFailureClassifier?: BusinessFailureClassifier,
   ): Promise<unknown> {
     const timestamp = String(Math.trunc(this.clock()));
     const signature = createInriceSignature(this.appSecret, timestamp, signedBody);
@@ -259,6 +331,11 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
       if (envelope.data.code === 403) {
         throw new YangmaoInriceError('YANGMAO_INRICE_FORBIDDEN', { vendorCode: 403 });
       }
+      const classified = businessFailureClassifier?.(
+        envelope.data.code,
+        typeof envelope.data.message === 'string' ? envelope.data.message : undefined,
+      );
+      if (classified) throw classified;
       throw new YangmaoInriceError('YANGMAO_INRICE_BUSINESS_FAILED', {
         vendorCode: envelope.data.code,
       });
@@ -284,6 +361,6 @@ class YangmaoInriceCatalogClient implements YangmaoInriceCatalogReader {
  */
 export function createYangmaoInriceCatalogClient(
   options: YangmaoInriceCatalogClientOptions,
-): YangmaoInriceCatalogReader {
+): YangmaoInriceCatalogReader & YangmaoInriceOrderReader {
   return new YangmaoInriceCatalogClient(options);
 }

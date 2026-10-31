@@ -11,12 +11,15 @@ export {
   type YangmaoInriceErrorDetails,
 } from './inrice-errors.js';
 export {
+  buildInriceOrderQuerySignedBody,
   buildInriceProductDetailSignedBody,
   buildInriceStringToSign,
   createInriceSignature,
   INRICE_LIST_SIGNED_BODY,
+  INRICE_ORDER_QUERY_PATH,
   INRICE_PRODUCTS_PATH,
   INRICE_PRODUCT_DETAIL_PATH,
+  type InriceOrderQuerySignedInput,
 } from './inrice-signature.js';
 export type {
   YangmaoInriceCatalog,
@@ -26,10 +29,18 @@ export type {
   YangmaoInriceProductDetail,
 } from './inrice-product-detail.js';
 export {
+  normalizeInriceOrderQueryInput,
+  parseInriceOrderQueryData,
+  type YangmaoInriceOrderData,
+  type YangmaoInriceOrderQueryInput,
+  type YangmaoInriceOrderQueryResult,
+} from './inrice-order-query.js';
+export {
   createYangmaoInriceCatalogClient,
   DEFAULT_INRICE_TIMEOUT_MS,
   type YangmaoInriceCatalogClientOptions,
   type YangmaoInriceCatalogReader,
+  type YangmaoInriceOrderReader,
   type YangmaoInriceReadOptions,
   type YangmaoInriceListOptions,
   type YangmaoInriceTransport,

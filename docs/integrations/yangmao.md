@@ -65,7 +65,7 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 1. `GET /api/open/inrice/v1/products`：可派发商品与 `sellPrice`。
 2. `GET /api/open/inrice/v1/products/query`：按需取商品详情。
 3. 业务方收款成功或业务授权发放后，`POST /api/open/inrice/v1/dispatch`，主要字段 `partnerOrderNo`（幂等键，最多 64）、`productCode`、`mobile`。
-4. `GET /api/open/inrice/v1/orders/query`：查询到 `dispatchStatus` **终态**，卡密/领取说明以 `fulfillmentSummary` 为准。
+4. `GET /api/open/inrice/v1/orders/query`：支持 `orderNo` / `partnerOrderNo` 查询；2026-10-31 开发环境实测确认验签 DTO 必须按固定顺序序列化为 `{"orderNo":...,"partnerOrderNo":...}`，缺失字段必须显式为 `null`。查询到的 `dispatchStatus` 目前只保留供应商原值，不推断终态；卡密/领取说明字段为 `fulfillmentSummary`，其结构尚未取得成功响应证据。
 
 `code=0` 仅说明建单并提交或幂等回放，**不代表已到账**。`partnerOrderNo` 重复调用不重复扣额。精确终态集（总览仅举例 `RECEIVE`）、错误码和完整派发明细结构仍需厂商细文档。
 
@@ -148,3 +148,14 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **重复、未知与恢复**：完全相同输入重复调用只返回已签发事实，不再发券；原请求仍在处理中返回 409 `GIFT_VOUCHER_IN_PROGRESS`。成功签发后订单为 `awaiting_claim`，**不是** `completed`/redeemed。超时、网络失败、HTTP 5xx、`code=0` 但响应非法保持 `unknown`；由于供应商没有按 `requestId` 的 C 查单证据，**没有已存券码时不允许自动重签**，只能凭已记录的上游请求号人工核实（409 `GIFT_VOUCHER_OUTCOME_UNKNOWN`）。恢复只读使用**签发返回的大写券码**；业务 400、字段缺失、鉴权失败或查询超时都不会被当作成功，也不会因券码查询不到或到期就推断礼包额度退回。上力明确业务拒绝（400/401/403）记录为 `rejected`、订单 `failed`，后续不自动重试。
 - **运营可见性**：订单详情对 C 模式展示发券状态、上游请求号、`packCount`、供应商报告的 `packTotal`/`packRemaining`、最近观察时间与发起/更新时间；**不展示券码、领取链接、手机号、手机号摘要或密文**。运营需人工核实时使用上游请求号走供应商侧流程，而不是在平台内重复签发。
 - **测试与证据**：provider 固定 OpenSSL 向量覆盖 C 签名字段与 `packCount` 字符串化；隔离 transport 与 loopback HTTP 覆盖成功、可选 phone、未知字段、非法成功、400/401/403、超时、取消与 malformed envelope；API 集成测试通过真实 Hono → loopback 假供应商覆盖真实签名、冻结 C 映射、并发唯一预约、幂等、冲突、未知/恢复、明文不落库、跨业务隔离与运营详情脱敏。**尚未执行任何真实 C 签发或真实券码查询**；真实证据需要维护者单独批准、可用测试礼包额度与领取意图后另行提供，不得用 CI 绿灯冒充 live 验收。
+
+
+## 15. D 订单查单只读客户端（BHB-011-D）
+
+- **2026-10-31 开发环境合同实证**：当前受控开发凭证先读取 D 商品列表成功（7 items），排除凭证或 D HMAC 基线失效。对 `GET /api/open/inrice/v1/orders/query` 的受控只读探测发现：服务端会先把查询 DTO 序列化后参与 HMAC；缺失字段保留为 JSON `null`，显式空 query 值保留为 `""`。这一规则通过已知商品详情端点独立反推验证：缺 `productCode` 时签 `{"productCode":null}` 可通过验签并进入 `400 商品编码不能为空`，而签 `{}` 会得到 `401 Open API 验签失败`。
+- **查单精确签名 DTO**：无 query 时，`{"orderNo":null,"partnerOrderNo":null}` 从验签层进入业务层并返回 HTTP 200 / body `{"code":400,"message":"订单不存在","data":null}`；字段顺序反转或省略字段均不能据此视为等价，因为签名针对紧凑 JSON 原字节。随后分别以 `orderNo`、`partnerOrderNo`、两者同时作为 URL query，并以同一 DTO 顺序和 null 规则签名，均通过验签并进入相同“订单不存在”业务负例。由此核定 query key 为 `orderNo` / `partnerOrderNo`，两者可单独或同时提供。
+- **此前猜测为何一直 401**：单字段签名 `{"partnerOrderNo":"..."}`、`{"orderNo":"..."}` 以及 10×10 常见订单字段 query/signature 交叉矩阵共 100 组均返回同一原始错误 `{"code":401,"message":"Open API 验签失败","data":null}`。根因不是字段名本身，而是签名 DTO 还包含另一个缺失字段的显式 `null`。
+- **代码边界**：`packages/provider-yangmao` 新增只读 `queryOrder()`；至少提供一个非空订单标识，否则本地拒绝且不发请求。签名体由专用 builder 固定字段顺序和 null 语义，继续复用 D 的 `X-App-Key` / `X-Timestamp` / `X-Signature`、不跟随重定向、超时和取消边界。实测的 HTTP 200 / body `code=400` / message“订单不存在”被稳定分类为 `YANGMAO_INRICE_ORDER_NOT_FOUND`，错误对象不复制供应商原文。
+- **成功响应保持保守**：总览只明确 `dispatchStatus` 与 `fulfillmentSummary` 的存在方向，并仅举例 `RECEIVE`；当前仍没有一笔合法成功 D 查单响应可证明完整状态机。因此适配器仅运行时校验已知字段、保留原始 `dispatchStatus`，统一返回 `state: "unknown"`。即使 fixture 中出现 `RECEIVE`，测试也明确要求不能自动映射 `completed`。若响应回显请求中的 `orderNo` / `partnerOrderNo` 却不一致，则整次读取视为格式异常。
+- **`fulfillmentSummary` 安全边界**：其内部结构尚未有 live 成功样本，按供应商所有字段处理为未解释 JSON 值，可能包含卡密/领取材料；server-only 调用方不得日志化或下发给无授权前端。未知上游字段继续由 schema 丢弃。
+- **未完成证据**：尚未获得成功订单的 `code=0 data` 实例，因此没有核定 processing / success / failure / cancel / refund 终态集合，也没有证明 `RECEIVE` 的最终业务含义。#42 在取得该证据前不应以“完整状态机已验收”收卡；本实现也不授权或触发 `POST /dispatch`。
