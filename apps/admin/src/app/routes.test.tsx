@@ -275,7 +275,7 @@ describe('login flow', () => {
     expect(screen.queryByText('未找到匹配的菜单')).toBeNull();
   }, 20_000);
 
-  it('opens supplier and downstream application destinations with their real capability state', async () => {
+  it('opens supplier management and shows the real catalog capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
       if (url === '/api/v1/suppliers') return jsonResponse(200, {
@@ -285,7 +285,30 @@ describe('login flow', () => {
           catalogRead: { supported: true, configured: false },
         }],
       });
-      if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, { provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z', products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }] });
+      if (url === '/api/v1/catalog/supplier-products') return jsonResponse(200, {
+        provider: 'yangmao', currency: 'CNY', observedAt: '2026-10-28T09:00:00Z',
+        products: [{ productCode: 'FIXTURE-A', sellPriceCents: 1234 }],
+      });
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      return undefined;
+    });
+
+    renderRoutes('/');
+    fireEvent.click(await screen.findByRole('menuitem', { name: '供应商管理' }));
+    expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: '查看供应商' })).toBeTruthy();
+  }, 30_000);
+
+  it('opens downstream applications with their actual authorization capability', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
       if (url.startsWith('/api/v1/applications?')) {
         return jsonResponse(200, {
           applications: [],
@@ -307,11 +330,6 @@ describe('login flow', () => {
     });
 
     renderRoutes('/');
-
-    fireEvent.click(await screen.findByRole('menuitem', { name: '供应商管理' }));
-    expect(await screen.findByRole('heading', { name: '供应商管理' })).toBeTruthy();
-    expect(await screen.findByRole('button', { name: '查看供应商' })).toBeTruthy();
-
     fireEvent.click(await screen.findByRole('menuitem', { name: '下游应用' }));
     expect(await screen.findByRole('heading', { name: '下游应用' })).toBeTruthy();
     expect(
