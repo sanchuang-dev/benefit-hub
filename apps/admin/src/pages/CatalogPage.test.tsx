@@ -1077,7 +1077,10 @@ describe('configurable catalogue panel', () => {
       expect(request.get('pageSize')).toBe('20');
     }
     expect(screen.getAllByText('全部状态').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('全部映射').length).toBeGreaterThan(0);
+    // Mapping state moved to advanced search, not the compact quick toolbar.
+    fireEvent.click(findButtonText('高级检索'));
+    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    expect(within(dialog).getByTitle('全部映射')).toBeTruthy();
   });
 
   it('replays filters through browser back and forward', { timeout: 60_000 }, async () => {
