@@ -1,4 +1,4 @@
-name: BHB-012-B Prepare Second D Live Acceptance Order
+name: BHB-012-B Inspect Second D Business Rejection
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  prepare:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Create second pending D order through real platform API only
+      - name: Inspect second D rejection and supplier product read-only facts
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -44,81 +44,94 @@ jobs:
           import { drizzle } from 'drizzle-orm/better-sqlite3';
           import * as schema from './dist/db/schema.js';
           import { loadConfig } from './dist/config.js';
-          import { findApplicationBySource } from './dist/modules/applications/applications.js';
-          import { issueApplicationCredential, revokeApplicationCredential } from './dist/modules/applications/credentials.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import { createHmac } from 'node:crypto';
 
           const config=loadConfig(process.env);
-          if(!config.dLiveWritesEnabled) throw new Error('D live gate is not enabled');
-          const sqlite=new Database(config.databaseFile,{fileMustExist:true});
+          const sqlite=new Database(config.databaseFile,{readonly:true,fileMustExist:true});
           const db=drizzle(sqlite,{schema});
-          let issued=null;
           try{
-            const existing=sqlite.prepare(
-              "SELECT id,status,fulfillment_mode AS fulfillmentMode,mapping_version_id AS mappingVersionId FROM benefit_orders WHERE business_source='local-life' AND business_order_no='D-LIVE-ACCEPT-20261031-002'"
-            ).get();
-            if(existing){
-              console.log('=== SECOND_D_ORDER ===');
-              console.log('created=false');
-              console.log('orderId='+existing.id);
-              console.log('status='+existing.status);
-              console.log('fulfillmentMode='+existing.fulfillmentMode);
-              console.log('mappingVersionIdPresent='+(existing.mappingVersionId?'true':'false'));
-              console.log('=== END_SECOND_D_ORDER ===');
-              process.exit(0);
+            const row=sqlite.prepare(`
+              SELECT
+                o.id AS orderId,
+                o.business_order_no AS businessOrderNo,
+                o.status AS orderStatus,
+                d.state AS dispatchState,
+                d.partner_order_no AS partnerOrderNo,
+                d.upstream_order_no AS upstreamOrderNo,
+                d.provider_status AS providerStatus,
+                d.last_verified_at AS lastVerifiedAt,
+                mv.product_code AS supplierProductCode
+              FROM benefit_orders o
+              JOIN benefit_order_dispatches d ON d.order_id=o.id
+              JOIN supplier_product_mapping_versions mv ON mv.id=o.mapping_version_id
+              WHERE o.id='d160d175-4cc9-41fc-853f-8fe3eed25c0e'
+              LIMIT 1
+            `).get();
+            if(!row) throw new Error('second D operation not found');
+
+            console.log('=== SECOND_D_PERSISTED ===');
+            console.log('businessOrderNo='+row.businessOrderNo);
+            console.log('orderStatus='+row.orderStatus);
+            console.log('dispatchState='+row.dispatchState);
+            console.log('partnerOrderNo='+row.partnerOrderNo);
+            console.log('upstreamOrderNoPresent='+(row.upstreamOrderNo?'true':'false'));
+            console.log('providerStatus='+(row.providerStatus??'null'));
+            console.log('lastVerifiedAtPresent='+(row.lastVerifiedAt==null?'false':'true'));
+            console.log('supplierProductCode='+row.supplierProductCode);
+            console.log('=== END_SECOND_D_PERSISTED ===');
+
+            const supplier=activeYangmaoReadConfig(db,config);
+            if(!supplier) throw new Error('supplier config unavailable');
+
+            function sign(ts, body){
+              return createHmac('sha256',supplier.appSecret)
+                .update(ts+'\n'+body,'utf8').digest('base64');
             }
 
-            const product=sqlite.prepare(
-              "SELECT id FROM catalog_products WHERE code='D-LIVE-ACCEPT-20261031' AND status='active'"
-            ).get();
-            if(!product) throw new Error('acceptance D product missing');
-            const mapping=sqlite.prepare(`
-              SELECT mv.fulfillment_mode AS mode,mv.deduction_unit AS unit
-              FROM supplier_product_mappings m
-              JOIN supplier_product_mapping_versions mv ON mv.id=m.active_version_id
-              WHERE m.product_id=?
-            `).get(product.id);
-            if(!mapping || mapping.mode!=='D' || mapping.unit!=='amount'){
-              throw new Error('acceptance D mapping unavailable');
+            // Same partner-order read: read-only.
+            {
+              const queryBody=JSON.stringify({orderNo:null,partnerOrderNo:row.partnerOrderNo});
+              const ts=String(Date.now());
+              const url=supplier.baseUrl+'/api/open/inrice/v1/orders/query?'+new URLSearchParams({partnerOrderNo:row.partnerOrderNo});
+              const response=await fetch(url,{
+                headers:{
+                  'X-App-Key':supplier.appKey,
+                  'X-Timestamp':ts,
+                  'X-Signature':sign(ts,queryBody),
+                  Accept:'application/json'
+                },
+                redirect:'manual',
+                signal:AbortSignal.timeout(10000),
+              });
+              const raw=await response.text();
+              console.log('=== SAME_ORDER_QUERY_RAW ===');
+              console.log('httpStatus='+response.status);
+              console.log('raw='+raw);
+              console.log('=== END_SAME_ORDER_QUERY_RAW ===');
             }
 
-            const actor=sqlite.prepare(
-              "SELECT id FROM admin_accounts WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1"
-            ).get();
-            if(!actor) throw new Error('no active admin actor');
-            const app=findApplicationBySource(db,'local-life');
-            if(!app || app.status!=='enabled') throw new Error('local-life app unavailable');
-
-            issued=issueApplicationCredential(db,app.id,actor.id);
-            const response=await fetch('http://127.0.0.1:3000/api/v1/business/orders',{
-              method:'POST',
-              headers:{
-                Authorization:'Bearer '+issued.secret,
-                'Content-Type':'application/json',
-              },
-              body:JSON.stringify({
-                businessOrderNo:'D-LIVE-ACCEPT-20261031-002',
-                productId:product.id,
-              }),
-            });
-            const raw=await response.text();
-            if(!response.ok) throw new Error('order create failed HTTP '+response.status+' '+raw);
-            const body=JSON.parse(raw);
-            console.log('=== SECOND_D_ORDER ===');
-            console.log('created=true');
-            console.log('orderId='+body.order.id);
-            console.log('status='+body.order.status);
-            console.log('fulfillmentMode='+body.order.fulfillmentMode);
-            console.log('mappingVersionIdPresent='+(body.order.mappingVersionId?'true':'false'));
-            console.log('=== END_SECOND_D_ORDER ===');
-          }finally{
-            if(issued){
-              const actor=sqlite.prepare(
-                "SELECT id FROM admin_accounts WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1"
-              ).get();
-              const app=findApplicationBySource(db,'local-life');
-              if(actor && app) revokeApplicationCredential(db,app.id,issued.credential.id,actor.id);
+            // Product detail read: read-only. Preserve raw upstream fields for diagnosis.
+            {
+              const signedBody=JSON.stringify({productCode:row.supplierProductCode});
+              const ts=String(Date.now());
+              const url=supplier.baseUrl+'/api/open/inrice/v1/products/query?'+new URLSearchParams({productCode:row.supplierProductCode});
+              const response=await fetch(url,{
+                headers:{
+                  'X-App-Key':supplier.appKey,
+                  'X-Timestamp':ts,
+                  'X-Signature':sign(ts,signedBody),
+                  Accept:'application/json'
+                },
+                redirect:'manual',
+                signal:AbortSignal.timeout(10000),
+              });
+              const raw=await response.text();
+              console.log('=== PRODUCT_DETAIL_RAW ===');
+              console.log('httpStatus='+response.status);
+              console.log('raw='+raw);
+              console.log('=== END_PRODUCT_DETAIL_RAW ===');
             }
-            sqlite.close();
-          }
+          } finally { sqlite.close(); }
           NODE
           REMOTE
