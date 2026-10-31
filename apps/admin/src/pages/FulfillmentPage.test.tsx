@@ -532,6 +532,114 @@ describe('platform order detail drawer', () => {
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 
+  it('lets an admin dispatch D exactly once and then exposes only original-order query', { timeout: 60_000 }, async () => {
+    const pendingD = detail({
+      fulfillmentMode: 'D',
+      status: 'pending',
+      frozenMapping: {
+        id: 'mapping-version-d-live',
+        mappingId: 'mapping-d-live',
+        versionNumber: 1,
+        provider: 'yangmao',
+        productCode: 'INRICE-D-LIVE-FICTIONAL',
+        fulfillmentMode: 'D',
+        deductionUnit: 'amount',
+        activatedAt: NOW - 60_000,
+      },
+      dispatch: null,
+    });
+    const acceptedD = detail({
+      ...pendingD,
+      status: 'processing',
+      version: 2,
+      dispatch: {
+        state: 'accepted',
+        partnerOrderNo: 'bhD0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab',
+        upstreamOrderNo: null,
+        providerStatus: null,
+        lastVerifiedAt: NOW + 1_000,
+        attemptedAt: NOW + 1_000,
+        updatedAt: NOW + 1_000,
+      },
+    });
+    const recoveredD = detail({
+      ...acceptedD,
+      dispatch: {
+        ...acceptedD.dispatch!,
+        upstreamOrderNo: 'D-UPSTREAM-FICTIONAL-1',
+        providerStatus: 'RECEIVE',
+        lastVerifiedAt: NOW + 3_000,
+        updatedAt: NOW + 3_000,
+      },
+    });
+
+    let current = pendingD;
+    let dispatchBody: Record<string, unknown> | null = null;
+    let recoverCalls = 0;
+    const fetchMock = mockFetch((url, init) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/auth/csrf') return jsonResponse(200, { csrfToken: 'fictional-csrf-token' });
+      if (url === '/api/v1/operations/orders/order-1/dispatch' && init?.method === 'POST') {
+        dispatchBody = JSON.parse(String(init.body)) as Record<string, unknown>;
+        current = acceptedD;
+        return jsonResponse(200, { order: acceptedD });
+      }
+      if (url === '/api/v1/operations/orders/order-1/dispatch/recover' && init?.method === 'POST') {
+        recoverCalls += 1;
+        current = recoveredD;
+        return jsonResponse(200, { order: recoveredD });
+      }
+      if (url === '/api/v1/operations/orders/order-1') return jsonResponse(200, { order: current });
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order({ fulfillmentMode: 'D', status: current.status })]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('上力 D · 权益商品派发')).toBeTruthy();
+    expect(within(drawer).getByRole('button', { name: '管理员真实派发一次' })).toBeTruthy();
+    expect(within(drawer).queryByRole('button', { name: /查原单/ })).toBeNull();
+    expect(writeCalls(fetchMock)).toEqual([]);
+
+    fireEvent.click(within(drawer).getByRole('button', { name: '管理员真实派发一次' }));
+    expect(await screen.findByText('确认上力 D 真实派发')).toBeTruthy();
+    expect(writeCalls(fetchMock)).toEqual([]);
+
+    fireEvent.change(screen.getByPlaceholderText('请输入本次真实验收收件手机号'), {
+      target: { value: '13800138000' },
+    });
+    fireEvent.change(screen.getByPlaceholderText('例如 D-LIVE-ACCEPT-20261031'), {
+      target: { value: 'PAY-FICTIONAL-D-1' },
+    });
+    fireEvent.click(screen.getByRole('checkbox'));
+    fireEvent.click(screen.getByRole('button', { name: '确认真实派发一次' }));
+
+    await waitFor(() => expect(dispatchBody).not.toBeNull());
+    expect(dispatchBody).toEqual({
+      mobile: '13800138000',
+      paymentReference: 'PAY-FICTIONAL-D-1',
+      confirmDispatch: true,
+    });
+    await waitFor(() =>
+      expect(within(drawer).queryByRole('button', { name: '管理员真实派发一次' })).toBeNull(),
+    );
+    expect(await within(drawer).findByRole('button', { name: /查原单/ })).toBeTruthy();
+
+    fireEvent.click(within(drawer).getByRole('button', { name: /查原单/ }));
+    await waitFor(() => expect(recoverCalls).toBe(1));
+    expect(await within(drawer).findByText('RECEIVE')).toBeTruthy();
+
+    expect(writeCalls(fetchMock)).toEqual([
+      'POST /api/v1/operations/orders/order-1/dispatch',
+      'POST /api/v1/operations/orders/order-1/dispatch/recover',
+    ]);
+  });
+
   it('shows D dispatch progress without exposing recipient payment or fulfillment secrets', { timeout: 60_000 }, async () => {
     const detailData = detail({
       fulfillmentMode: 'D',
