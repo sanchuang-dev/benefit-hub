@@ -24,7 +24,7 @@ apps/admin/public/brand/     ← 品牌资产的唯一来源（17 个文件，�
 2. **React 组件**：侧栏图形标、登录封面横标用固定路径 `/brand/...` 引用，打包后与 HTML 引用同一份文件，不会出现两份副本。
 3. **部署方式**：Vite `publicDir`（默认 `public/`）把内容原样复制到 `dist/` 根目录，Dockerfile 再把 `apps/admin/dist/.` 复制到镜像的 `public/`，因此容器内路径就是 `public/brand/...`。
 
-服务端（`apps/api/src/index.ts` 与 `apps/api/src/static-assets.ts`）为此挂载了一个品牌静态子应用，位置在 SPA 兜底路由**之前**：
+服务端（`apps/api/src/index.ts`、`apps/api/src/static-app.ts` 与 `apps/api/src/static-assets.ts`）为此挂载了品牌静态子应用，位置在后台 SPA 路由**之前**。后台 shell 只对 `/admin`、`/admin/*` 回落；品牌文件与 `/assets` 仍由源站根路径提供：
 
 | 路由 | 作用 |
 | --- | --- |

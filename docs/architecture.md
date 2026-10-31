@@ -166,6 +166,7 @@ compose.yaml
 
 ### 页面、路由和状态的所有权
 
+- 运营控制台整体挂在 `/admin` 下：React Router 用 `basename`（`apps/admin/src/app/base-path.ts`），服务端只对 `/admin`、`/admin/*` 回落到 SPA shell，根路径 302 到 `/admin/`，其余非 API 路径 404；`/assets` 与 `/brand` 仍由源站根路径提供，因此路由键、工作页签键与已持久化的 `sessionStorage` 页签无需迁移。
 - React Router 管理登录入口、各业务域导航页、独立订单详情、浏览器历史与 URL 查询参数。顶部工作页签使用受控 Tabs 与路由映射；路由才是页面位置的来源，避免再复制一套“当前页面”真相源。
 - 侧栏导航的模型与菜单键解析集中在 `apps/admin/src/app/shell/navigation.ts`（业务域分组、页面、`activeMenuKey()`、搜索过滤），展示层为 `apps/admin/src/app/shell/AppSidebar.tsx`（品牌区、菜单搜索、Ant Design Menu 与折叠）；`AppShell.tsx` 只负责顶栏、工作页签与内容区。菜单搜索是纯展示过滤，不影响路由、页签或 TanStack Query 数据。
 - 页面头部属于壳层固定区：各页面继续渲染自己的 `.page-header`（标题、说明与主操作），壳层样式将它固定在内容区顶部（`position: sticky`）并遮住其下方 16px 间距，页面正文独立滚动；新页面沿用 `.page` + `.page-header` 即自动获得同一行为。
@@ -271,4 +272,4 @@ compose.yaml
 - CI 镜像传输/基础部署已运行；数据库备份/恢复演练、业务 schema 迁移时序仍待验证。
 - 外部业务系统调用 Benefit Hub 的身份认证与业务来源授权细节，不能用管理后台的登录方案替代。
 
-**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 服务、React/Ant Design 管理后台和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/，健康检查已通过。BHB-002 已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限；BHB-003 已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004-A/B/C 已完成运营壳层与商品管理 UI 整改、dev 部署及维护者真人线上验收。**供应商商品目录、映射前端、订单 HTTP API 与真实羊毛接口发放、履约仍未实现**。BHB-006 已实现订单与履约尝试的持久化、数据库幂等唯一约束、版本保护和不可变状态历史，但仅有后端领域/DB/Repository 与测试，尚无发放 HTTP API、供应商调用或履约前端。BHB-007 已实现供应商映射的草稿持久化、本地校验事实、显式激活与不可变版本历史，其 HTTP 管理协议由 BHB-009 提供。BHB-008 已合入 dev，实现订单创建时冻结当前生效映射版本（迁移 0005、Repository 事务与数据库触发器边界），仅有后端领域/DB/Repository 与临时 SQLite 证据，尚无订单 HTTP API、前端或真实履约。BHB-009 已实现最小共享 `packages/contracts` 协议包与 mapping 管理 HTTP API（草稿保存/本地校验/激活、稳定错误码、viewer 只读/admin 写入、CSRF 与 no-store），仍只有本地结构校验，不包含映射前端、供应商商品目录、上游验证或真实发放。基础应用上线不代表可提供真实权益服务。
+**实施状态（2026-10-24 已核对）**：dev 已有 pnpm workspace、lockfile、Node/Hono 服务、React/Ant Design 管理后台和 Docker/CI，原型入口为 https://benefit.proto.3cgroup.cn/admin/（根路径 302 到后台前缀），健康检查已通过。BHB-002 已实现管理员账号密码登录、会话持久化、CSRF、登录限速与两级权限；BHB-003 已实现内部商品持久化、迁移与受权限保护的商品 CRUD API（含版本冲突与最小操作审计）；BHB-004-A/B/C 已完成运营壳层与商品管理 UI 整改、dev 部署及维护者真人线上验收。**供应商商品目录、映射前端、订单 HTTP API 与真实羊毛接口发放、履约仍未实现**。BHB-006 已实现订单与履约尝试的持久化、数据库幂等唯一约束、版本保护和不可变状态历史，但仅有后端领域/DB/Repository 与测试，尚无发放 HTTP API、供应商调用或履约前端。BHB-007 已实现供应商映射的草稿持久化、本地校验事实、显式激活与不可变版本历史，其 HTTP 管理协议由 BHB-009 提供。BHB-008 已合入 dev，实现订单创建时冻结当前生效映射版本（迁移 0005、Repository 事务与数据库触发器边界），仅有后端领域/DB/Repository 与临时 SQLite 证据，尚无订单 HTTP API、前端或真实履约。BHB-009 已实现最小共享 `packages/contracts` 协议包与 mapping 管理 HTTP API（草稿保存/本地校验/激活、稳定错误码、viewer 只读/admin 写入、CSRF 与 no-store），仍只有本地结构校验，不包含映射前端、供应商商品目录、上游验证或真实发放。基础应用上线不代表可提供真实权益服务。

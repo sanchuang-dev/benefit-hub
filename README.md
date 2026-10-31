@@ -44,14 +44,14 @@ pnpm install                 # 首次
 pnpm dev                     # 同时启动 API(:4080) 与运营前端(:4081)
 ```
 
-然后在浏览器打开 **http://localhost:4081/**（不要开 4080；4080 只提供 API，本地没有 `public/` 时会提示 `serveStatic root not found`）。
+然后在浏览器打开 **http://localhost:4081/admin/**（根路径 `/` 会 302 到此后台前缀；不要开 4080，4080 只提供 API，本地没有 `public/` 时会提示 `serveStatic root not found`）。
 `http://localhost:4081/healthz` 和 `/api/v1/*` 都走代理，所以同源 Cookie / CSRF 行为与生产一致。
 
 只起其中一个：
 
 ```bash
 pnpm dev:api                 # 仅后端 http://127.0.0.1:4080
-pnpm dev:admin               # 仅前端 http://localhost:4081（需 API 已在 4080）
+pnpm dev:admin               # 仅前端 http://localhost:4081/admin/（需 API 已在 4080）
 ```
 
 前端代理目标默认 `http://127.0.0.1:4080`，需要改端口时用 `BENEFIT_API_ORIGIN`：
@@ -78,7 +78,7 @@ pnpm admin-cli list
 
 ## 2026-10-24 历史快照（以下不代表 2026-10-27 当前实现）
 
-- **已运行**：dev 具备 Node/Hono 与 React/Ant Design 基础占位页、pnpm workspace/lockfile、Docker CI/CD。原型公网入口为 https://benefit.proto.3cgroup.cn/ ，健康检查返回 service=benefit-hub。
+- **已运行**：dev 具备 Node/Hono 与 React/Ant Design 基础占位页、pnpm workspace/lockfile、Docker CI/CD。原型公网入口为 https://benefit.proto.3cgroup.cn/admin/（根路径 302 到此后台前缀），健康检查返回 service=benefit-hub。
 - **BHB-002 已实现（待合并后线上验收）**：品牌封面登录页、SQLite 管理员账号（scrypt 哈希）、HttpOnly/Secure/SameSite 会话、CSRF 双重提交、登录限速、`admin`/`viewer` 服务端权限判断、退出/过期反馈、SQLite 迁移与审计事件、管理员初始化/重置 CLI。验证方式见 `apps/api/test`、`apps/admin/src/**/*.test.tsx` 与 [docs/operations.md](docs/operations.md)。
 - **BHB-003 已实现（后端，待合并后验收）**：内部商品最小模型（独立内部 ID、唯一业务编码、名称/简短描述、启停、整数分展示价与预估成本、版本号）、SQLite 迁移 `0002_catalog_products`、`/api/v1/catalog/products` 创建/分页筛选/详情/编辑/启停 API、`admin` 写 + `viewer` 只读的服务端权限、版本前置条件冲突与最小操作审计。该切片不含供应商映射，实际供应商调用不属于当时的商品 CRUD 切片；运营页面属 BHB-004。
 - **BHB-004 已实现（前端，待合并后验收）**：认证后的“商品管理”页接入 BHB-003 真实 API，提供分页列表、关键词/状态筛选、单商品详情，以及共用 Drawer 表单的新建、编辑和启停；真实后端校验/版本冲突/网络错误、保存中状态与刷新后的实际结果均来自 API，只读身份禁用写操作。列表与详情明确标注“未映射供应商 / 不能发放”。前端测试见 `apps/admin/src/pages/CatalogPage.test.tsx`；服务端权限仍由 BHB-003 API 独立保证。
