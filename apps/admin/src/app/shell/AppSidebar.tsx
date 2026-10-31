@@ -1,6 +1,6 @@
 import { Empty, Input, Layout, Menu } from 'antd';
 import type { MenuProps } from 'antd';
-import { LayoutDashboard, Search } from 'lucide-react';
+import { LayoutDashboard, PanelLeftClose, PanelLeftOpen, Search } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { filterNavigation, HOME_PAGE, NAV_GROUPS } from './navigation';
 import type { NavGroup } from './navigation';
@@ -14,6 +14,7 @@ interface AppSidebarProps {
   /** Menu key of the current route, resolved by `activeMenuKey()`. */
   activeKey: string;
   onNavigate: (key: string) => void;
+  variant?: 'sider' | 'drawer';
 }
 
 function buildMenuItems(groups: readonly NavGroup[]): MenuItems {
@@ -32,12 +33,14 @@ function buildMenuItems(groups: readonly NavGroup[]): MenuItems {
  * Sidebar shell: brand, menu search and the Ant Design Menu. The search only
  * narrows what is visible; routes, work tabs and page data stay untouched.
  */
-export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
+export function AppSidebar({ activeKey, onNavigate, variant = 'sider' }: AppSidebarProps) {
   const [query, setQuery] = useState('');
   const [expandedGroups, setExpandedGroups] = useState<string[]>(() =>
     NAV_GROUPS.map((group) => group.key),
   );
   const [collapsed, setCollapsed] = useState(false);
+  const isDrawer = variant === 'drawer';
+  const isCollapsed = !isDrawer && collapsed;
 
   const trimmedQuery = query.trim();
   const searching = trimmedQuery.length > 0;
@@ -75,21 +78,9 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
   // operator's own expansion state is restored as soon as the query clears.
   const openKeys = searching ? visibleGroups.map((group) => group.key) : expandedGroups;
 
-  return (
-    <Sider
-      className="app-sider"
-      theme="light"
-      width={216}
-      collapsedWidth={56}
-      breakpoint="lg"
-      onCollapse={(nextCollapsed) => {
-        setCollapsed(nextCollapsed);
-        // The collapsed rail cannot show the input; clear the filter so the
-        // icon-only menu is never silently narrowed by an invisible query.
-        if (nextCollapsed) setQuery('');
-      }}
-    >
-      <div className="app-brand">
+  const navigation = (
+    <>
+      <div className={`app-brand${isCollapsed ? ' app-brand-collapsed' : ''}`}>
         {/* Brand mark from public/brand. Decorative: the wordmark next to it and
             the document title carry the accessible name. */}
         <img
@@ -104,9 +95,14 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
           <span className="app-brand-abbr">3C</span>{' '}
           <span className="app-brand-name">Benefit Hub</span>
         </span>
+        {!isDrawer ? (
+          <button type="button" className="app-sidebar-toggle" onClick={() => { setCollapsed((value) => !value); setQuery(''); }} aria-label={isCollapsed ? '展开侧边栏' : '收起侧边栏'} aria-expanded={!isCollapsed}>
+            {isCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
+        ) : null}
       </div>
 
-      {collapsed ? null : (
+      {!isCollapsed ? (
         <div className="app-sidebar-search">
           <Input
             allowClear
@@ -120,6 +116,7 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
         </div>
       )}
 
+      <nav aria-label="主导航">
       {items.length === 0 ? (
         <Empty
           className="app-sidebar-empty"
@@ -137,9 +134,20 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
           onOpenChange={(keys) => {
             if (!searching) setExpandedGroups(keys);
           }}
+          inlineCollapsed={isCollapsed}
           onClick={({ key }) => onNavigate(key)}
         />
       )}
+      </nav>
+    </>
+  );
+
+  if (isDrawer) return <div className="app-sidebar-drawer">{navigation}</div>;
+
+  return (
+    <Sider className="app-sider" theme="light" width={248} collapsedWidth={68}
+      collapsed={collapsed} trigger={null}>
+      {navigation}
     </Sider>
   );
 }
