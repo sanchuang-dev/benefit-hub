@@ -32,6 +32,8 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  /* On desktop this is the only header child; on mobile it follows the menu. */
+  margin-inline-start: auto;
 }
 
 .app-tabs-bar {
