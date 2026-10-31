@@ -15,10 +15,6 @@
   min-width: 0;
 }
 
-.catalog-header-actions {
-  flex: 0 0 auto;
-}
-
 .catalog-surface {
   overflow: hidden;
   background: #fff;
@@ -26,10 +22,26 @@
   border-radius: 8px;
 }
 
-.catalog-toolbar {
+/* Filters and the create action share one row; the action stays at the right
+ * edge even when the filters wrap on narrow screens. */
+.catalog-toolbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px 12px;
   padding: 12px 16px;
-  row-gap: 8px;
   border-bottom: 1px solid #eef0f2;
+}
+
+.catalog-toolbar {
+  flex: 1 1 auto;
+  min-width: 0;
+  row-gap: 8px;
+}
+
+.catalog-create {
+  flex: 0 0 auto;
+  margin-inline-start: auto;
 }
 
 .catalog-feedback {
@@ -40,10 +52,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-.catalog-tabs {
-  margin-top: 4px;
-}
-
+/* Shared with the supplier read-only catalogue panel on the supplier page. */
 .catalog-supplier-banner {
   display: flex;
   flex-direction: column;

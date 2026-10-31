@@ -47,6 +47,41 @@ export function installDomStubs(): void {
       value: ResizeObserverStub,
     });
   }
+
+  // jsdom ships no canvas implementation. Even with the SVG renderer ECharts
+  // measures text through a 2d context, so provide the small surface it reads.
+  // The charts still render as real SVG DOM, which is what the tests assert on;
+  // this only stops jsdom from logging "getContext not implemented" for every
+  // label measurement.
+  const canvasPrototype = window.HTMLCanvasElement?.prototype;
+  if (canvasPrototype) {
+    Object.defineProperty(canvasPrototype, 'getContext', {
+      configurable: true,
+      writable: true,
+      value: () => ({
+        measureText: (text: string) => ({ width: String(text).length * 6 }),
+        fillText: () => undefined,
+        strokeText: () => undefined,
+        fillRect: () => undefined,
+        clearRect: () => undefined,
+        save: () => undefined,
+        restore: () => undefined,
+        scale: () => undefined,
+        translate: () => undefined,
+        setTransform: () => undefined,
+        beginPath: () => undefined,
+        moveTo: () => undefined,
+        lineTo: () => undefined,
+        closePath: () => undefined,
+        stroke: () => undefined,
+        fill: () => undefined,
+        arc: () => undefined,
+        rect: () => undefined,
+        clip: () => undefined,
+        createLinearGradient: () => ({ addColorStop: () => undefined }),
+      }),
+    });
+  }
 }
 
 /** Renders the real route tree with the same providers used by main.tsx. */

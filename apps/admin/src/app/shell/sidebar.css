@@ -34,26 +34,40 @@
   overflow: hidden;
 }
 
+/* Brand mark: the 三创 icon from apps/admin/public/brand/logo-icon-512.png. It
+   carries its own color on transparency, so no background chip is drawn here. */
 .app-brand-mark {
   flex: 0 0 auto;
-  display: inline-flex;
+  display: block;
   width: 26px;
   height: 26px;
-  border-radius: 5px;
-  background: #2563eb;
-  color: #fff;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
+  object-fit: contain;
 }
 
 .app-brand-text {
   overflow: hidden;
   text-overflow: ellipsis;
   color: #1f2937;
-  font-size: 14px;
+  font-size: 15px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/*
+ * The "3C" prefix borrows the mark's blue and a heavier weight, so the icon,
+ * the brand token and the product name read as one lockup instead of a logo
+ * with a separately-set label. 15px / 0.02em keeps the wordmark's stroke
+ * weight and tracking close to the wide, medium-weight SANCHUANG lettering in
+ * the delivered horizontal logo.
+ */
+.app-brand-abbr {
+  color: #2563eb;
+  font-weight: 700;
+  margin-right: 3px;
+}
+
+.app-brand-name {
   font-weight: 600;
 }
 

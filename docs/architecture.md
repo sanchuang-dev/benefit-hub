@@ -68,6 +68,7 @@
 | API 框架 | Hono | 内部 API，运行于 Node；无需 Fastify |
 | 语言与校验 | TypeScript strict + Zod | HTTP 入参、供应商响应与环境配置都做运行时校验 |
 | 管理端 | React + Vite + Ant Design 6 + Lucide | 不直接引入完整 Ant Design Pro 模板 |
+| 统计图表 | ECharts 6（按需注册 + SVG renderer） | 只用于总览等统计视图，经 `apps/admin/src/shared/charts` 薄封装接入；不引入 @ant-design/plots / Recharts / Chart.js 等第二套图表库 |
 | 路由 | React Router | 页面/URL 查询参数是其职责 |
 | 服务端状态 | TanStack Query | 请求、缓存、轮询、失效；不重复抄到 Zustand |
 | 少量客户端状态 | Zustand | 菜单、弹窗等；局部状态留在 React |
@@ -147,12 +148,21 @@ compose.yaml
 | 映射流程 | Steps + Form + Modal/Popconfirm + Alert / Tag | 新造步骤条、确认框、状态标签 |
 | 加载/空状态/反馈 | Skeleton、Spin、Empty、Result、Alert、App.useApp() 的 message/notification/modal | 自造 Toast、Spinner、Modal provider |
 | 主题/全局尺寸 | ConfigProvider theme.token + theme.components | 大片 CSS 强行覆盖 .ant-* 内部 DOM 或再建一套 token 引擎 |
+| 统计图表 | ECharts 6：`renderer: 'svg'`，按需注册 line/bar/pie 与必要组件，统一走 `shared/charts/EChart.tsx` + `chart-theme.ts` | 自造图表组件、第二套图表库、只在浏览器可用的 canvas 依赖 |
 
 - 默认使用 Ant Design 6 **正式支持的属性、API 与 Design Token**；如实际 lockfile 版本与官方最新文档不一致，以仓库已安装版本为准。
 - 入口以 ConfigProvider（zh_CN、主题）包裹 Ant Design App，并在组件下通过 App.useApp() 获取反馈实例。不要混杂静态 message 调用与另一套自制反馈系统。
 - 外层页面网格和极少量品牌封面样式可以使用普通 CSS；业务状态编排可以写 React 组合组件，**但组合组件内部调用 Ant Design 标准控件，不重实现标准组件**。
 - 当前仓库已安装 lucide-react：只作为已有的导航/语义图标方案；不再额外引入多套互相重复的 Icon/UI 组件库。禁止图标仅以颜色表达状态。
 - **暂不引入** Tailwind、shadcn/ui、Material UI、Mantine、Ant Design Pro 整套脚手架、额外 form/table/state/UI 框架。未来如果确有 Ant Design 缺口，先提交具体差异与使用理由，再评审是否引入；本次讨论不授权新增。
+
+### 总览驾驶舱的聚合与图表（2026-10-29）
+
+- **一个聚合接口**：`GET /api/v1/operations/overview?window=today|7d|30d`，返回 `{ overview }`，要求登录会话（只读账号可读）、`no-store`、纯本地 SQLite 聚合、不发起任何上游调用。契约在 `packages/contracts/src/overview.ts`，前后端共用同一份 schema。
+- **为什么必须服务端聚合**：订单列表接口每页上限 50 且没有计数维度，前端拿分页凑「今日订单数」会产生假数；而驾驶舱的核心要求是每个数字都可核对。窗口按固定 +08:00 日界计算（中国无夏令时，不引时区库），`asOf` 是唯一的新鲜度来源。
+- **口径**：`completedRateBp` 分母只含已终态（已完成/失败/部分完成），无终态返回 `null`；`previousTotal` 在 `today` 是昨日同时段、在 `7d`/`30d` 是紧邻等长前窗；`series` 固定 30 个北京日点，`hourly` 固定 24 个北京时间点，缺数据补真实 0。
+- **前端结构**：`features/overview/`（api、use-overview、option 构建器、风险派生、图表组件）、`pages/OverviewPage.tsx`（页面编排）、`shared/charts/`（ECharts 实例封装与配色）。option 构建器是纯函数，单测断言数据与轴配置；图表本身在 jsdom 中渲染为真实 SVG 节点，**不允许 mock 掉图表库来换取绿色**。测试环境为 `HTMLCanvasElement.prototype.getContext` 提供最小桩（仅用于 ECharts 文本测量），断言对象始终是 SVG DOM。
+- **下钻**：订单页支持 `?status=` 预选平台状态，驾驶舱卡片与风险项据此跳转，避免「点进去还要再筛一次」。
 
 ### 页面、路由和状态的所有权
 

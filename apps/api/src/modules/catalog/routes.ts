@@ -1,11 +1,12 @@
+import { MAPPING_PROVIDERS } from '@sanchuang-dev/benefit-contracts';
 import type { Context } from 'hono';
 import { Hono } from 'hono';
 import { z } from 'zod';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import { requireRole, requireSession, type AppEnv } from '../../middleware/auth.js';
-import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
-import { invalidRequest, issueFields, readJson } from '../http.js';
+import { NO_STORE_HEADERS, apiError, invalidRequest, issueFields, readJson } from '../http.js';
+import { supplierConnectionSummary } from '../suppliers/connection.js';
 import {
   createProduct,
   getProduct,
@@ -18,6 +19,7 @@ import {
   ProductVersionConflictError,
   setProductStatus,
   toProductDto,
+  toProductListItemDto,
   updateProduct,
   type ProductStatus,
 } from './products.js';
@@ -63,13 +65,31 @@ const statusActionSchema = z.object({ version: versionSchema }).strict();
 /**
  * Query parameters are strings on the wire. Unknown parameters are ignored so
  * cache-busting keys do not turn a read into a 400; invalid values still fail.
+ * `supplier` is restricted to the providers the mapping contract accepts.
  */
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
   keyword: z.string().trim().max(64).optional(),
   status: z.enum(PRODUCT_STATUSES).optional(),
+  supplier: z.enum(MAPPING_PROVIDERS).optional(),
 });
+
+/**
+ * Supplier options for the catalogue filter. `configured` is a server fact about
+ * whether that supplier's catalogue read is usable, so the browser can show
+ * "未配置" instead of guessing from credentials it never sees.
+ */
+function supplierFacets(db: AppDatabase, config: AppConfig) {
+  const summary = supplierConnectionSummary(db, config);
+  return [
+    {
+      key: summary.key,
+      name: summary.name,
+      configured: summary.catalogRead.configured,
+    },
+  ];
+}
 
 /**
  * Maps catalogue domain failures to stable HTTP error codes. Unexpected errors
@@ -118,11 +138,14 @@ export function createCatalogRoutes(deps: { db: AppDatabase; config: AppConfig }
       pageSize: parsed.data.pageSize,
       keyword,
       status: parsed.data.status,
+      supplier: parsed.data.supplier,
     });
 
     return c.json(
       {
-        products: result.products.map(toProductDto),
+        // List rows carry a mapping read projection; the detail/write DTOs do not.
+        products: result.products.map(toProductListItemDto),
+        suppliers: supplierFacets(db, config),
         page: parsed.data.page,
         pageSize: parsed.data.pageSize,
         total: result.total,

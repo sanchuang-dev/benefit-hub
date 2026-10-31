@@ -53,7 +53,17 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <section className="login-brand">
-        <Text className="login-brand-eyebrow">SAN CHUANG · BENEFIT HUB</Text>
+        {/* White lockup from public/brand: the only variant that stays legible on
+            the blue cover. The 720px file is the 2x source. */}
+        <img
+          className="login-brand-logo"
+          src="/brand/logo-horizontal-white-360.png"
+          srcSet="/brand/logo-horizontal-white-360.png 1x, /brand/logo-horizontal-white-720.png 2x"
+          alt="三创 SANCHUANG"
+          width={180}
+          height={80}
+        />
+        <Text className="login-brand-eyebrow">3C · BENEFIT HUB</Text>
         <Title level={1} className="login-brand-title">
           权益服务平台
         </Title>

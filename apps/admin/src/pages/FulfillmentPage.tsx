@@ -14,7 +14,8 @@ import {
 } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { Eye, RefreshCw, RotateCcw, Search } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
   OPERATIONS_ORDER_PAGE_SIZES,
   ORDER_STATUSES,
@@ -55,6 +56,17 @@ const EMPTY_FILTERS: AppliedFilters = {
   createdFrom: null,
   createdTo: null,
 };
+
+/**
+ * The cockpit deep-links here with a single platform status. Only a known
+ * status value is honoured; anything else falls back to the unfiltered list
+ * instead of a filter the operator cannot see.
+ */
+function readStatusParam(raw: string | null): StatusFilter {
+  return raw !== null && (ORDER_STATUSES as readonly string[]).includes(raw)
+    ? (raw as OrderStatus)
+    : 'all';
+}
 
 function statusTag(status: OrderStatus) {
   const tag = <Tag color={ORDER_STATUS_COLORS[status]}>{ORDER_STATUS_LABELS[status]}</Tag>;
@@ -99,8 +111,16 @@ function listErrorCopy(error: Error): { type: 'error' | 'warning'; title: string
  * any supplier.
  */
 export function FulfillmentPage() {
+  // The overview page deep-links into one status bucket. The URL is only an
+  // entry hint: applying the form still owns the applied filters afterwards.
+  const [searchParams] = useSearchParams();
+  const statusParam = searchParams.get('status');
+  const initialStatus = readStatusParam(statusParam);
   const [filterForm] = Form.useForm<FilterFormValues>();
-  const [filters, setFilters] = useState<AppliedFilters>(EMPTY_FILTERS);
+  const [filters, setFilters] = useState<AppliedFilters>(() => ({
+    ...EMPTY_FILTERS,
+    status: initialStatus,
+  }));
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(null);
@@ -123,6 +143,17 @@ export function FulfillmentPage() {
     filters.status !== 'all' ||
     filters.createdFrom !== null ||
     filters.createdTo !== null;
+
+  // Keep the visible filter form in sync when the cockpit link changes the
+  // status while this page is already mounted under a work tab.
+  useEffect(() => {
+    const nextStatus = readStatusParam(statusParam);
+    setFilters((current) =>
+      current.status === nextStatus ? current : { ...current, status: nextStatus },
+    );
+    filterForm.setFieldValue('status', nextStatus);
+    setPage(1);
+  }, [filterForm, statusParam]);
 
   const applyFilters = (values: FilterFormValues) => {
     const [startDay, endDay] = values.createdRange ?? [];
@@ -275,7 +306,12 @@ export function FulfillmentPage() {
             form={filterForm}
             className="fulfillment-toolbar"
             layout="inline"
-            initialValues={{ businessSource: '', businessOrderNo: '', status: 'all', createdRange: null }}
+            initialValues={{
+              businessSource: '',
+              businessOrderNo: '',
+              status: initialStatus,
+              createdRange: null,
+            }}
             onFinish={applyFilters}
           >
             <Form.Item name="businessSource" label="业务来源">

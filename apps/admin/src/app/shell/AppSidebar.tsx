@@ -90,10 +90,20 @@ export function AppSidebar({ activeKey, onNavigate }: AppSidebarProps) {
       }}
     >
       <div className="app-brand">
-        <span className="app-brand-mark" aria-hidden="true">
-          BH
+        {/* Brand mark from public/brand. Decorative: the wordmark next to it and
+            the document title carry the accessible name. */}
+        <img
+          className="app-brand-mark"
+          src="/brand/logo-icon-512.png"
+          alt=""
+          aria-hidden="true"
+          width={26}
+          height={26}
+        />
+        <span className="app-brand-text">
+          <span className="app-brand-abbr">3C</span>{' '}
+          <span className="app-brand-name">Benefit Hub</span>
         </span>
-        <span className="app-brand-text">Benefit Hub</span>
       </div>
 
       {collapsed ? null : (

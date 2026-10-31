@@ -10,6 +10,8 @@ import type {
 } from '../features/applications/api';
 import type { CatalogProduct } from '../features/catalog/api';
 import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { jsonResponse, mockFetch } from '../test-utils/http';
+import { findButtonText, findButtonTextAsync, queryParams, writeCalls } from '../test-utils/dom';
 import { UI_PREFS_STORAGE_KEY } from '../shared/lib/ui-prefs';
 
 const NOW = Date.UTC(2026, 9, 28, 4, 0, 0);
@@ -30,13 +32,6 @@ const VIEWER = {
 };
 
 type SessionUser = typeof ADMIN | typeof VIEWER;
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 function sessionResponse(admin: SessionUser): Response {
   return jsonResponse(200, { admin, session: { expiresAt: SESSION_EXPIRES_AT } });
@@ -115,48 +110,6 @@ function detailResponse(
     runtimeAuthorizationEnforced: true,
   };
   return jsonResponse(200, body);
-}
-
-function mockFetch(
-  handler: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
-): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const response = await handler(url, init);
-    if (!response) throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-    return response;
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
-function findButtonText(text: string): HTMLElement {
-  const element = screen.getByText((content) => content.replace(/\s/g, '') === text);
-  const button = element.closest('button');
-  if (!button) throw new Error(`No button containing ${text}`);
-  return button;
-}
-
-async function findButtonTextAsync(text: string, timeout = 5000): Promise<HTMLElement> {
-  const element = await screen.findByText(
-    (content) => content.replace(/\s/g, '') === text,
-    undefined,
-    { timeout },
-  );
-  const button = element.closest('button');
-  if (!button) throw new Error(`No button containing ${text}`);
-  return button;
-}
-
-function queryParams(url: string): URLSearchParams {
-  return new URL(url, 'http://localhost').searchParams;
-}
-
-function writeCalls(fetchMock: ReturnType<typeof vi.fn>): string[] {
-  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
-    .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
-    .map(([url, init]) => `${init?.method ?? 'GET'} ${url}`);
 }
 
 function checkboxInRow(code: string): HTMLElement {

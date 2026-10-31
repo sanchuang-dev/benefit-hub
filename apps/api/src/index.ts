@@ -6,6 +6,7 @@ import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { openDatabase, runMigrations } from './db/client.js';
 import { logEvent } from './log.js';
+import { createBrandAssetApp } from './static-assets.js';
 
 const config = loadConfig(process.env);
 const database = openDatabase(config.databaseFile);
@@ -18,9 +19,14 @@ logEvent('database.ready', {
 
 const app = createApp({ db: database.db, config });
 
-app.use('/assets/*', serveStatic({ root: './public' }));
+// `public/` is the admin build output (index.html, assets/, brand/); see
+// docs/brand/README.md for the brand inventory and serving rules.
+const publicRoot = resolve(process.cwd(), 'public');
 
-const readIndexHtml = () => readFile(resolve(process.cwd(), 'public/index.html'), 'utf8');
+app.route('/', createBrandAssetApp(publicRoot));
+app.use('/assets/*', serveStatic({ root: publicRoot }));
+
+const readIndexHtml = () => readFile(resolve(publicRoot, 'index.html'), 'utf8');
 
 app.get('/', async (c) => c.html(await readIndexHtml()));
 app.get('*', async (c) => {

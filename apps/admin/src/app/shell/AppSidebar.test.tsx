@@ -33,6 +33,18 @@ afterEach(() => {
 });
 
 describe('AppSidebar', () => {
+  it('renders the 3C Benefit Hub wordmark next to the decorative brand mark', () => {
+    stubViewport(false);
+    const { container } = render(<AppSidebar activeKey="/" onNavigate={vi.fn()} />);
+
+    const brand = container.querySelector('.app-brand');
+    expect(brand?.querySelector('img')?.getAttribute('src')).toBe('/brand/logo-icon-512.png');
+    expect(brand?.querySelector('img')?.getAttribute('alt')).toBe('');
+    expect(brand?.querySelector('.app-brand-text')?.textContent?.replace(/\s+/g, ' ').trim()).toBe(
+      '3C Benefit Hub',
+    );
+  });
+
   it('narrows the menu to matching pages and shows an honest empty state', () => {
     stubViewport(false);
     render(<AppSidebar activeKey="/" onNavigate={vi.fn()} />);

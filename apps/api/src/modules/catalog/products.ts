@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import type { MappingProvider } from '@sanchuang-dev/benefit-contracts';
 import { and, asc, count, desc, eq, or, sql } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
-import { catalogProductEvents, catalogProducts } from '../../db/schema.js';
+import {
+  catalogProductEvents,
+  catalogProducts,
+  supplierProductMappingVersions,
+  supplierProductMappings,
+} from '../../db/schema.js';
+import { toFulfillmentMode } from '../orders/benefit-orders.js';
+import { toMappingProvider } from './supplier-mapping.js';
 
 export const PRODUCT_STATUSES = ['active', 'disabled'] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
@@ -32,6 +40,39 @@ export interface CatalogProduct {
 }
 
 export type CatalogProductDto = CatalogProduct;
+
+/**
+ * Which mapping facts the catalogue table may show for one product:
+ * `none` has no mapping row at all, `draft` has a mapping without an active
+ * version, `active` has an accepted immutable version snapshot.
+ */
+export const MAPPING_STATES = ['none', 'draft', 'active'] as const;
+export type MappingState = (typeof MAPPING_STATES)[number];
+
+/**
+ * Mapping summary attached to a catalogue list row. The mapping facts are owned
+ * by the mapping module (`supplier-mapping-repository.ts`); this is only the
+ * read projection the catalogue table needs, and every mapping write keeps going
+ * through that module.
+ */
+export interface ProductMappingSummary {
+  state: MappingState;
+  provider: string | null;
+  productCode: string | null;
+  fulfillmentMode: string | null;
+  versionNumber: number | null;
+}
+
+/**
+ * Catalogue list row. `mapping` belongs to the list read model only: the detail
+ * and write DTOs must stay mapping-free so they keep their original semantics.
+ */
+export type ProductListItem = CatalogProduct & { mapping: ProductMappingSummary };
+export type ProductListItemDto = ProductListItem;
+
+export function toProductListItemDto(item: ProductListItem): ProductListItemDto {
+  return item;
+}
 
 export class ProductInputError extends Error {}
 export class ProductNotFoundError extends Error {}
@@ -271,10 +312,12 @@ export interface ProductListQuery {
   pageSize: number;
   keyword?: string;
   status?: ProductStatus;
+  /** Effective supplier: the active version's provider, otherwise the draft's. */
+  supplier?: MappingProvider;
 }
 
 export interface ProductListResult {
-  products: CatalogProduct[];
+  products: ProductListItem[];
   total: number;
 }
 
@@ -282,9 +325,72 @@ function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&');
 }
 
+/** Columns selected for a list row, including the mapping read projection. */
+interface ProductListRow extends ProductRow {
+  draftProvider: string | null;
+  draftProductCode: string | null;
+  draftFulfillmentMode: string | null;
+  draftActiveVersionId: string | null;
+  activeProvider: string | null;
+  activeProductCode: string | null;
+  activeFulfillmentMode: string | null;
+  activeVersionNumber: number | null;
+}
+
+function toMappingSummary(row: ProductListRow): ProductMappingSummary {
+  if (row.draftProvider === null) {
+    return {
+      state: 'none',
+      provider: null,
+      productCode: null,
+      fulfillmentMode: null,
+      versionNumber: null,
+    };
+  }
+  // A mapping row has NOT NULL content; NULL here means a half-joined row that
+  // storage constraints should make impossible, so fail loudly.
+  if (row.draftProductCode === null || row.draftFulfillmentMode === null) {
+    throw new Error(`Incomplete supplier mapping row stored for product ${row.id}`);
+  }
+
+  if (row.draftActiveVersionId !== null) {
+    if (
+      row.activeProvider === null ||
+      row.activeProductCode === null ||
+      row.activeFulfillmentMode === null ||
+      row.activeVersionNumber === null
+    ) {
+      throw new Error(`Active supplier mapping version missing for product ${row.id}`);
+    }
+    // The accepted snapshot owns the displayed facts; the edited draft must
+    // never override what is actually active.
+    return {
+      state: 'active',
+      provider: toMappingProvider(row.activeProvider),
+      productCode: row.activeProductCode,
+      fulfillmentMode: toFulfillmentMode(row.activeFulfillmentMode),
+      versionNumber: row.activeVersionNumber,
+    };
+  }
+
+  return {
+    state: 'draft',
+    provider: toMappingProvider(row.draftProvider),
+    productCode: row.draftProductCode,
+    fulfillmentMode: toFulfillmentMode(row.draftFulfillmentMode),
+    versionNumber: null,
+  };
+}
+
 /**
  * Paginated catalogue query. Keyword matches code, name, or short description
  * and is escaped, so `%`/`_` are literal characters rather than wildcards.
+ *
+ * This is deliberately a list read model: it left-joins the current mapping root
+ * and its active version snapshot to show mapping facts, but mapping writes stay
+ * in the mapping module. The same joins and WHERE are used by the count query so
+ * `supplier` filtering — which must happen in SQL — changes `total` and paging
+ * consistently instead of being applied to an already-paginated page in memory.
  */
 export function listProducts(db: AppDatabase, query: ProductListQuery): ProductListResult {
   const conditions = [];
@@ -299,17 +405,75 @@ export function listProducts(db: AppDatabase, query: ProductListQuery): ProductL
       ),
     );
   }
+  if (query.supplier) {
+    // Effective supplier semantics in one SQL predicate: the active snapshot
+    // provider wins whenever a mapping has accepted a version, otherwise the
+    // draft row's provider is used; a product without any mapping never matches.
+    conditions.push(
+      sql`COALESCE(${supplierProductMappingVersions.provider}, ${supplierProductMappings.provider}) = ${query.supplier}`,
+    );
+  }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
-  const total = db.select({ value: count() }).from(catalogProducts).where(where).get()?.value ?? 0;
+  const total =
+    db
+      .select({ value: count() })
+      .from(catalogProducts)
+      .leftJoin(
+        supplierProductMappings,
+        eq(supplierProductMappings.productId, catalogProducts.id),
+      )
+      .leftJoin(
+        supplierProductMappingVersions,
+        and(
+          eq(supplierProductMappingVersions.mappingId, supplierProductMappings.id),
+          eq(supplierProductMappingVersions.id, supplierProductMappings.activeVersionId),
+        ),
+      )
+      .where(where)
+      .get()?.value ?? 0;
+
   const rows = db
-    .select()
+    .select({
+      id: catalogProducts.id,
+      code: catalogProducts.code,
+      name: catalogProducts.name,
+      shortDescription: catalogProducts.shortDescription,
+      status: catalogProducts.status,
+      displayPriceCents: catalogProducts.displayPriceCents,
+      estimatedCostCents: catalogProducts.estimatedCostCents,
+      version: catalogProducts.version,
+      createdAt: catalogProducts.createdAt,
+      updatedAt: catalogProducts.updatedAt,
+      draftProvider: supplierProductMappings.provider,
+      draftProductCode: supplierProductMappings.productCode,
+      draftFulfillmentMode: supplierProductMappings.fulfillmentMode,
+      draftActiveVersionId: supplierProductMappings.activeVersionId,
+      activeProvider: supplierProductMappingVersions.provider,
+      activeProductCode: supplierProductMappingVersions.productCode,
+      activeFulfillmentMode: supplierProductMappingVersions.fulfillmentMode,
+      activeVersionNumber: supplierProductMappingVersions.versionNumber,
+    })
     .from(catalogProducts)
+    .leftJoin(
+      supplierProductMappings,
+      eq(supplierProductMappings.productId, catalogProducts.id),
+    )
+    .leftJoin(
+      supplierProductMappingVersions,
+      and(
+        eq(supplierProductMappingVersions.mappingId, supplierProductMappings.id),
+        eq(supplierProductMappingVersions.id, supplierProductMappings.activeVersionId),
+      ),
+    )
     .where(where)
     .orderBy(desc(catalogProducts.createdAt), asc(catalogProducts.code))
     .limit(query.pageSize)
     .offset((query.page - 1) * query.pageSize)
     .all();
 
-  return { products: rows.map(toProduct), total };
+  return {
+    products: rows.map((row) => ({ ...toProduct(row), mapping: toMappingSummary(row) })),
+    total,
+  };
 }

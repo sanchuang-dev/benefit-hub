@@ -32,7 +32,7 @@ import {
   parsePage,
   parsePageSize,
   setOptionalParam,
-} from './url-state';
+} from '../../shared/lib/url-state';
 import { useSupplierProductQuery, useSupplierProductsQuery } from './use-catalog';
 import { ApiError } from '../../shared/lib/api-client';
 import { formatDateTime } from '../../shared/lib/format-date-time';

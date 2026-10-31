@@ -90,6 +90,28 @@
   background: #e8f1ff;
 }
 
+/*
+ * A hairline separates neighbouring inactive tabs so the strip still reads as
+ * a set of distinct pages. It sits in the 6px gutter between two tabs and is
+ * suppressed on both sides of the active tab, whose filled pill is already the
+ * boundary.
+ */
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab + .ant-tabs-tab::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: -3px;
+  width: 1px;
+  height: 14px;
+  background: #e3e6ea;
+  pointer-events: none;
+}
+
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active::before,
+.app-tabs.ant-tabs-card > .ant-tabs-nav .ant-tabs-tab-active + .ant-tabs-tab::before {
+  display: none;
+}
+
 .app-tabs .ant-tabs-tab-remove {
   margin-inline-start: 7px;
   padding: 2px;
@@ -159,6 +181,44 @@
 .page-header .ant-typography-secondary {
   margin-bottom: 0 !important;
   font-size: 13px;
+}
+
+/*
+ * Child pages (for example 供应商管理 → 上力) use the breadcrumb as their page
+ * header line instead of repeating the current page as a second title below
+ * it. It is part of the pinned header, so it cannot scroll away from the page
+ * it describes, and the parent crumb is the only back affordance.
+ */
+.page-header .page-breadcrumb {
+  margin-bottom: 2px;
+  font-size: 18px;
+  line-height: 26px;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-separator {
+  color: #94a3b8;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a {
+  display: inline;
+  height: auto;
+  padding: 0;
+  margin-inline: 0;
+  color: #64748b;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .ant-breadcrumb-item a:hover {
+  color: #2563eb;
+  background: transparent;
+}
+
+.page-header .page-breadcrumb .page-breadcrumb-current {
+  display: inline;
+  color: #1f2937;
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 26px;
 }
 
 @media (max-width: 900px) {

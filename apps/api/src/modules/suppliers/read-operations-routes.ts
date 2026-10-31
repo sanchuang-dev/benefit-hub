@@ -5,8 +5,7 @@ import { createYangmaoOpenV1Client, YangmaoOpenV1Error } from '@sanchuang-dev/pr
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import { requireRole, requireSession, type AppEnv } from '../../middleware/auth.js';
-import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
-import { invalidRequest, issueFields, readJson } from '../http.js';
+import { NO_STORE_HEADERS, apiError, invalidRequest, issueFields, readJson } from '../http.js';
 import { activeYangmaoReadConfig, SupplierCredentialUnavailableError } from './connection.js';
 
 /**

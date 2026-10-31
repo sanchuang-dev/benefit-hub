@@ -8,7 +8,7 @@ import {
   findAuthenticatedApplicationCredential,
   hasAnyApplicationCredential,
 } from '../applications/credentials.js';
-import { apiError, NO_STORE_HEADERS } from '../auth/http.js';
+import { NO_STORE_HEADERS, apiError } from '../http.js';
 
 /**
  * Reads a single `Authorization: Bearer <token>` value. Anything else (another

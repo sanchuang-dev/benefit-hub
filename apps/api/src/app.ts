@@ -8,7 +8,7 @@ import type { AppEnv } from './middleware/auth.js';
 import { csrfProtection } from './middleware/csrf.js';
 import { createApplicationRoutes } from './modules/applications/routes.js';
 import { createAdminAccountRoutes } from './modules/auth/admin-routes.js';
-import { apiError, NO_STORE_HEADERS } from './modules/auth/http.js';
+import { NO_STORE_HEADERS, apiError } from './modules/http.js';
 import { createAuthRoutes } from './modules/auth/routes.js';
 import { createCatalogMappingRoutes } from './modules/catalog/mapping-routes.js';
 import { createCatalogRoutes } from './modules/catalog/routes.js';
@@ -20,6 +20,8 @@ import {
   isBusinessMachinePostPath,
 } from './modules/orders/business-order-routes.js';
 import { createOperationsOrderRoutes } from './modules/operations/order-routes.js';
+import { createOperationsOverviewRoutes } from './modules/operations/overview.js';
+import { createSystemRuntimeRoutes } from './modules/system/runtime.js';
 
 export interface AppDependencies {
   db: AppDatabase;
@@ -88,6 +90,10 @@ export function createApp(deps: AppDependencies): Hono<AppEnv> {
   app.route('/api/v1/suppliers', createSupplierReadOperationRoutes(deps));
   app.route('/api/v1/business/orders', createBusinessOrderRoutes(deps));
   app.route('/api/v1/operations', createOperationsOrderRoutes(deps));
+  // Mounted after the order routes: its `/api/v1/operations/*` session guard is
+  // registered last, so it can never shadow `/orders` or `/orders/:id`.
+  app.route('/api/v1/operations', createOperationsOverviewRoutes(deps));
+  app.route('/api/v1/system', createSystemRuntimeRoutes(deps));
 
   app.all('/api/*', (c) => c.json(apiError('NOT_FOUND', '接口不存在'), 404));
 

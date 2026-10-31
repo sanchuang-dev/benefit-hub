@@ -7,6 +7,8 @@ import type {
   OperationsOrderListResponse,
 } from '@sanchuang-dev/benefit-contracts';
 import { installDomStubs, renderRoutes } from '../test-utils/render-routes';
+import { jsonResponse, mockFetch } from '../test-utils/http';
+import { findButtonText, queryParams, writeCalls } from '../test-utils/dom';
 
 const SESSION_EXPIRES_AT = Date.now() + 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 20, 1, 0, 0);
@@ -17,13 +19,6 @@ const ADMIN = {
   displayName: '运维管理员',
   role: 'admin' as const,
 };
-
-function jsonResponse(status: number, body: unknown): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'content-type': 'application/json' },
-  });
-}
 
 function sessionResponse(): Response {
   return jsonResponse(200, { admin: ADMIN, session: { expiresAt: SESSION_EXPIRES_AT } });
@@ -94,43 +89,11 @@ function detail(overrides: Partial<OperationsOrderDetailDto> = {}): OperationsOr
   };
 }
 
-function mockFetch(
-  handler: (url: string, init?: RequestInit) => Response | Promise<Response> | undefined,
-): ReturnType<typeof vi.fn> {
-  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url =
-      typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-    const response = await handler(url, init);
-    if (!response) throw new Error(`Unexpected fetch: ${init?.method ?? 'GET'} ${url}`);
-    return response;
-  });
-  vi.stubGlobal('fetch', fetchMock);
-  return fetchMock;
-}
-
-function queryParams(url: string): URLSearchParams {
-  return new URL(url, 'http://localhost').searchParams;
-}
-
 function listCalls(fetchMock: ReturnType<typeof vi.fn>): URLSearchParams[] {
   return (fetchMock.mock.calls as [string, RequestInit | undefined][])
     .filter(([url]) => url.startsWith('/api/v1/operations/orders?'))
     .map(([url]) => queryParams(url));
 }
-
-function writeCalls(fetchMock: ReturnType<typeof vi.fn>): string[] {
-  return (fetchMock.mock.calls as [string, RequestInit | undefined][])
-    .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
-    .map(([url, init]) => `${init?.method ?? 'GET'} ${url}`);
-}
-
-function findButtonText(text: string): HTMLElement {
-  const element = screen.getByText((content) => content.replace(/\s/g, '') === text);
-  const button = element.closest('button');
-  if (!button) throw new Error(`No button containing ${text}`);
-  return button;
-}
-
 beforeAll(() => installDomStubs());
 
 afterEach(() => {

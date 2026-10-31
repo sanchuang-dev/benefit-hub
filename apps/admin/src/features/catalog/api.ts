@@ -1,7 +1,16 @@
+import type { MappingProvider } from '@sanchuang-dev/benefit-contracts';
 import { apiRequest } from '../../shared/lib/api-client';
 
 export const PRODUCT_STATUSES = ['active', 'disabled'] as const;
 export type ProductStatus = (typeof PRODUCT_STATUSES)[number];
+
+/**
+ * Mapping state shown next to a product row. `none` means no supplier mapping
+ * exists; `draft` is saved but not effective; `active` is the version that new
+ * orders would use. The list must never imply a draft is live.
+ */
+export const PRODUCT_MAPPING_STATES = ['none', 'draft', 'active'] as const;
+export type ProductMappingState = (typeof PRODUCT_MAPPING_STATES)[number];
 
 export interface CatalogProduct {
   id: string;
@@ -16,15 +25,43 @@ export interface CatalogProduct {
   updatedAt: number;
 }
 
+/**
+ * List-only mapping projection. The provider is kept as a string because the
+ * list response is server data; the filter parameter itself is narrowed to the
+ * shared `MappingProvider` contract below. `versionNumber` only carries a value
+ * once a version exists (draft/active), never for `none`.
+ */
+export interface ProductMappingSummary {
+  state: ProductMappingState;
+  provider: string | null;
+  productCode: string | null;
+  fulfillmentMode: string | null;
+  versionNumber: number | null;
+}
+
+/** A product row in the list, which also carries its mapping summary. */
+export type CatalogProductListItem = CatalogProduct & {
+  mapping: ProductMappingSummary;
+};
+
+/** Server-owned supplier facet used by the filter; `configured` is a real fact. */
+export interface SupplierFilterOption {
+  key: MappingProvider;
+  name: string;
+  configured: boolean;
+}
+
 export interface ProductListParams {
   page: number;
   pageSize: number;
   keyword?: string;
   status?: ProductStatus;
+  supplier?: MappingProvider;
 }
 
 export interface ProductListResponse {
-  products: CatalogProduct[];
+  products: CatalogProductListItem[];
+  suppliers: SupplierFilterOption[];
   page: number;
   pageSize: number;
   total: number;
@@ -84,6 +121,7 @@ export function fetchProducts(params: ProductListParams): Promise<ProductListRes
   });
   if (params.keyword) query.set('keyword', params.keyword);
   if (params.status) query.set('status', params.status);
+  if (params.supplier) query.set('supplier', params.supplier);
   return apiRequest<ProductListResponse>(`/api/v1/catalog/products?${query.toString()}`);
 }
 

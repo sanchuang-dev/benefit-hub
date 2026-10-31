@@ -4,6 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AdminIdentity } from '../../features/auth/api';
 import { useLogoutMutation } from '../../features/auth/use-auth';
+import { DEFAULT_SETTINGS_PATH } from '../../features/settings/sections';
 import { useUiPrefs, useUiPrefsHydrated } from '../../shared/lib/ui-prefs';
 import { AppSidebar } from './AppSidebar';
 import { activeMenuKey, NAV_KEYS, NAV_PAGES } from './navigation';
@@ -94,7 +95,7 @@ export function AppShell({ admin }: AppShellProps) {
               menu={{
                 items: userMenuItems,
                 onClick: ({ key }) => {
-                  if (key === 'settings') navigate('/settings');
+                  if (key === 'settings') navigate(DEFAULT_SETTINGS_PATH);
                   if (key === 'logout') handleLogout();
                 },
               }}

@@ -576,7 +576,7 @@ export function ApplicationDrawer({ state, canWrite, onClose, onCreated }: Appli
   return (
     <Drawer
       open={open}
-      width="min(720px, 100%)"
+      size="min(720px, 100%)"
       title={title}
       onClose={requestClose}
       destroyOnHidden
