@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Alert,
   Button,
@@ -203,6 +203,13 @@ export function OrderDetailDrawer({
   const [dDispatchPending, setDDispatchPending] = useState(false);
   const [dRecoverPending, setDRecoverPending] = useState(false);
   const detailQuery = useOrderDetailQuery(orderId);
+
+  useEffect(() => {
+    setAClaimUrl(null);
+    setAGrantOpen(false);
+    aForm.resetFields();
+  }, [aForm, orderId]);
+
   const errorCopy = detailQuery.isError ? detailErrorCopy(detailQuery.error) : null;
   const detail = detailQuery.data;
 
