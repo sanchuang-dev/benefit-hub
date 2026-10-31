@@ -1,4 +1,4 @@
-name: BHB-012-B Enable D Live Acceptance Gate
+name: BHB-012-B Inspect Rejected D Attempt
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  enable:
+  inspect:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Enable D live-write gate for maintainer browser acceptance
+      - name: Inspect persisted D rejection and query same partner order read-only
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -31,39 +31,91 @@ jobs:
           set -euo pipefail
           case "$TARGET_HOST" in
             8.148.148.135|proto.3cgroup.cn) ;;
-            *) echo "::error::Unexpected host"; exit 1 ;;
+            *) exit 1 ;;
           esac
-          test -n "$SSHPASS"
           mkdir -m 700 -p "$RUNNER_TEMP/ssh"
           ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
-          test -s "$RUNNER_TEMP/ssh/known_hosts"
           test "$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw'
 
-          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -o ConnectTimeout=15             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
           set -eu
           cd /srv/benefit-hub
-          test -f .env
-          test ! -L .env
-          chmod 600 .env
-          if grep -q '^BENEFIT_D_LIVE_WRITE_ENABLED=' .env; then
-            sed -i 's/^BENEFIT_D_LIVE_WRITE_ENABLED=.*/BENEFIT_D_LIVE_WRITE_ENABLED=true/' .env
-          else
-            printf '%s\n' 'BENEFIT_D_LIVE_WRITE_ENABLED=true' >> .env
-          fi
-          docker compose --project-name benefit-hub -f compose.yaml config -q
-          docker compose --project-name benefit-hub -f compose.yaml up -d --no-build >/dev/null
-          ok=0
-          for n in $(seq 1 30); do
-            if curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
-              ok=1
-              break
-            fi
-            sleep 2
-          done
-          test "$ok" = 1
           cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
           test -n "$cid"
-          gate="$(docker exec "$cid" sh -lc 'printf "%s" "$BENEFIT_D_LIVE_WRITE_ENABLED"')"
-          test "$gate" = true
-          echo 'D_LIVE_WRITE_GATE_ENABLED=true'
+
+          docker exec -i "$cid" node --input-type=module - <<'NODE'
+          import Database from 'better-sqlite3';
+          import { drizzle } from 'drizzle-orm/better-sqlite3';
+          import * as schema from './dist/db/schema.js';
+          import { loadConfig } from './dist/config.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import { createYangmaoInriceCatalogClient, YangmaoInriceError } from '@sanchuang-dev/provider-yangmao';
+
+          const config=loadConfig(process.env);
+          const sqlite=new Database(config.databaseFile,{readonly:true,fileMustExist:true});
+          const db=drizzle(sqlite,{schema});
+          try{
+            const row=sqlite.prepare(`
+              SELECT
+                o.id AS orderId,
+                o.business_order_no AS businessOrderNo,
+                o.status AS orderStatus,
+                d.state AS dispatchState,
+                d.partner_order_no AS partnerOrderNo,
+                d.upstream_order_no AS upstreamOrderNo,
+                d.provider_status AS providerStatus,
+                d.last_verified_at AS lastVerifiedAt,
+                d.attempted_at AS attemptedAt
+              FROM benefit_orders o
+              JOIN benefit_order_dispatches d ON d.order_id=o.id
+              WHERE o.business_order_no LIKE 'D-LIVE-ACCEPT-20261031%'
+              ORDER BY d.attempted_at DESC
+              LIMIT 1
+            `).get();
+            if(!row) throw new Error('no D live acceptance operation found');
+
+            console.log('=== PERSISTED_D_ATTEMPT ===');
+            console.log('businessOrderNo='+row.businessOrderNo);
+            console.log('orderStatus='+row.orderStatus);
+            console.log('dispatchState='+row.dispatchState);
+            console.log('partnerOrderNo='+row.partnerOrderNo);
+            console.log('upstreamOrderNoPresent='+(row.upstreamOrderNo?'true':'false'));
+            console.log('providerStatus='+(row.providerStatus ?? 'null'));
+            console.log('lastVerifiedAtPresent='+(row.lastVerifiedAt==null?'false':'true'));
+            const attempts=sqlite.prepare(`
+              SELECT operation,result,observed_status AS observedStatus,last_verified_at AS lastVerifiedAt
+              FROM fulfillment_attempts
+              WHERE order_id=?
+              ORDER BY occurred_at
+            `).all(row.orderId);
+            console.log('attemptCount='+attempts.length);
+            for(const [i,a] of attempts.entries()){
+              console.log('attempt'+(i+1)+'='+a.operation+'/'+a.result+'/'+(a.observedStatus??'null'));
+            }
+            console.log('=== END_PERSISTED_D_ATTEMPT ===');
+
+            const supplier=activeYangmaoReadConfig(db,config);
+            if(!supplier) throw new Error('supplier config unavailable');
+            const client=createYangmaoInriceCatalogClient(supplier);
+            console.log('=== SAME_PARTNER_ORDER_QUERY ===');
+            try{
+              const q=await client.queryOrder({partnerOrderNo:row.partnerOrderNo});
+              console.log('queryResult=FOUND');
+              console.log('dispatchStatus='+(q.dispatchStatus??'null'));
+              console.log('upstreamOrderNoPresent='+(q.orderNo?'true':'false'));
+              console.log('fulfillmentSummaryPresent='+(q.fulfillmentSummary!==undefined?'true':'false'));
+            }catch(error){
+              if(error instanceof YangmaoInriceError){
+                console.log('queryResult=ERROR');
+                console.log('errorCode='+error.code);
+                console.log('vendorCode='+(error.vendorCode??'null'));
+                console.log('httpStatus='+(error.httpStatus??'null'));
+              }else{
+                console.log('queryResult=UNEXPECTED_ERROR');
+                console.log('errorName='+(error instanceof Error?error.name:'unknown'));
+              }
+            }
+            console.log('=== END_SAME_PARTNER_ORDER_QUERY ===');
+          }finally{sqlite.close();}
+          NODE
           REMOTE
