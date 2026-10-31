@@ -90,7 +90,15 @@ interface DispatchRow {
 }
 
 const PARTNER_ORDER_PATTERN = /^[!-~]{1,64}$/;
-const PROVIDER_STATUS_PATTERN = /^[^\u0000-\u001f\u007f]{1,128}$/;
+const PROVIDER_STATUS_PATTERN = /^.{1,128}$/u;
+
+function containsControlCharacter(value: string): boolean {
+  for (const char of value) {
+    const code = char.codePointAt(0);
+    if (code !== undefined && (code < 32 || code === 127)) return true;
+  }
+  return false;
+}
 
 function toOrder(row: OrderRow): BenefitOrder {
   return {
@@ -116,7 +124,11 @@ function toDispatch(row: DispatchRow): DDispatchOperation {
 
 function normalizeProviderStatus(raw: string | null | undefined): string | null {
   if (raw === null || raw === undefined) return null;
-  if (typeof raw !== 'string' || !PROVIDER_STATUS_PATTERN.test(raw)) {
+  if (
+    typeof raw !== 'string' ||
+    !PROVIDER_STATUS_PATTERN.test(raw) ||
+    containsControlCharacter(raw)
+  ) {
     throw new OrderInputError('上游派发状态格式不正确');
   }
   return raw;
