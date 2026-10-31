@@ -1,4 +1,4 @@
-name: BHB-012-B D Live Acceptance Platform Preflight
+name: BHB-012-B Prepare One D Live Acceptance Order
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  platform-preflight:
+  prepare:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -20,8 +20,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
-
-      - name: Inspect live platform prerequisites without secret values
+      - name: Prepare one pending D platform order without supplier write
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -30,21 +29,13 @@ jobs:
           SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
         run: |
           set -euo pipefail
-          case "$TARGET_HOST" in
-            8.148.148.135|proto.3cgroup.cn) ;;
-            *) exit 1 ;;
-          esac
           mkdir -m 700 -p "$RUNNER_TEMP/ssh"
           ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
-          fp="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
-          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw'
-
-          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          test "$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw'
+          sshpass -e ssh -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" -o PreferredAuthentications=password -o PubkeyAuthentication=no -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
           set -eu
           cd /srv/benefit-hub
           cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
-          test -n "$cid"
-
           docker exec -i "$cid" node --input-type=module - <<'NODE'
           import Database from 'better-sqlite3';
           import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -52,55 +43,78 @@ jobs:
           import { loadConfig } from './dist/config.js';
           import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
           import { createYangmaoInriceCatalogClient } from '@sanchuang-dev/provider-yangmao';
+          import { createProduct } from './dist/modules/catalog/products.js';
+          import { createSupplierMappingRepository } from './dist/modules/catalog/supplier-mapping-repository.js';
+          import { findApplicationBySource, listApplicationProducts, replaceApplicationProducts } from './dist/modules/applications/applications.js';
+          import { issueApplicationCredential, revokeApplicationCredential } from './dist/modules/applications/credentials.js';
 
           const config=loadConfig(process.env);
-          console.log('=== BUSINESS_SOURCES ===');
-          for(const c of config.businessOrderClients?.clients ?? []) console.log(c.businessSource);
-          console.log('=== END_BUSINESS_SOURCES ===');
+          const sqlite=new Database(config.databaseFile,{fileMustExist:true});
+          const db=drizzle(sqlite,{schema});
+          try{
+            const actor=sqlite.prepare("SELECT id FROM admin_accounts WHERE disabled_at IS NULL ORDER BY created_at LIMIT 1").get();
+            if(!actor) throw new Error('no active admin actor');
 
-          const sqlite=new Database(config.databaseFile,{readonly:true,fileMustExist:true});
-          try {
-            console.log('=== APPLICATIONS ===');
-            for(const row of sqlite.prepare('SELECT business_source,status,id FROM business_applications ORDER BY business_source').all()){
-              const count=sqlite.prepare('SELECT COUNT(*) AS c FROM business_application_products WHERE application_id=?').get(row.id).c;
-              console.log('source='+row.business_source+' status='+row.status+' products='+count);
-            }
-            console.log('=== END_APPLICATIONS ===');
-
-            console.log('=== ACTIVE_D_MAPPINGS ===');
-            const rows=sqlite.prepare(`
-              SELECT p.id AS productId,p.code AS productCodeInternal,mv.product_code AS supplierProductCode
-              FROM catalog_products p
-              JOIN supplier_product_mappings m ON m.product_id=p.id
-              JOIN supplier_product_mapping_versions mv ON mv.id=m.active_version_id
-              WHERE mv.provider='yangmao' AND mv.fulfillment_mode='D' AND mv.deduction_unit='amount'
-              ORDER BY p.code
-            `).all();
-            for(const row of rows){
-              const apps=sqlite.prepare(`
-                SELECT a.business_source AS source
-                FROM business_application_products ap
-                JOIN business_applications a ON a.id=ap.application_id
-                WHERE ap.product_id=? AND a.status='enabled'
-                ORDER BY a.business_source
-              `).all(row.productId).map(x=>x.source);
-              console.log('internal='+row.productCodeInternal+' supplier='+row.supplierProductCode+' enabledApps='+apps.join(','));
-            }
-            console.log('count='+rows.length);
-            console.log('=== END_ACTIVE_D_MAPPINGS ===');
-
-            const db=drizzle(sqlite,{schema});
             const supplier=activeYangmaoReadConfig(db,config);
-            if(!supplier) throw new Error('supplier config unavailable');
+            if(!supplier) throw new Error('supplier unavailable');
             const catalog=await createYangmaoInriceCatalogClient(supplier).listProducts();
             const cheapest=[...catalog.products].sort((a,b)=>a.sellPriceCents-b.sellPriceCents)[0];
-            console.log('=== CHEAPEST_LIVE_D ===');
-            console.log('available='+(cheapest ? 'true':'false'));
-            if(cheapest){
-              const mapped=rows.some(r=>r.supplierProductCode===cheapest.productCode);
-              console.log('hasActivePlatformMapping='+(mapped?'true':'false'));
+            if(!cheapest) throw new Error('no D product');
+
+            let product=sqlite.prepare("SELECT id,code FROM catalog_products WHERE code='D-LIVE-ACCEPT-20261031'").get();
+            if(!product){
+              product=createProduct(db,{
+                code:'D-LIVE-ACCEPT-20261031',
+                name:'D live acceptance 2026-10-31',
+                shortDescription:'Single controlled supplier acceptance order',
+                actorAccountId:actor.id,
+              });
             }
-            console.log('=== END_CHEAPEST_LIVE_D ===');
-          } finally { sqlite.close(); }
+
+            const mappings=createSupplierMappingRepository(db);
+            const active=mappings.getActiveVersion(product.id);
+            if(!active){
+              const draft=mappings.saveDraft({
+                productId:product.id,
+                expectedVersion:null,
+                provider:'yangmao',
+                productCode:cheapest.productCode,
+                fulfillmentMode:'D',
+                deductionUnit:'amount',
+              });
+              mappings.validateDraft({productId:product.id,expectedVersion:draft.version});
+              mappings.activateDraft({productId:product.id,expectedVersion:draft.version,actorAccountId:actor.id});
+            }else if(active.productCode!==cheapest.productCode || active.fulfillmentMode!=='D'){
+              throw new Error('existing acceptance mapping drift');
+            }
+
+            const app=findApplicationBySource(db,'local-life');
+            if(!app || app.status!=='enabled') throw new Error('local-life app unavailable');
+            const existing=listApplicationProducts(db,app.id).map(x=>x.productId);
+            if(!existing.includes(product.id)){
+              replaceApplicationProducts(db,app.id,[...existing,product.id],app.version,actor.id);
+            }
+
+            const issued=issueApplicationCredential(db,app.id,actor.id);
+            try{
+              const response=await fetch('http://127.0.0.1:3000/api/v1/business/orders',{
+                method:'POST',
+                headers:{Authorization:'Bearer '+issued.secret,'Content-Type':'application/json'},
+                body:JSON.stringify({businessOrderNo:'D-LIVE-ACCEPT-20261031-001',productId:product.id}),
+              });
+              const raw=await response.text();
+              if(!response.ok) throw new Error('order create HTTP '+response.status+' '+raw);
+              const body=JSON.parse(raw);
+              console.log('=== PREPARED_ORDER ===');
+              console.log('orderId='+body.order.id);
+              console.log('status='+body.order.status);
+              console.log('fulfillmentMode='+body.order.fulfillmentMode);
+              console.log('mappingVersionIdPresent='+(body.order.mappingVersionId?'true':'false'));
+              console.log('selectedLowestPriceD=true');
+              console.log('=== END_PREPARED_ORDER ===');
+            }finally{
+              revokeApplicationCredential(db,app.id,issued.credential.id,actor.id);
+            }
+          }finally{sqlite.close();}
           NODE
           REMOTE
