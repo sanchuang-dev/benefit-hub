@@ -1,9 +1,10 @@
 /**
  * Stable error codes for the Yangmao D (`/api/open/inrice/v1`) client.
  *
- * The error message is always a fixed sentence: supplier messages, response
- * bodies, credentials and signatures must never be copied into a thrown error
- * (and therefore never into a log line).
+ * The public Error.message is always stable. A short, control-character-free
+ * supplier business message may be attached separately as `vendorMessage`
+ * for an explicitly privileged operator surface; it must never be logged,
+ * persisted, or exposed through ordinary machine APIs.
  */
 export const YANGMAO_INRICE_ERROR_CODES = [
   'YANGMAO_INRICE_CONFIG_INVALID',
@@ -44,12 +45,18 @@ export interface YangmaoInriceErrorDetails {
   httpStatus?: number;
   /** Present only when a well-formed response carried a non-zero `code`. */
   vendorCode?: number;
+  /**
+   * Sanitized supplier business message for privileged operator diagnostics.
+   * Never contains credentials/signatures and is not part of Error.message.
+   */
+  vendorMessage?: string;
 }
 
 export class YangmaoInriceError extends Error {
   readonly code: YangmaoInriceErrorCode;
   readonly httpStatus?: number;
   readonly vendorCode?: number;
+  readonly vendorMessage?: string;
 
   constructor(code: YangmaoInriceErrorCode, details: YangmaoInriceErrorDetails = {}) {
     super(STABLE_MESSAGES[code]);
@@ -57,5 +64,6 @@ export class YangmaoInriceError extends Error {
     this.code = code;
     if (details.httpStatus !== undefined) this.httpStatus = details.httpStatus;
     if (details.vendorCode !== undefined) this.vendorCode = details.vendorCode;
+    if (details.vendorMessage !== undefined) this.vendorMessage = details.vendorMessage;
   }
 }

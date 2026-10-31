@@ -417,6 +417,7 @@ export function SupplierDetailPage() {
         <div className="page-header-title">
           <Breadcrumb
             className="page-breadcrumb"
+            aria-label="面包屑"
             separator=">"
             items={[
               { key: 'parent', title: '供应商管理' },
@@ -432,11 +433,6 @@ export function SupplierDetailPage() {
               )
             }
           />
-          {/*
-           * Integration status belongs to the page position, not to a tab body:
-           * it follows the breadcrumb so operators see credential and catalog
-           * state before choosing a workspace tab.
-           */}
           <Space size={8} wrap className="page-header-status">
             <Tag>Provider: yangmao</Tag>
             {supplierInfo ? supplierConfigLabel(supplierInfo) : <Tag>档案加载中</Tag>}

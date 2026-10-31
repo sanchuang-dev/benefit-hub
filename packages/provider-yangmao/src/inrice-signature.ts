@@ -36,17 +36,21 @@ export interface InriceDispatchSignedInput {
 }
 
 /**
- * Dispatch signature/body bytes. Keep this field order frozen: the D HMAC is
- * over the exact compact JSON string, and the same bytes are sent as the POST
- * body so signing and transport cannot drift.
+ * Exact dispatch DTO serialization recovered from the authorized 2026-10-31
+ * dev probe. The vendor binds the request, then serializes the DTO in this
+ * order before verifying HMAC: mobile -> partnerOrderNo -> productCode.
+ *
+ * This is intentionally NOT the HTTP request-body order from the public docs.
+ * Signing must follow the server DTO bytes, while JSON body member order is
+ * semantically irrelevant.
  */
 export function buildInriceDispatchSignedBody(
   input: InriceDispatchSignedInput,
 ): string {
   return JSON.stringify({
+    mobile: input.mobile,
     partnerOrderNo: input.partnerOrderNo,
     productCode: input.productCode,
-    mobile: input.mobile,
   });
 }
 

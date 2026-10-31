@@ -46,8 +46,13 @@ jobs:
           grep -q '"status":"ok"' /tmp/benefit-health.json
           curl --fail --silent http://127.0.0.1:18081/api/v1/system/status |
             grep -q '"adminEnabled":true'
-          curl --fail --silent http://127.0.0.1:18081/ |
+          # The console lives under /admin; the origin root is a temporary 302
+          # and everything else outside /admin is a 404 (no SPA fallback).
+          curl --fail --silent http://127.0.0.1:18081/admin/ |
             grep -q '<title>3C Benefit Hub'
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18081/)" = "302"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18081/admin/catalog)" = "200"
+          test "$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:18081/catalog)" = "404"
 
       - name: Export verified image for dev deployment
         if: github.event_name == 'push' && github.ref == 'refs/heads/dev'

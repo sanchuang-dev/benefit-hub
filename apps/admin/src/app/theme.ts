@@ -6,6 +6,7 @@ export const adminTheme: ThemeConfig = {
     colorInfo: '#2563EB',
     colorText: '#1F2937',
     colorTextSecondary: '#64748B',
+    colorTextDescription: '#64748B',
     colorBgLayout: '#F5F6F8',
     colorBgContainer: '#FFFFFF',
     colorBorder: '#DFE3E8',
@@ -22,6 +23,8 @@ export const adminTheme: ThemeConfig = {
       headerHeight: 52,
       headerPadding: '0 16px',
     },
+    Descriptions: { labelColor: '#64748B' },
+    Segmented: { itemColor: '#64748B' },
     Menu: {
       itemSelectedBg: '#EAF2FF',
       itemSelectedColor: '#2563EB',

@@ -85,11 +85,14 @@ export function installDomStubs(): void {
 }
 
 /** Renders the real route tree with the same providers used by main.tsx. */
-export function renderRoutes(initialPath: string) {
+export function renderRoutes(initialPath: string, options: { basename?: string } = {}) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 }, mutations: { retry: false } },
   });
-  const router = createMemoryRouter(routes, { initialEntries: [initialPath] });
+  const router = createMemoryRouter(routes, {
+    initialEntries: [initialPath],
+    basename: options.basename,
+  });
   const result = render(
     <ConfigProvider>
       <AntdApp>

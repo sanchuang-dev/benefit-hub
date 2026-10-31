@@ -153,6 +153,24 @@ function normalizeCredential(value: string): string {
   return value;
 }
 
+function safeVendorMessage(
+  value: unknown,
+  sensitiveValues: readonly string[],
+): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim();
+  if (normalized === '' || normalized.length > 256 || hasControlCharacters(normalized)) {
+    return undefined;
+  }
+  if (sensitiveValues.some((secret) => secret !== '' && normalized.includes(secret))) {
+    return undefined;
+  }
+  if (/appsecret|x-signature|x-app-key|authorization|bearer\s|access[_ -]?token/i.test(normalized)) {
+    return undefined;
+  }
+  return normalized;
+}
+
 function normalizeTimeout(value: number | undefined): number {
   if (value === undefined) return DEFAULT_INRICE_TIMEOUT_MS;
   if (!Number.isInteger(value) || value < MIN_TIMEOUT_MS || value > MAX_TIMEOUT_MS) {
@@ -242,12 +260,17 @@ class YangmaoInriceCatalogClient
     }
 
     const signedBody = buildInriceDispatchSignedBody(normalized);
+    const requestBody = JSON.stringify({
+      partnerOrderNo: normalized.partnerOrderNo,
+      productCode: normalized.productCode,
+      mobile: normalized.mobile,
+    });
     await this.requestSignedData(
       'POST',
       INRICE_DISPATCH_PATH,
       signedBody,
       options.signal,
-      signedBody,
+      requestBody,
     );
 
     return {
@@ -282,6 +305,7 @@ class YangmaoInriceCatalogClient
         if (vendorCode === 400 && vendorMessage === '订单不存在') {
           return new YangmaoInriceError('YANGMAO_INRICE_ORDER_NOT_FOUND', {
             vendorCode,
+            ...(vendorMessage === undefined ? {} : { vendorMessage }),
           });
         }
         return undefined;
@@ -396,13 +420,18 @@ class YangmaoInriceCatalogClient
       if (envelope.data.code === 403) {
         throw new YangmaoInriceError('YANGMAO_INRICE_FORBIDDEN', { vendorCode: 403 });
       }
+      const vendorMessage = safeVendorMessage(
+        envelope.data.message,
+        [this.appKey, this.appSecret],
+      );
       const classified = businessFailureClassifier?.(
         envelope.data.code,
-        typeof envelope.data.message === 'string' ? envelope.data.message : undefined,
+        vendorMessage,
       );
       if (classified) throw classified;
       throw new YangmaoInriceError('YANGMAO_INRICE_BUSINESS_FAILED', {
         vendorCode: envelope.data.code,
+        ...(vendorMessage === undefined ? {} : { vendorMessage }),
       });
     }
 

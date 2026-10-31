@@ -27,6 +27,9 @@ services:
       YANGMAO_INRICE_APP_SECRET: ${YANGMAO_INRICE_APP_SECRET:-}
       # A single independent master key protects provider connection records.
       BENEFIT_SUPPLIER_MASTER_KEY: ${BENEFIT_SUPPLIER_MASTER_KEY:-}
+      # A prepaid order creation deducts one supplier pack quota. Keep off unless
+      # a maintainer explicitly authorizes one controlled live acceptance.
+      BENEFIT_A_LIVE_WRITE_ENABLED: ${BENEFIT_A_LIVE_WRITE_ENABLED:-false}
       # Real D dispatch can deduct the supplier monetary balance. Keep off unless
       # a maintainer explicitly authorizes one controlled live acceptance.
       BENEFIT_D_LIVE_WRITE_ENABLED: ${BENEFIT_D_LIVE_WRITE_ENABLED:-false}

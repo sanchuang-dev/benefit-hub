@@ -1,6 +1,6 @@
-import { App as AntdApp, Button, Dropdown, Layout, Tabs, Tag, Typography } from 'antd';
-import { LogOut, UserRound } from 'lucide-react';
-import { useEffect, useMemo } from 'react';
+import { App as AntdApp, Button, Drawer, Dropdown, Layout, Tabs, Tag, Typography } from 'antd';
+import { LogOut, Menu as MenuIcon, MoreHorizontal, UserRound } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router';
 import type { AdminIdentity } from '../../features/auth/api';
 import { useLogoutMutation } from '../../features/auth/use-auth';
@@ -26,6 +26,19 @@ export function AppShell({ admin }: AppShellProps) {
   const addTab = useUiPrefs((state) => state.addTab);
   const removeTab = useUiPrefs((state) => state.closeTab);
   const hydrated = useUiPrefsHydrated();
+  const [compactNav, setCompactNav] = useState(() => typeof window !== 'undefined' && window.innerWidth < 768);
+  const [navOpen, setNavOpen] = useState(false);
+
+  useEffect(() => {
+    const update = () => setCompactNav(window.innerWidth < 768);
+    window.addEventListener('resize', update);
+    update();
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    if (!compactNav) setNavOpen(false);
+  }, [compactNav]);
 
   useEffect(() => {
     // Hydration boundary: an async storage backend must finish restoring before
@@ -81,11 +94,15 @@ export function AppShell({ admin }: AppShellProps) {
   });
 
   return (
-    <Layout className="app-shell" hasSider>
-      <AppSidebar activeKey={activeKey} onNavigate={(key) => navigate(key)} />
+    <Layout className="app-shell" hasSider={!compactNav}>
+      {!compactNav ? <AppSidebar activeKey={activeKey} onNavigate={(key) => navigate(key)} /> : null}
 
       <Layout className="app-main">
         <Header className="app-header">
+          {compactNav ? (
+            <Button type="text" className="app-mobile-nav-trigger" icon={<MenuIcon size={20} />} aria-label="打开导航菜单"
+              aria-expanded={navOpen} onClick={() => setNavOpen(true)} />
+          ) : null}
           <div className="app-header-actions">
             <Tag color={admin.role === 'admin' ? 'blue' : 'default'}>
               {admin.role === 'admin' ? '管理员' : '只读'}
@@ -107,12 +124,13 @@ export function AppShell({ admin }: AppShellProps) {
           </div>
         </Header>
 
-        <div className="app-tabs-bar" aria-label="已打开页面">
+        <nav className="app-tabs-bar" aria-label="已打开页面">
           <Tabs
             className="app-tabs"
             type="editable-card"
             size="small"
             hideAdd
+            moreIcon={<MoreHorizontal size={18} role="img" aria-label="更多页面" />}
             activeKey={activeKey}
             items={tabItems}
             onChange={(key) => navigate(key)}
@@ -120,12 +138,20 @@ export function AppShell({ admin }: AppShellProps) {
               if (action === 'remove' && typeof targetKey === 'string') closeTab(targetKey);
             }}
           />
-        </div>
+        </nav>
 
         <Content className="app-content">
           <Outlet />
         </Content>
       </Layout>
+      {compactNav ? (
+        <Drawer title="导航菜单" placement="left" size={280} open={navOpen}
+          onClose={() => setNavOpen(false)} styles={{ body: { padding: 0 } }}
+          afterOpenChange={(open) => { if (!open) document.querySelector<HTMLButtonElement>('.app-mobile-nav-trigger')?.focus(); }}>
+          <AppSidebar variant="drawer" activeKey={activeKey}
+            onNavigate={(key) => { navigate(key); setNavOpen(false); }} />
+        </Drawer>
+      ) : null}
     </Layout>
   );
 }

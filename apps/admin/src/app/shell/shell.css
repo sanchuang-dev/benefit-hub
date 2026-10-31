@@ -22,9 +22,11 @@
   height: 52px;
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   border-bottom: 1px solid #e8eaed;
 }
+
+.app-mobile-nav-trigger { margin-inline-start: 8px; }
 
 .app-header-actions {
   display: flex;
@@ -114,7 +116,9 @@
 
 .app-tabs .ant-tabs-tab-remove {
   margin-inline-start: 7px;
-  padding: 2px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 4px;
   border-radius: 50%;
   color: #7b8491;
 }
@@ -221,7 +225,7 @@
   line-height: 26px;
 }
 
-/* Child-page title line: breadcrumb and its live status tags share one row. */
+/* Supplier detail: status tags follow the breadcrumb and wrap on narrow screens. */
 .page-header .page-header-title {
   display: flex;
   align-items: center;
@@ -233,7 +237,6 @@
   margin-bottom: 0;
 }
 
-/* Status tags are header metadata, so they never add a second prose line. */
 .page-header .page-header-status {
   margin: 0;
 }

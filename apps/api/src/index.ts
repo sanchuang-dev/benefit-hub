@@ -1,12 +1,10 @@
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { openDatabase, runMigrations } from './db/client.js';
 import { logEvent } from './log.js';
-import { createBrandAssetApp } from './static-assets.js';
+import { createStaticApp } from './static-app.js';
 
 const config = loadConfig(process.env);
 const database = openDatabase(config.databaseFile);
@@ -19,24 +17,12 @@ logEvent('database.ready', {
 
 const app = createApp({ db: database.db, config });
 
-// `public/` is the admin build output (index.html, assets/, brand/); see
+// `public/` is the admin build output (index.html, assets/, brand/). The static
+// app mounts the console under /admin and keeps the origin root out of it; see
 // docs/brand/README.md for the brand inventory and serving rules.
 const publicRoot = resolve(process.cwd(), 'public');
 
-app.route('/', createBrandAssetApp(publicRoot));
-app.use('/assets/*', serveStatic({ root: publicRoot }));
-
-const readIndexHtml = () => readFile(resolve(publicRoot, 'index.html'), 'utf8');
-
-app.get('/', async (c) => c.html(await readIndexHtml()));
-app.get('*', async (c) => {
-  if (c.req.path.startsWith('/api/')) {
-    return c.json({ error: 'NOT_FOUND', message: '接口不存在' }, 404);
-  }
-  // Client-side routing: every non-API path returns the app shell, and the
-  // admin UI decides whether to show the login screen or the protected layout.
-  return c.html(await readIndexHtml());
-});
+app.route('/', createStaticApp(publicRoot));
 
 const server = serve({ fetch: app.fetch, hostname: config.host, port: config.port }, (info) => {
   logEvent('server.listening', {

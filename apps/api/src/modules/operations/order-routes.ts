@@ -15,7 +15,13 @@ import type { AppDatabase } from '../../db/client.js';
 import { requireRole, requireSession, type AppEnv } from '../../middleware/auth.js';
 import { NO_STORE_HEADERS, apiError, invalidRequest, issueFields, readJson } from '../http.js';
 import { createDirectTopupService } from '../orders/b-direct-topup.js';
-import { handleDirectTopupError } from '../orders/business-order-routes.js';
+import { createPrepaidGrantService } from '../orders/a-prepaid-grant.js';
+import { createDDispatchService } from '../orders/d-dispatch.js';
+import {
+  handleDDispatchError,
+  handleDirectTopupError,
+  handleGrantError,
+} from '../orders/business-order-routes.js';
 import {
   createBenefitOrderRepository,
   type OperationsOrderDetail,
@@ -26,6 +32,27 @@ import {
  * UTC epoch milliseconds. Empty, signed, fractional or unsafe values are
  * rejected instead of silently becoming an unbounded query.
  */
+const adminAPrepaidGrantRequestSchema = z
+  .object({
+    phone: z.string().regex(/^1\d{10}$/),
+    refCode: z.string().regex(/^[!-~]{1,64}$/),
+    paymentReference: z.string().regex(/^[!-~]{1,128}$/),
+    confirmGrant: z.literal(true),
+  })
+  .strict();
+
+const adminAPrepaidRecoverRequestSchema = z.object({}).strict();
+
+const adminDDispatchRequestSchema = z
+  .object({
+    mobile: z.string().regex(/^1[3-9]\d{9}$/),
+    paymentReference: z.string().trim().regex(BUSINESS_ORDER_NO_PATTERN),
+    confirmDispatch: z.literal(true),
+  })
+  .strict();
+
+const adminDRecoverRequestSchema = z.object({}).strict();
+
 const utcMillisSchema = z
   .string()
   .regex(/^(0|[1-9]\d{0,15})$/, '时间需为 UTC 毫秒时间戳')
@@ -174,7 +201,9 @@ export function createOperationsOrderRoutes(deps: {
 }): Hono<AppEnv> {
   const router = new Hono<AppEnv>();
   const repository = createBenefitOrderRepository(deps.db);
+  const prepaidGrantService = createPrepaidGrantService(deps);
   const topupService = createDirectTopupService(deps);
+  const dDispatchService = createDDispatchService(deps);
   const requireAuthenticated = requireSession(deps.db, deps.config);
 
   router.get('/orders', requireAuthenticated, (c) => {
@@ -226,6 +255,179 @@ export function createOperationsOrderRoutes(deps: {
     }
     return c.json({ order: toDetailDto(detail) }, 200, NO_STORE_HEADERS);
   });
+
+  /**
+   * Admin-only A live acceptance. Supplier product and requestId come from the
+   * frozen platform order; the browser can never choose either value.
+   */
+  router.post('/orders/:orderId/prepaid-grant', requireAuthenticated,
+    requireRole('admin'), async (c) => {
+      const orderId = z.string().trim().min(1).max(128).safeParse(c.req.param('orderId'));
+      if (!orderId.success) {
+        return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+      }
+      const body = await readJson(c);
+      if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+      const parsed = adminAPrepaidGrantRequestSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json(
+          invalidRequest('A 下单参数不正确', issueFields(parsed.error)),
+          400,
+          NO_STORE_HEADERS,
+        );
+      }
+
+      const detail = repository.getForOperations(orderId.data);
+      if (!detail) return c.json(apiError('ORDER_NOT_FOUND', '订单不存在'), 404, NO_STORE_HEADERS);
+
+      try {
+        const outcome = await prepaidGrantService.grant({
+          businessSource: detail.order.businessSource,
+          orderId: orderId.data,
+          phone: parsed.data.phone,
+          refCode: parsed.data.refCode,
+          paymentReference: parsed.data.paymentReference,
+          signal: c.req.raw.signal,
+        });
+        const refreshed = repository.getForOperations(orderId.data);
+        if (!refreshed) throw new Error('A 下单订单不存在');
+        return c.json(
+          {
+            order: toDetailDto(refreshed),
+            ...(outcome.claimUrl === undefined ? {} : { claimUrl: outcome.claimUrl }),
+          },
+          200,
+          NO_STORE_HEADERS,
+        );
+      } catch (error) {
+        return handleGrantError(c, error);
+      }
+    });
+
+  /**
+   * Admin-only A original-order recovery. This never creates a new requestId
+   * and never calls the prepaid-order POST.
+   */
+  router.post('/orders/:orderId/prepaid-grant/recover', requireAuthenticated,
+    requireRole('admin'), async (c) => {
+      const orderId = z.string().trim().min(1).max(128).safeParse(c.req.param('orderId'));
+      if (!orderId.success) {
+        return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+      }
+      const body = await readJson(c);
+      if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+      const parsed = adminAPrepaidRecoverRequestSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json(
+          invalidRequest('A 原单恢复参数不正确', issueFields(parsed.error)),
+          400,
+          NO_STORE_HEADERS,
+        );
+      }
+
+      const detail = repository.getForOperations(orderId.data);
+      if (!detail) return c.json(apiError('ORDER_NOT_FOUND', '订单不存在'), 404, NO_STORE_HEADERS);
+
+      try {
+        const outcome = await prepaidGrantService.recover({
+          businessSource: detail.order.businessSource,
+          orderId: orderId.data,
+          signal: c.req.raw.signal,
+        });
+        const refreshed = repository.getForOperations(orderId.data);
+        if (!refreshed) throw new Error('A 恢复订单不存在');
+        return c.json(
+          {
+            order: toDetailDto(refreshed),
+            ...(outcome.claimUrl === undefined ? {} : { claimUrl: outcome.claimUrl }),
+          },
+          200,
+          NO_STORE_HEADERS,
+        );
+      } catch (error) {
+        return handleGrantError(c, error);
+      }
+    });
+
+  /**
+   * Admin-only D live-acceptance action. The browser never supplies provider,
+   * supplier product, or partnerOrderNo; those remain frozen platform facts.
+   * confirmDispatch=true is required server-side so a stray scripted POST cannot
+   * accidentally turn an admin session into a supplier debit.
+   */
+  router.post('/orders/:orderId/dispatch', requireAuthenticated,
+    requireRole('admin'), async (c) => {
+      const orderId = z.string().trim().min(1).max(128).safeParse(c.req.param('orderId'));
+      if (!orderId.success) {
+        return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+      }
+      const body = await readJson(c);
+      if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+      const parsed = adminDDispatchRequestSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json(
+          invalidRequest('D 派发参数不正确', issueFields(parsed.error)),
+          400,
+          NO_STORE_HEADERS,
+        );
+      }
+
+      const detail = repository.getForOperations(orderId.data);
+      if (!detail) return c.json(apiError('ORDER_NOT_FOUND', '订单不存在'), 404, NO_STORE_HEADERS);
+
+      try {
+        await dDispatchService.dispatch({
+          businessSource: detail.order.businessSource,
+          orderId: orderId.data,
+          mobile: parsed.data.mobile,
+          paymentReference: parsed.data.paymentReference,
+          signal: c.req.raw.signal,
+        });
+        const refreshed = repository.getForOperations(orderId.data);
+        if (!refreshed) throw new Error('D 派发订单不存在');
+        return c.json({ order: toDetailDto(refreshed) }, 200, NO_STORE_HEADERS);
+      } catch (error) {
+        return handleDDispatchError(c, error, { includeVendorMessage: true });
+      }
+    });
+
+  /**
+   * Admin-only original-order D query. This route never calls POST /dispatch
+   * and never accepts a partnerOrderNo from the browser.
+   */
+  router.post('/orders/:orderId/dispatch/recover', requireAuthenticated,
+    requireRole('admin'), async (c) => {
+      const orderId = z.string().trim().min(1).max(128).safeParse(c.req.param('orderId'));
+      if (!orderId.success) {
+        return c.json(invalidRequest('订单 ID 不正确', ['orderId']), 400, NO_STORE_HEADERS);
+      }
+      const body = await readJson(c);
+      if (!body.ok) return c.json(invalidRequest('请求格式不正确'), 400, NO_STORE_HEADERS);
+      const parsed = adminDRecoverRequestSchema.safeParse(body.value);
+      if (!parsed.success) {
+        return c.json(
+          invalidRequest('D 原单查单参数不正确', issueFields(parsed.error)),
+          400,
+          NO_STORE_HEADERS,
+        );
+      }
+
+      const detail = repository.getForOperations(orderId.data);
+      if (!detail) return c.json(apiError('ORDER_NOT_FOUND', '订单不存在'), 404, NO_STORE_HEADERS);
+
+      try {
+        await dDispatchService.recover({
+          businessSource: detail.order.businessSource,
+          orderId: orderId.data,
+          signal: c.req.raw.signal,
+        });
+        const refreshed = repository.getForOperations(orderId.data);
+        if (!refreshed) throw new Error('D 查单订单不存在');
+        return c.json({ order: toDetailDto(refreshed) }, 200, NO_STORE_HEADERS);
+      } catch (error) {
+        return handleDDispatchError(c, error, { includeVendorMessage: true });
+      }
+    });
 
   /**
    * Admin-only, CSRF-protected manual reissue. A second vendor write is
