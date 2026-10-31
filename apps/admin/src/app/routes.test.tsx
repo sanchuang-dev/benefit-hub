@@ -2,6 +2,7 @@
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react';
 import { installDomStubs, renderRoutes, resetUiPrefs } from '../test-utils/render-routes';
+import { ADMIN_BASE_PATH } from './base-path';
 import { jsonResponse, mockFetch } from '../test-utils/http';
 import { UI_PREFS_STORAGE_KEY, useUiPrefs } from '../shared/lib/ui-prefs';
 
@@ -432,4 +433,32 @@ describe('login flow', () => {
     });
     expect(screen.getByText('运营后台登录')).toBeTruthy();
   });
+});
+
+describe('console mount', () => {
+  it('serves a module URL under /admin with the unchanged internal route key', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      if (url.startsWith('/api/v1/catalog/products?')) {
+        return jsonResponse(200, { products: [], page: 1, pageSize: 20, total: 0 });
+      }
+      return undefined;
+    });
+
+    // `/admin/catalog` is the public URL; `routes.tsx` still defines `catalog`.
+    const { router } = renderRoutes('/admin/catalog', { basename: ADMIN_BASE_PATH });
+
+    expect(await screen.findByRole('heading', { name: '权益商品' }, { timeout: 5000 })).toBeTruthy();
+    expect(router.state.location.pathname).toBe('/admin/catalog');
+    expect(screen.getByRole('tab', { name: '权益商品', selected: true })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: '总览' })).toBeTruthy();
+  }, 15_000);
 });

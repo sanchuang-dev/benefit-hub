@@ -4,6 +4,7 @@ import zhCN from 'antd/locale/zh_CN';
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { RouterProvider, createBrowserRouter } from 'react-router';
+import { ADMIN_BASE_PATH } from './app/base-path';
 import { routes } from './app/routes';
 import { adminTheme } from './app/theme';
 import './style.css';
@@ -19,7 +20,7 @@ createRoot(document.getElementById('root')!).render(
     <ConfigProvider locale={zhCN} theme={adminTheme}>
       <AntdApp>
         <QueryClientProvider client={queryClient}>
-          <RouterProvider router={createBrowserRouter(routes)} />
+          <RouterProvider router={createBrowserRouter(routes, { basename: ADMIN_BASE_PATH })} />
         </QueryClientProvider>
       </AntdApp>
     </ConfigProvider>
