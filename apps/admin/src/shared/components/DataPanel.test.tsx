@@ -95,15 +95,15 @@ describe('DataPanel controlled query contract', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
     const dialog = await screen.findByRole('dialog').catch((err: unknown) => {
-      // Distinguish an absent modal from an accessibility-name mismatch.
+      // Preserve browser DOM evidence without relying on console output in CI.
       const modal = document.querySelector('.ant-modal');
-      console.info('DPN_MODAL_DIAGNOSTIC', {
-        present: Boolean(modal),
-        dialogRoles: document.querySelectorAll('[role="dialog"]').length,
-        title: modal?.querySelector('.ant-modal-title')?.textContent,
-        outer: modal?.outerHTML.slice(0, 1000),
-      });
-      throw err;
+      throw new Error(
+        'Advanced modal diagnostic: present=' + Boolean(modal) +
+        ', roles=' + document.querySelectorAll('[role="dialog"]').length +
+        ', title=' + (modal?.querySelector('.ant-modal-title')?.textContent ?? 'none') +
+        ', html=' + (modal?.outerHTML.slice(0, 900) ?? 'none') +
+        '; original=' + String(err),
+      );
     });
     expect(within(dialog).getByText('高级检索')).toBeTruthy();
     expect((within(dialog).getByLabelText('名称') as HTMLInputElement).value).toBe('咖啡');
