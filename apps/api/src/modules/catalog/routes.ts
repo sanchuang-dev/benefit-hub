@@ -37,12 +37,15 @@ const codeSchema = z
 const nameSchema = z.string().trim().min(1, '请输入商品名称').max(80, '商品名称最长 80 个字符');
 const descriptionSchema = z.string().trim().max(200, '商品描述最长 200 个字符');
 const centsSchema = z.number().int('金额必须为整数分').min(0, '金额不能为负').max(MAX_CENTS);
-/** Query parameters arrive as strings, so the list price bounds are coerced. */
-const queryCentsSchema = z.coerce
-  .number()
-  .int('金额必须为整数分')
-  .min(0, '金额不能为负')
-  .max(MAX_CENTS);
+/** Only decimal non-negative integer cents are valid on the HTTP query wire.
+ * Number coercion would silently turn an empty query value into zero and accept
+ * hex or exponent notation, obscuring a malformed filter as a real price.
+ */
+const queryCentsSchema = z
+  .string()
+  .regex(/^\\d+$/, '金额必须为十进制非负整数分')
+  .transform(Number)
+  .pipe(z.number().int('金额必须为整数分').min(0).max(MAX_CENTS));
 const versionSchema = z.number().int().min(1);
 
 const createProductSchema = z
