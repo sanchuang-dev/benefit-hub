@@ -4,12 +4,18 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   createBusinessOrderResponseSchema,
   dDispatchResponseSchema,
+  operationsOrderDetailResponseSchema,
 } from '@sanchuang-dev/benefit-contracts';
 import { loadConfig, type AppConfig } from '../../src/config.js';
 import { createApplication, replaceApplicationProducts } from '../../src/modules/applications/applications.js';
 import { createProduct } from '../../src/modules/catalog/products.js';
 import { createSupplierMappingRepository } from '../../src/modules/catalog/supplier-mapping-repository.js';
-import { TestServer } from '../helpers/test-server.js';
+import {
+  seedAccount,
+  TestClient,
+  TestServer,
+  TEST_PASSWORD,
+} from '../helpers/test-server.js';
 
 const SOURCE_TOKEN = 'fictional-d-machine-token-000000000000001';
 const OTHER_TOKEN = 'fictional-d-other-token-0000000000000002';
@@ -310,6 +316,25 @@ describe('D-mode dispatch Hono → mock supplier (never real balance)', () => {
       expect(row.phoneHmac).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.stringify(row)).not.toContain(MOBILE);
       expect(JSON.stringify(row)).not.toContain('SECRET-FULFILLMENT-MUST-NOT-LEAK');
+
+      await seedAccount(server, { username: 'operator.d.test', role: 'admin' });
+      const operator = new TestClient(server);
+      expect((await operator.login('operator.d.test', TEST_PASSWORD)).status).toBe(200);
+      const detailResponse = await operator.request(
+        `/api/v1/operations/orders/${order.id}`,
+      );
+      expect(detailResponse.status).toBe(200);
+      const detailText = await detailResponse.text();
+      expect(detailText).not.toContain(MOBILE);
+      expect(detailText).not.toContain(PAYMENT_REFERENCE);
+      expect(detailText).not.toContain('SECRET-FULFILLMENT-MUST-NOT-LEAK');
+      const detail = operationsOrderDetailResponseSchema.parse(JSON.parse(detailText));
+      expect(detail.order.dispatch).toMatchObject({
+        state: 'accepted',
+        partnerOrderNo: first.dispatch.partnerOrderNo,
+        upstreamOrderNo: 'D-UPSTREAM-FICTIONAL-1',
+        providerStatus: 'RECEIVE',
+      });
     } finally {
       server.close();
       await vendor.close();
