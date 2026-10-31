@@ -81,3 +81,33 @@ export async function recoverDOrder(id: string): Promise<OperationsOrderDetailDt
   );
   return body.order;
 }
+
+
+export interface APrepaidOperatorResult {
+  order: OperationsOrderDetailDto;
+  claimUrl?: string;
+}
+
+/**
+ * Admin-only A live acceptance. Product and requestId stay server-derived.
+ */
+export async function grantAPrepaidOrder(
+  id: string,
+  request: { phone: string; refCode: string; paymentReference: string },
+): Promise<APrepaidOperatorResult> {
+  return apiRequest<APrepaidOperatorResult>(
+    "/api/v1/operations/orders/" + encodeURIComponent(id) + "/prepaid-grant",
+    {
+      method: "POST",
+      body: { ...request, confirmGrant: true },
+    },
+  );
+}
+
+/** Admin-only read-only recovery of the persisted A requestId. */
+export async function recoverAPrepaidOrder(id: string): Promise<APrepaidOperatorResult> {
+  return apiRequest<APrepaidOperatorResult>(
+    "/api/v1/operations/orders/" + encodeURIComponent(id) + "/prepaid-grant/recover",
+    { method: "POST", body: {} },
+  );
+}
