@@ -1,4 +1,4 @@
-name: BHB-012-B Enable D Live Gate For Third Acceptance
+name: BHB-012-B Disable D Live Gate After Third Acceptance
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  enable:
+  disable:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -20,7 +20,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Enable D live-write gate only
+      - name: Disable D live-write gate only
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -40,16 +40,16 @@ jobs:
           test ! -L .env
           chmod 600 .env
           if grep -q '^BENEFIT_D_LIVE_WRITE_ENABLED=' .env; then
-            sed -i 's/^BENEFIT_D_LIVE_WRITE_ENABLED=.*/BENEFIT_D_LIVE_WRITE_ENABLED=true/' .env
+            sed -i 's/^BENEFIT_D_LIVE_WRITE_ENABLED=.*/BENEFIT_D_LIVE_WRITE_ENABLED=false/' .env
           else
-            printf '%s\n' 'BENEFIT_D_LIVE_WRITE_ENABLED=true' >> .env
+            printf '%s\n' 'BENEFIT_D_LIVE_WRITE_ENABLED=false' >> .env
           fi
           docker compose --project-name benefit-hub -f compose.yaml config -q
           docker compose --project-name benefit-hub -f compose.yaml up -d --no-build >/dev/null
           cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
           test -n "$cid"
           gate="$(docker exec "$cid" sh -lc 'printf "%s" "$BENEFIT_D_LIVE_WRITE_ENABLED"')"
-          test "$gate" = true
+          test "$gate" = false
           ok=0
           for n in $(seq 1 30); do
             if curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
@@ -59,5 +59,5 @@ jobs:
             sleep 2
           done
           test "$ok" = 1
-          echo 'D_LIVE_WRITE_GATE_ENABLED=true'
+          echo 'D_LIVE_WRITE_GATE_ENABLED=false'
           REMOTE
