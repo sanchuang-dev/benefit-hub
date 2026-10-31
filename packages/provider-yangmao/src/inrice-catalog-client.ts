@@ -90,7 +90,7 @@ const MAX_TIMEOUT_MS = 60_000;
 // catalogue array still fails the product-shape check below.
 const envelopeSchema = z.object({
   code: z.number().int(),
-  message: z.string().optional().nullable(),
+  message: z.unknown().optional(),
   data: z.unknown().optional(),
 });
 
@@ -333,7 +333,7 @@ class YangmaoInriceCatalogClient
       }
       const classified = businessFailureClassifier?.(
         envelope.data.code,
-        envelope.data.message ?? undefined,
+        typeof envelope.data.message === 'string' ? envelope.data.message : undefined,
       );
       if (classified) throw classified;
       throw new YangmaoInriceError('YANGMAO_INRICE_BUSINESS_FAILED', {
