@@ -384,7 +384,7 @@ function toDDispatchResponse(outcome: DDispatchOutcome): DDispatchResponse {
   };
 }
 
-function handleDDispatchError(c: Context<AppEnv>, error: unknown) {
+export function handleDDispatchError(c: Context<AppEnv>, error: unknown) {
   if (error instanceof DDispatchWriteDisabledError) {
     return c.json(
       apiError('D_DISPATCH_WRITE_DISABLED', 'D 真实金额扣减未被维护者单独启用'),
