@@ -628,4 +628,51 @@ export const migrations: readonly Migration[] = [
 
     `,
   },
+  {
+    id: '0012_benefit_order_dispatches',
+    sql: `
+      -- D dispatch deducts a monetary entitlement balance. Persist the stable
+      -- operation identity before the signed POST so a timeout/crash can never
+      -- justify a fresh partnerOrderNo and a second debit.
+      CREATE TABLE IF NOT EXISTS benefit_order_dispatches (
+        order_id TEXT PRIMARY KEY NOT NULL REFERENCES benefit_orders(id) ON DELETE RESTRICT,
+        partner_order_no TEXT NOT NULL UNIQUE CHECK (
+          length(partner_order_no) BETWEEN 1 AND 64
+          AND partner_order_no NOT GLOB '*[^!-~]*'
+        ),
+        state TEXT NOT NULL CHECK (state IN ('reserved','accepted','unknown','rejected')),
+        phone_hmac TEXT NOT NULL CHECK (
+          length(phone_hmac) = 64 AND phone_hmac NOT GLOB '*[^0-9a-f]*'
+        ),
+        payment_reference TEXT NOT NULL CHECK (length(payment_reference) BETWEEN 1 AND 128),
+        upstream_order_no TEXT CHECK (
+          upstream_order_no IS NULL OR length(upstream_order_no) BETWEEN 1 AND 128
+        ),
+        provider_status TEXT CHECK (
+          provider_status IS NULL OR length(provider_status) BETWEEN 1 AND 128
+        ),
+        last_verified_at INTEGER CHECK (last_verified_at IS NULL OR last_verified_at >= 0),
+        attempted_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_benefit_order_dispatches_state_updated
+        ON benefit_order_dispatches(state, updated_at);
+
+      -- The billable intent identity is immutable after reservation. Only
+      -- supplier observations may advance.
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_dispatches_identity_immutable
+      BEFORE UPDATE OF order_id, partner_order_no, phone_hmac, payment_reference
+      ON benefit_order_dispatches
+      BEGIN
+        SELECT RAISE(ABORT, 'D dispatch identity is immutable');
+      END;
+
+      CREATE TRIGGER IF NOT EXISTS trg_benefit_order_dispatches_no_delete
+      BEFORE DELETE ON benefit_order_dispatches
+      BEGIN
+        SELECT RAISE(ABORT, 'D dispatch operations are never deleted');
+      END;
+    `,
+  },
 ];
