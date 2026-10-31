@@ -85,12 +85,12 @@ describe('DataPanel controlled query contract', () => {
     expect(screen.getByLabelText('价格最小值').closest('[hidden]')).toBeNull();
     fireEvent.change(screen.getByLabelText('名称'), { target: { value: '咖啡' } });
     fireEvent.change(screen.getByLabelText('价格最小值'), { target: { value: '100' } });
-    fireEvent.click(screen.getByRole('button', { name: /查\\s*询/ }));
+    fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes).toHaveBeenCalled());
     expect(changes.mock.lastCall?.[0]).toMatchObject({
       page: 1, pageSize: 20, filters: { keyword: '咖啡', price: { min: 100 } },
     });
-    fireEvent.click(screen.getByRole('button', { name: /重\\s*置/ }));
+    fireEvent.click(screen.getByRole('button', { name: /重\s*置/ }));
     expect(changes.mock.lastCall?.[0]).toEqual({ page: 1, pageSize: 20, filters: FILTERS });
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('');
     expect((screen.getByLabelText('价格最小值') as HTMLInputElement).value).toBe('');
@@ -112,8 +112,8 @@ describe('DataPanel controlled query contract', () => {
     render(<Fixture />);
     expect(screen.getByText('B 商品')).toBeTruthy();
     fireEvent.click(screen.getByText('卡片'));
-    expect(screen.getByRole('list')).toBeTruthy();
-    expect(screen.getAllByRole('listitem')).toHaveLength(ROWS.length);
+    expect(screen.getByRole('list', { name: '数据卡片' })).toBeTruthy();
+    expect(screen.getByRole('list', { name: '数据卡片' }).querySelectorAll('[role="listitem"]')).toHaveLength(ROWS.length);
     expect(changes).not.toHaveBeenCalled();
     expect(refreshed).not.toHaveBeenCalled();
     expect(useUiPrefs.getState().dataPanels['fixture-a']?.view).toBe('card');
@@ -139,7 +139,7 @@ describe('DataPanel controlled query contract', () => {
     const { rerender } = render(<Fixture readonly withCards={false} error={new Error('service unavailable')} />);
     expect(screen.getByText('数据加载失败')).toBeTruthy();
     expect(screen.getByText('service unavailable')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: '重试' }));
+    fireEvent.click(screen.getByRole('button', { name: /重\s*试/ }));
     expect(refreshed).toHaveBeenCalledTimes(1);
     rerender(<Fixture readonly withCards={false} rows={[]} />);
     expect(screen.getByText('暂无数据')).toBeTruthy();
