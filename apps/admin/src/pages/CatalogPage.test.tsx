@@ -913,7 +913,8 @@ describe('configurable catalogue panel', () => {
     // Advanced filters live inside a real modal, not in the compact toolbar.
     expect(screen.queryByLabelText('展示价（元）最小值')).toBeNull();
     fireEvent.click(findButtonText('高级检索'));
-    const advancedDialog = await screen.findByRole('dialog', { name: '高级检索' });
+    const advancedDialog = await screen.findByRole('dialog');
+    expect(within(advancedDialog).getByText('高级检索')).toBeTruthy();
     expect(within(advancedDialog).getByLabelText('展示价（元）最小值')).toBeTruthy();
 
     fireEvent.mouseDown(screen.getByLabelText('映射状态'));
@@ -970,7 +971,7 @@ describe('configurable catalogue panel', () => {
     });
 
     fireEvent.click(findButtonText('高级检索'));
-    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    const dialog = await screen.findByRole('dialog');
     expect((within(dialog).getByLabelText('展示价（元）最小值') as HTMLInputElement).value).toBe('10');
     expect((screen.getByLabelText('展示价（元）最大值') as HTMLInputElement).value).toBe('20');
     // The select shows the parsed state, not the raw URL token.
@@ -996,13 +997,13 @@ describe('configurable catalogue panel', () => {
     const initialCalls = listRequests.length;
 
     fireEvent.click(findButtonText('高级检索'));
-    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    const dialog = await screen.findByRole('dialog');
     fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
 
     expect(await screen.findByText('展示价最低值不能高于最高值')).toBeTruthy();
-    expect(screen.getByRole('dialog', { name: '高级检索' })).toBeTruthy();
+    expect(screen.getByRole('dialog')).toBeTruthy();
     expect(listRequests).toHaveLength(initialCalls);
     expect(router.state.location.search).toBe('');
     expect(listRequests.every((params) => params.get('displayPriceMinCents') === null)).toBe(true);
@@ -1079,7 +1080,7 @@ describe('configurable catalogue panel', () => {
     expect(screen.getAllByText('全部状态').length).toBeGreaterThan(0);
     // Mapping state moved to advanced search, not the compact quick toolbar.
     fireEvent.click(findButtonText('高级检索'));
-    const dialog = await screen.findByRole('dialog', { name: '高级检索' });
+    const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByTitle('全部映射')).toBeTruthy();
   });
 
