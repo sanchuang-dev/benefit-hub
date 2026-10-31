@@ -1,22 +1,75 @@
-/* DataPanel reuses the existing single-surface panel shell and AntD tokens. */
-.data-panel-toolbar-row { gap: 8px 12px; }
-.data-panel-form { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 12px; }
-.data-panel-filter { min-width: 0; max-width: 100%; }
-.data-panel-filter[hidden] { display: none; }
-.data-panel-filter .ant-form-item { margin-inline-end: 0; margin-bottom: 0; }
-.data-panel-form-actions { margin-bottom: 0; }
+/* The quick row is atomic: a field label and its input always travel together. */
+.data-panel-toolbar-row { align-items: center; gap: 10px 16px; }
+.data-panel-form {
+  flex: 1 1 800px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.data-panel-quick-line,
+.data-panel-extra-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  min-width: 0;
+}
+.data-panel-extra-filters {
+  padding-top: 10px;
+  border-top: 1px solid var(--ant-color-border-secondary, #eef0f2);
+}
+.data-panel-extra-filters[hidden] { display: none; }
+.data-panel-filter { flex: none; min-width: 0; max-width: 100%; }
+.data-panel-filter .ant-form-item { margin: 0; }
+/* AntD inline Form must not split a label from the corresponding control. */
+.data-panel-filter .ant-form-item-row {
+  display: flex;
+  flex-flow: row nowrap;
+  align-items: center;
+  gap: 6px;
+}
+.data-panel-filter .ant-form-item-label {
+  flex: 0 0 auto;
+  padding: 0;
+  white-space: nowrap;
+  overflow: visible;
+  line-height: 32px;
+}
+.data-panel-filter .ant-form-item-label > label { height: 32px; white-space: nowrap; }
+.data-panel-filter .ant-form-item-control { flex: 0 0 auto; min-width: 0; }
+.data-panel-form-actions { margin: 0; }
 .data-panel-tools { min-width: 0; }
 .data-panel-settings { min-width: 250px; max-width: min(350px, 82vw); }
 .data-panel-settings-title { font-weight: 600; margin: 8px 0; }
 .data-panel-settings-row { display: flex; align-items: center; gap: 2px; padding: 2px 0; }
 .data-panel-settings-row .ant-checkbox-wrapper { flex: 1; min-width: 0; }
+.data-panel-advanced-form { padding-top: 4px; }
+.data-panel-advanced-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 20px;
+  row-gap: 4px;
+}
+.data-panel-modal-filter { min-width: 0; }
+.data-panel-modal-filter .ant-form-item { margin-bottom: 16px; }
+.data-panel-modal-filter .ant-form-item-label { white-space: normal; }
+.data-panel-modal-filter .ant-form-item-control { min-width: 0; }
 .data-panel-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 12px; padding: 16px; }
 .data-panel-card { border: 1px solid #e8eaed; border-radius: 6px; min-width: 0; padding: 12px; }
 .data-panel-pagination { display: flex; justify-content: flex-end; padding: 0 16px 16px; }
-@media (max-width: 600px) {
-  .data-panel-toolbar-row { padding: 12px; }
-  .data-panel-form { width: 100%; }
-  .data-panel-filter { flex: 1 1 100%; width: 100% !important; }
-  .data-panel-filter .ant-form-item-control, .data-panel-filter .ant-select { min-width: 0; }
+
+@media (max-width: 700px) {
+  .data-panel-toolbar-row { padding: 12px; align-items: stretch; }
+  .data-panel-form { flex-basis: 100%; width: 100%; }
+  .data-panel-quick-line { gap: 10px; }
+  .data-panel-filter { width: 100%; }
+  .data-panel-filter .ant-form-item { width: 100%; }
+  .data-panel-filter .ant-form-item-row { width: 100%; }
+  .data-panel-filter .ant-form-item-control { flex: 1 1 auto; }
+  .data-panel-filter .ant-input,
+  .data-panel-filter .ant-select { width: 100% !important; min-width: 0; }
+  .data-panel-form-actions { width: 100%; }
   .data-panel-tools { margin-inline-start: 0; width: 100%; }
+  .data-panel-advanced-grid { grid-template-columns: minmax(0, 1fr); }
 }

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeAll, afterEach, describe, expect, it, vi } from 'vitest';
 import { useState } from 'react';
 import { installDomStubs, resetUiPrefs } from '../../test-utils/render-routes';
@@ -36,6 +36,8 @@ function Fixture({
   rows = ROWS,
   loading = false,
   readonly = false,
+  inlineLimit = 3,
+  rejectAdvanced = false,
 }: {
   id?: string;
   withCards?: boolean;
@@ -43,6 +45,8 @@ function Fixture({
   rows?: Row[];
   loading?: boolean;
   readonly?: boolean;
+  inlineLimit?: number;
+  rejectAdvanced?: boolean;
 }) {
   const [query, setQuery] = useState<PanelQuery<Filters, SortKey>>({
     filters: FILTERS, page: 3, pageSize: 20,
@@ -52,10 +56,11 @@ function Fixture({
     label="演示数据"
     rowKey={(row) => row.id}
     query={query}
-    onQueryChange={(next) => { changes(next); setQuery(next); }}
+    onQueryChange={(next) => { changes(next); if (rejectAdvanced && next.filters.price.min === 100) return false; setQuery(next); return true; }}
     initialFilters={FILTERS}
     data={{ rows, total: 45, loading, error }}
     filters={fields}
+    inlineFilterLimit={inlineLimit}
     columns={columns}
     renderCard={withCards ? (row) => <div>{row.name}</div> : undefined}
     rowActions={readonly ? undefined : (row) => [
@@ -76,24 +81,62 @@ afterEach(() => {
 });
 
 describe('DataPanel controlled query contract', () => {
-  it('submits advanced and basic filters, resets paging and preserves URL-owner responsibility', async () => {
+  it('keeps quick fields inline and submits advanced filters through a dialog', async () => {
     render(<Fixture />);
-    expect(screen.queryByLabelText('价格最小值')).toBeTruthy();
-    // The advanced controls stay mounted for form state, but are visually hidden.
-    expect(screen.getByLabelText('价格最小值').closest('[hidden]')).not.toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
-    expect(screen.getByLabelText('价格最小值').closest('[hidden]')).toBeNull();
-    fireEvent.change(screen.getByLabelText('名称'), { target: { value: '咖啡' } });
-    fireEvent.change(screen.getByLabelText('价格最小值'), { target: { value: '100' } });
-    fireEvent.click(screen.getByRole('button', { name: /查\s*询/ }));
+    const quickSection = screen.getByRole('region', { name: '演示数据' });
+    expect(within(quickSection).queryByLabelText('价格最小值')).toBeNull();
+    expect(within(quickSection).getByLabelText('名称').closest('.data-panel-filter')).toBeTruthy();
+    fireEvent.change(within(quickSection).getByLabelText('名称'), { target: { value: '咖啡' } });
+    fireEvent.click(within(quickSection).getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes).toHaveBeenCalled());
     expect(changes.mock.lastCall?.[0]).toMatchObject({
-      page: 1, pageSize: 20, filters: { keyword: '咖啡', price: { min: 100 } },
+      page: 1, pageSize: 20, filters: { keyword: '咖啡', price: {} },
     });
+
+    fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('高级检索')).toBeTruthy();
+    const modalKeyword = within(dialog).getByLabelText('名称') as HTMLInputElement;
+    const quickKeyword = document.querySelector('.data-panel-quick-line input') as HTMLInputElement;
+    expect(modalKeyword.id).not.toBe(quickKeyword.id);
+    expect(modalKeyword.value).toBe('咖啡');
+    fireEvent.change(within(dialog).getByLabelText('价格最小值'), { target: { value: '100' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
+    await waitFor(() => expect(changes.mock.lastCall?.[0]).toMatchObject({
+      page: 1, filters: { keyword: '咖啡', price: { min: 100 } },
+    }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: /重\s*置/ }));
     expect(changes.mock.lastCall?.[0]).toEqual({ page: 1, pageSize: 20, filters: FILTERS });
     expect((screen.getByLabelText('名称') as HTMLInputElement).value).toBe('');
-    expect((screen.getByLabelText('价格最小值') as HTMLInputElement).value).toBe('');
+  });
+
+  it('cancels an advanced draft without applying it and keeps dialog open after rejection', async () => {
+    render(<Fixture rejectAdvanced />);
+    fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
+    let dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('价格最小值'), { target: { value: '100' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
+    await waitFor(() => expect(changes).toHaveBeenCalled());
+    expect(screen.getByRole('dialog')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
+    dialog = await screen.findByRole('dialog');
+    expect((within(dialog).getByLabelText('价格最小值') as HTMLInputElement).value).toBe('');
+  });
+
+  it('keeps overflow regular filters in a separate collapsible row', () => {
+    render(<Fixture inlineLimit={1} />);
+    const section = screen.getByRole('region', { name: '演示数据' });
+    const extra = within(section).getByLabelText('更多筛选条件');
+    expect(extra.hasAttribute('hidden')).toBe(true);
+    const toggle = within(section).getByRole('button', { name: '更多条件' });
+    fireEvent.click(toggle);
+    expect(extra.hasAttribute('hidden')).toBe(false);
+    expect(within(extra).getByLabelText('状态')).toBeTruthy();
+    fireEvent.click(within(section).getByRole('button', { name: '收起条件' }));
+    expect(extra.hasAttribute('hidden')).toBe(true);
   });
 
   it('emits a server sort without reordering current page rows locally', async () => {

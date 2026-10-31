@@ -6,6 +6,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Modal,
   Pagination,
   Popover,
   Segmented,
@@ -75,10 +76,13 @@ export interface DataPanelProps<Row extends object, Filters extends object, Sort
   label: string;
   rowKey: (row: Row) => string;
   query: PanelQuery<Filters, SortKey>;
-  onQueryChange: (next: PanelQuery<Filters, SortKey>) => void;
+  /** Return false when domain validation rejects a submission; keep advanced dialog open. */
+  onQueryChange: (next: PanelQuery<Filters, SortKey>) => void | boolean;
   initialFilters: Filters;
   data: PanelData<Row>;
   filters: readonly PanelFilter<Filters>[];
+  /** The first N regular fields stay in the compact quick-search row; the rest use a collapsible row. */
+  inlineFilterLimit?: number;
   columns: readonly PanelColumn<Row, SortKey>[];
   onRefresh?: () => void;
   renderCard?: (row: Row) => ReactNode;
@@ -94,14 +98,20 @@ export interface DataPanelProps<Row extends object, Filters extends object, Sort
 
 export function DataPanel<Row extends object, Filters extends object, SortKey extends string>({
   id, label, rowKey, query, onQueryChange, initialFilters, data, filters,
-  columns, onRefresh, renderCard, rowActions, toolbarExtra, emptyText,
+  inlineFilterLimit = 3, columns, onRefresh, renderCard, rowActions, toolbarExtra, emptyText,
   errorTitle = '数据加载失败', pageSizeOptions = [10, 20, 50], pagination = true,
 }: DataPanelProps<Row, Filters, SortKey>) {
   // AntD 6's deep NamePath type cannot prove a runtime schema key is a generic
   // recursive path. Keep Form's internal instance unparameterized; the public
   // PanelFilter keys and onFinish values remain typed by DataPanelProps/Filters.
-  const [form] = Form.useForm();
-  const [expanded, setExpanded] = useState(false);
+  const [quickForm] = Form.useForm();
+  const [advancedForm] = Form.useForm();
+  const [extraExpanded, setExtraExpanded] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const regularFilters = filters.filter((filter) => !filter.advanced);
+  const quickFilters = regularFilters.slice(0, Math.max(0, inlineFilterLimit));
+  const extraFilters = regularFilters.slice(Math.max(0, inlineFilterLimit));
+  const hasAdvanced = filters.some((filter) => filter.advanced);
   const saved = useUiPrefs((state) => state.dataPanels[id]);
   const setPreference = useUiPrefs((state) => state.setDataPanelPreference);
   const keys = columns.map((column) => column.key);
@@ -111,12 +121,44 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
   const { rows, total, loading, error } = data;
 
   useEffect(() => {
-    // Browser back/forward and shared links update the visible form, not just requests.
-    // setFieldValue replaces nested ranges; setFieldsValue would merge stale min/max.
-    for (const filter of filters) {
-      form.setFieldValue(String(filter.key), query.filters[filter.key]);
+    // Browser back/forward synchronizes submitted quick filters. Never let
+    // an unsent advanced draft leak into URL-owned query state.
+    for (const filter of regularFilters) {
+      quickForm.setFieldValue(String(filter.key), query.filters[filter.key]);
     }
-  }, [form, query.filters]);
+  }, [quickForm, query.filters]);
+
+  useEffect(() => {
+    if (!advancedOpen) return;
+    // Begin with the applied query, while respecting unsent quick-search edits.
+    // Read ONLY regular fields: the quick form's initialValues also contains
+    // advanced keys, which may be stale after browser back/forward navigation.
+    const draft = { ...query.filters };
+    for (const filter of regularFilters) {
+      draft[filter.key] = quickForm.getFieldValue(String(filter.key));
+    }
+    for (const filter of filters) {
+      advancedForm.setFieldValue(String(filter.key), draft[filter.key]);
+    }
+  }, [advancedOpen, advancedForm, quickForm, query.filters]);
+
+  const submitQuick = (values: Partial<Filters>) => {
+    onQueryChange({ ...query, filters: { ...query.filters, ...values }, page: 1 });
+  };
+
+  const submitAdvanced = (values: Filters) => {
+    // An invalid domain-specific filter must remain editable in the dialog.
+    if (onQueryChange({ ...query, filters: values, page: 1 }) !== false) {
+      setAdvancedOpen(false);
+    }
+  };
+
+  const resetAllFilters = () => {
+    for (const filter of regularFilters) {
+      quickForm.setFieldValue(String(filter.key), initialFilters[filter.key]);
+    }
+    onQueryChange({ ...query, filters: initialFilters, page: 1 });
+  };
 
   const savePreference = (next: DataPanelPreference) => {
     setPreference(id, { ...prefs, ...next });
@@ -187,25 +229,33 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
     }
   };
 
-  const renderFilter = (filter: PanelFilter<Filters>) => {
+  const renderFilter = (filter: PanelFilter<Filters>, mode: 'inline' | 'modal') => {
+    // The width belongs to the control, NOT the entire labelled Form.Item.
+    // Fixing the wrapper width made AntD push input controls beneath labels.
+    const controlWidth = mode === 'modal' ? '100%' : (filter.width ?? (filter.kind === 'text' ? 230 : 160));
+    // AntD uses a field's name as its default HTML id. Both Forms render at
+    // once while the modal is open, so they need distinct input/label targets.
+    const fieldId = `${id}-${mode}-${String(filter.key)}`;
     if (filter.kind === 'text') {
-      return <Form.Item name={String(filter.key)} label={filter.label}>
-        <Input allowClear placeholder={filter.placeholder} style={{ width: '100%', minWidth: 0 }} />
+      return <Form.Item name={String(filter.key)} label={filter.label} htmlFor={fieldId}>
+        <Input id={fieldId} allowClear placeholder={filter.placeholder} style={{ width: controlWidth, minWidth: 0 }} />
       </Form.Item>;
     }
     if (filter.kind === 'select') {
-      return <Form.Item name={String(filter.key)} label={filter.label}>
-        <Select options={[...filter.options]} style={{ width: '100%' }} />
+      return <Form.Item name={String(filter.key)} label={filter.label} htmlFor={fieldId}>
+        <Select id={fieldId} options={[...filter.options]} style={{ width: controlWidth }} />
       </Form.Item>;
     }
-    return <Form.Item label={filter.label}>
-      <Space size={4} wrap>
+    return <Form.Item label={filter.label} htmlFor={`${fieldId}-min`}>
+      <Space size={4} wrap={mode === 'modal'}>
         <Form.Item name={[String(filter.key), 'min']} noStyle>
-          <InputNumber min={filter.min} max={filter.max} placeholder="最小值" aria-label={`${filter.label}最小值`} style={{ width: 104 }} />
+          <InputNumber id={`${fieldId}-min`} min={filter.min} max={filter.max} placeholder="最小值"
+            aria-label={`${filter.label}最小值`} style={{ width: mode === 'modal' ? 136 : 104 }} />
         </Form.Item>
         <span aria-hidden="true">—</span>
         <Form.Item name={[String(filter.key), 'max']} noStyle>
-          <InputNumber min={filter.min} max={filter.max} placeholder="最大值" aria-label={`${filter.label}最大值`} style={{ width: 104 }} />
+          <InputNumber id={`${fieldId}-max`} min={filter.min} max={filter.max} placeholder="最大值"
+            aria-label={`${filter.label}最大值`} style={{ width: mode === 'modal' ? 136 : 104 }} />
         </Form.Item>
       </Space>
     </Form.Item>;
@@ -261,38 +311,43 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
     <section className="panel-surface data-panel" aria-label={label}>
       <div className="panel-toolbar-row data-panel-toolbar-row">
         <Form<Filters>
-          form={form}
+          form={quickForm}
           className="panel-toolbar data-panel-form"
           layout="inline"
           initialValues={query.filters}
-          onFinish={(values) => onQueryChange({ ...query, filters: values, page: 1 })}
+          onFinish={submitQuick}
         >
-          {filters.map((filter) => (
-            <div
-              key={filter.key}
-              className="data-panel-filter"
-              style={{ width: filter.width ?? (filter.kind === 'numberRange' ? 250 : filter.kind === 'text' ? 230 : 160) }}
-              hidden={Boolean(filter.advanced && !expanded)}
-            >
-              {renderFilter(filter)}
+          <div className="data-panel-quick-line">
+            {quickFilters.map((filter) => (
+              <div key={filter.key} className="data-panel-filter">
+                {renderFilter(filter, 'inline')}
+              </div>
+            ))}
+            <Form.Item className="data-panel-form-actions">
+              <Space size={6} wrap>
+                <Button type="primary" htmlType="submit" icon={<Search size={14} />}>查询</Button>
+                <Button icon={<RotateCcw size={14} />} onClick={resetAllFilters}>重置</Button>
+                {hasAdvanced ? (
+                  <Button type="link" onClick={() => setAdvancedOpen(true)}>高级检索</Button>
+                ) : null}
+                {extraFilters.length > 0 ? (
+                  <Button type="link" aria-expanded={extraExpanded}
+                    onClick={() => setExtraExpanded((value) => !value)}>
+                    {extraExpanded ? '收起条件' : '更多条件'}
+                  </Button>
+                ) : null}
+              </Space>
+            </Form.Item>
+          </div>
+          {extraFilters.length > 0 ? (
+            <div className="data-panel-extra-filters" aria-label="更多筛选条件" hidden={!extraExpanded}>
+              {extraFilters.map((filter) => (
+                <div key={filter.key} className="data-panel-filter">
+                  {renderFilter(filter, 'inline')}
+                </div>
+              ))}
             </div>
-          ))}
-          <Form.Item className="data-panel-form-actions">
-            <Space size={6} wrap>
-              <Button type="primary" htmlType="submit" icon={<Search size={14} />}>查询</Button>
-              <Button icon={<RotateCcw size={14} />} onClick={() => {
-                for (const filter of filters) {
-                  form.setFieldValue(String(filter.key), initialFilters[filter.key]);
-                }
-                onQueryChange({ ...query, filters: initialFilters, page: 1 });
-              }}>重置</Button>
-              {filters.some((filter) => filter.advanced) ? (
-                <Button type="link" onClick={() => setExpanded((value) => !value)}>
-                  {expanded ? '收起筛选' : '高级检索'}
-                </Button>
-              ) : null}
-            </Space>
-          </Form.Item>
+          ) : null}
         </Form>
         <div className="panel-action data-panel-tools">
           <Space size={8} wrap>
@@ -312,6 +367,39 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
           </Space>
         </div>
       </div>
+      {hasAdvanced && advancedOpen ? (
+        <Modal
+          title="高级检索"
+          aria-label="高级检索"
+          open={advancedOpen}
+          width={680}
+          onCancel={() => setAdvancedOpen(false)}
+          onOk={() => advancedForm.submit()}
+          okText="查询"
+          cancelText="取消"
+        >
+          <Form<Filters>
+            form={advancedForm}
+            layout="vertical"
+            className="data-panel-advanced-form"
+            initialValues={query.filters}
+            onFinish={submitAdvanced}
+          >
+            <div className="data-panel-advanced-grid">
+              {filters.map((filter) => (
+                <div key={filter.key} className="data-panel-modal-filter">
+                  {renderFilter(filter, 'modal')}
+                </div>
+              ))}
+            </div>
+            <Button onClick={() => {
+              for (const filter of filters) {
+                advancedForm.setFieldValue(String(filter.key), initialFilters[filter.key]);
+              }
+            }}>清空条件</Button>
+          </Form>
+        </Modal>
+      ) : null}
       {error ? (
         <div className="panel-feedback">
           <Alert type="error" showIcon title={errorTitle} description={error.message}
