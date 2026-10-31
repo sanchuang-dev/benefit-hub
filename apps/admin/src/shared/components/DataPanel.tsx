@@ -107,7 +107,10 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
 
   useEffect(() => {
     // Browser back/forward and shared links update the visible form, not just requests.
-    form.setFieldsValue(query.filters);
+    // setFieldValue replaces nested ranges; setFieldsValue would merge stale min/max.
+    for (const filter of filters) {
+      form.setFieldValue(String(filter.key), query.filters[filter.key]);
+    }
   }, [form, query.filters]);
 
   const savePreference = (next: DataPanelPreference) => {
@@ -273,7 +276,9 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
             <Space size={6} wrap>
               <Button type="primary" htmlType="submit" icon={<Search size={14} />}>查询</Button>
               <Button icon={<RotateCcw size={14} />} onClick={() => {
-                form.setFieldsValue(initialFilters);
+                for (const filter of filters) {
+                  form.setFieldValue(String(filter.key), initialFilters[filter.key]);
+                }
                 onQueryChange({ ...query, filters: initialFilters, page: 1 });
               }}>重置</Button>
               {filters.some((filter) => filter.advanced) ? (
