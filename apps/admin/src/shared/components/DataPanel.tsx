@@ -131,7 +131,12 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
   useEffect(() => {
     if (!advancedOpen) return;
     // Begin with the applied query, while respecting unsent quick-search edits.
-    const draft = { ...query.filters, ...quickForm.getFieldsValue(true) } as Filters;
+    // Read ONLY regular fields: the quick form's initialValues also contains
+    // advanced keys, which may be stale after browser back/forward navigation.
+    const draft = { ...query.filters };
+    for (const filter of regularFilters) {
+      draft[filter.key] = quickForm.getFieldValue(String(filter.key));
+    }
     for (const filter of filters) {
       advancedForm.setFieldValue(String(filter.key), draft[filter.key]);
     }
