@@ -38,6 +38,14 @@ describe('DataPanel display preference boundaries', () => {
     expect(moveColumn(prefs.columnOrder, 'price', -1)).toEqual(prefs.columnOrder);
   });
 
+  it('shows newly added columns after an existing preference was saved', () => {
+    const prefs = resolvePanelPreference({
+      visibleKeys: ['name'], columnOrder: ['name', 'price'],
+    }, ['name', 'price', 'status'], true);
+    expect(prefs.visibleKeys).toEqual(['name', 'status']);
+    expect(prefs.columnOrder).toEqual(['name', 'price', 'status']);
+  });
+
   it('never restores more than a bounded number of panel ids or column keys', () => {
     const many = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [
       'panel-' + i, { columnOrder: Array.from({ length: 200 }, (_, x) => 'field-' + x) },
