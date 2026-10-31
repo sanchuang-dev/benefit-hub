@@ -367,13 +367,14 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
       {hasAdvanced ? (
         <Modal
           title="高级检索"
+          aria-label="高级检索"
           open={advancedOpen}
+          forceRender
           width={680}
           onCancel={() => setAdvancedOpen(false)}
           onOk={() => advancedForm.submit()}
           okText="查询"
           cancelText="取消"
-          destroyOnHidden
         >
           <Form<Filters>
             form={advancedForm}
