@@ -45,6 +45,26 @@ describe('server-only Yangmao D configuration', () => {
   });
 });
 
+describe('D live-write authorization gate', () => {
+  it('is disabled by default and enabled only by the exact true value', () => {
+    expect(loadConfig({ ...BASE_ENV }).dLiveWritesEnabled).toBe(false);
+    expect(
+      loadConfig({ ...BASE_ENV, BENEFIT_D_LIVE_WRITE_ENABLED: 'false' })
+        .dLiveWritesEnabled,
+    ).toBe(false);
+    expect(
+      loadConfig({ ...BASE_ENV, BENEFIT_D_LIVE_WRITE_ENABLED: 'true' })
+        .dLiveWritesEnabled,
+    ).toBe(true);
+  });
+
+  it('rejects malformed gate values instead of enabling them loosely', () => {
+    expect(() =>
+      loadConfig({ ...BASE_ENV, BENEFIT_D_LIVE_WRITE_ENABLED: 'TRUE' }),
+    ).toThrowError(/BENEFIT_D_LIVE_WRITE_ENABLED/);
+  });
+});
+
 describe('server-only downstream order service credentials', () => {
   const TOKEN_A = 'fictional-config-token-local-life-000000001';
   const TOKEN_B = 'fictional-config-token-card-doctor-0000002';
