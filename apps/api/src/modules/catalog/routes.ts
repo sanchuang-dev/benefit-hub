@@ -11,7 +11,10 @@ import {
   createProduct,
   getProduct,
   listProducts,
+  MAPPING_STATES,
   PRODUCT_CODE_PATTERN,
+  PRODUCT_SORT_FIELDS,
+  PRODUCT_SORT_ORDERS,
   PRODUCT_STATUSES,
   ProductCodeConflictError,
   ProductInputError,
@@ -34,6 +37,12 @@ const codeSchema = z
 const nameSchema = z.string().trim().min(1, '请输入商品名称').max(80, '商品名称最长 80 个字符');
 const descriptionSchema = z.string().trim().max(200, '商品描述最长 200 个字符');
 const centsSchema = z.number().int('金额必须为整数分').min(0, '金额不能为负').max(MAX_CENTS);
+/** Query parameters arrive as strings, so the list price bounds are coerced. */
+const queryCentsSchema = z.coerce
+  .number()
+  .int('金额必须为整数分')
+  .min(0, '金额不能为负')
+  .max(MAX_CENTS);
 const versionSchema = z.number().int().min(1);
 
 const createProductSchema = z
@@ -65,15 +74,37 @@ const statusActionSchema = z.object({ version: versionSchema }).strict();
 /**
  * Query parameters are strings on the wire. Unknown parameters are ignored so
  * cache-busting keys do not turn a read into a 400; invalid values still fail.
- * `supplier` is restricted to the providers the mapping contract accepts.
+ * `supplier` is restricted to the providers the mapping contract accepts, and
+ * `sortBy` to the repository's static column whitelist.
+ *
+ * Sort direction alone is rejected: it has no meaning without a field, and
+ * silently ignoring it would let a caller believe it sorted. When only `sortBy`
+ * is supplied the direction defaults to ascending.
  */
-const listQuerySchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
-  keyword: z.string().trim().max(64).optional(),
-  status: z.enum(PRODUCT_STATUSES).optional(),
-  supplier: z.enum(MAPPING_PROVIDERS).optional(),
-});
+const listQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(MAX_PAGE_SIZE).default(20),
+    keyword: z.string().trim().max(64).optional(),
+    status: z.enum(PRODUCT_STATUSES).optional(),
+    supplier: z.enum(MAPPING_PROVIDERS).optional(),
+    mappingState: z.enum(MAPPING_STATES).optional(),
+    displayPriceMinCents: queryCentsSchema.optional(),
+    displayPriceMaxCents: queryCentsSchema.optional(),
+    sortBy: z.enum(PRODUCT_SORT_FIELDS).optional(),
+    sortOrder: z.enum(PRODUCT_SORT_ORDERS).optional(),
+  })
+  .refine((value) => value.sortOrder === undefined || value.sortBy !== undefined, {
+    path: ['sortOrder'],
+    message: 'sortOrder 必须与 sortBy 一起使用',
+  })
+  .refine(
+    (value) =>
+      value.displayPriceMinCents === undefined ||
+      value.displayPriceMaxCents === undefined ||
+      value.displayPriceMinCents <= value.displayPriceMaxCents,
+    { path: ['displayPriceMinCents'], message: 'displayPriceMinCents 不能大于 displayPriceMaxCents' },
+  );
 
 /**
  * Supplier options for the catalogue filter. `configured` is a server fact about
@@ -139,6 +170,11 @@ export function createCatalogRoutes(deps: { db: AppDatabase; config: AppConfig }
       keyword,
       status: parsed.data.status,
       supplier: parsed.data.supplier,
+      mappingState: parsed.data.mappingState,
+      displayPriceMinCents: parsed.data.displayPriceMinCents,
+      displayPriceMaxCents: parsed.data.displayPriceMaxCents,
+      sortBy: parsed.data.sortBy,
+      sortOrder: parsed.data.sortOrder,
     });
 
     return c.json(

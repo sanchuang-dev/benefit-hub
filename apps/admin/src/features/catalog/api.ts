@@ -51,12 +51,32 @@ export interface SupplierFilterOption {
   configured: boolean;
 }
 
+/** Server-side sort whitelist for the catalogue list. */
+export const PRODUCT_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'code',
+  'name',
+  'displayPriceCents',
+] as const;
+export type ProductSortField = (typeof PRODUCT_SORT_FIELDS)[number];
+
+export const PRODUCT_SORT_ORDERS = ['asc', 'desc'] as const;
+export type ProductSortOrder = (typeof PRODUCT_SORT_ORDERS)[number];
+
 export interface ProductListParams {
   page: number;
   pageSize: number;
   keyword?: string;
   status?: ProductStatus;
   supplier?: MappingProvider;
+  mappingState?: ProductMappingState;
+  /** Inclusive display price bounds in integer cents; NULL prices never match. */
+  displayPriceMinCents?: number;
+  displayPriceMaxCents?: number;
+  sortBy?: ProductSortField;
+  /** Only meaningful together with `sortBy`; the server defaults to ascending. */
+  sortOrder?: ProductSortOrder;
 }
 
 export interface ProductListResponse {
@@ -122,6 +142,15 @@ export function fetchProducts(params: ProductListParams): Promise<ProductListRes
   if (params.keyword) query.set('keyword', params.keyword);
   if (params.status) query.set('status', params.status);
   if (params.supplier) query.set('supplier', params.supplier);
+  if (params.mappingState) query.set('mappingState', params.mappingState);
+  if (params.displayPriceMinCents !== undefined) {
+    query.set('displayPriceMinCents', String(params.displayPriceMinCents));
+  }
+  if (params.displayPriceMaxCents !== undefined) {
+    query.set('displayPriceMaxCents', String(params.displayPriceMaxCents));
+  }
+  if (params.sortBy) query.set('sortBy', params.sortBy);
+  if (params.sortOrder) query.set('sortOrder', params.sortOrder);
   return apiRequest<ProductListResponse>(`/api/v1/catalog/products?${query.toString()}`);
 }
 

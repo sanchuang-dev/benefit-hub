@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { MappingProvider } from '@sanchuang-dev/benefit-contracts';
-import { and, asc, count, desc, eq, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
+import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import type { AppDatabase } from '../../db/client.js';
 import {
   catalogProductEvents,
@@ -48,6 +49,23 @@ export type CatalogProductDto = CatalogProduct;
  */
 export const MAPPING_STATES = ['none', 'draft', 'active'] as const;
 export type MappingState = (typeof MAPPING_STATES)[number];
+
+/**
+ * Public sort fields for the catalogue list. The typed whitelist is also the
+ * complete set of SQL columns the request may order by; unknown values are
+ * rejected by the route instead of reaching SQL.
+ */
+export const PRODUCT_SORT_FIELDS = [
+  'createdAt',
+  'updatedAt',
+  'code',
+  'name',
+  'displayPriceCents',
+] as const;
+export type ProductSortField = (typeof PRODUCT_SORT_FIELDS)[number];
+
+export const PRODUCT_SORT_ORDERS = ['asc', 'desc'] as const;
+export type ProductSortOrder = (typeof PRODUCT_SORT_ORDERS)[number];
 
 /**
  * Mapping summary attached to a catalogue list row. The mapping facts are owned
@@ -314,6 +332,15 @@ export interface ProductListQuery {
   status?: ProductStatus;
   /** Effective supplier: the active version's provider, otherwise the draft's. */
   supplier?: MappingProvider;
+  /** Mapping state filter; `none` means the product has no mapping row at all. */
+  mappingState?: MappingState;
+  /** Inclusive display price bounds; a NULL price never matches either bound. */
+  displayPriceMinCents?: number;
+  displayPriceMaxCents?: number;
+  /** Whitelisted sort field. Absent keeps the legacy createdAt DESC, code ASC. */
+  sortBy?: ProductSortField;
+  /** Absent means ascending when `sortBy` is present; rejected without `sortBy`. */
+  sortOrder?: ProductSortOrder;
 }
 
 export interface ProductListResult {
@@ -323,6 +350,45 @@ export interface ProductListResult {
 
 function escapeLike(value: string): string {
   return value.replace(/[\\%_]/g, '\\$&');
+}
+
+/**
+ * Static sort whitelist: a request can only select one of these known columns,
+ * never inject an expression. `displayPriceCents` is the one field with custom
+ * NULL placement, so it is handled separately in `listOrderBy`.
+ */
+const PRODUCT_SORT_COLUMNS = {
+  createdAt: catalogProducts.createdAt,
+  updatedAt: catalogProducts.updatedAt,
+  code: catalogProducts.code,
+  name: catalogProducts.name,
+  displayPriceCents: catalogProducts.displayPriceCents,
+} as const satisfies Record<ProductSortField, SQLiteColumn>;
+
+/**
+ * Builds the ORDER BY terms. Every explicit sort ends with the unique `code` as
+ * a stable tie-breaker so equal values cannot reorder between pages. A NULL
+ * display price sorts last in both directions, which keeps the page boundaries
+ * identical whether the operator asks for cheapest or most expensive first.
+ */
+function listOrderBy(query: ProductListQuery) {
+  if (!query.sortBy) {
+    // Legacy default for callers that never learned about sorting.
+    return [desc(catalogProducts.createdAt), asc(catalogProducts.code)];
+  }
+
+  const direction = query.sortOrder === 'desc' ? desc : asc;
+  if (query.sortBy === 'displayPriceCents') {
+    return [
+      asc(sql`${catalogProducts.displayPriceCents} IS NULL`),
+      direction(catalogProducts.displayPriceCents),
+      asc(catalogProducts.code),
+    ];
+  }
+
+  const terms = [direction(PRODUCT_SORT_COLUMNS[query.sortBy])];
+  if (query.sortBy !== 'code') terms.push(asc(catalogProducts.code));
+  return terms;
 }
 
 /** Columns selected for a list row, including the mapping read projection. */
@@ -389,8 +455,10 @@ function toMappingSummary(row: ProductListRow): ProductMappingSummary {
  * This is deliberately a list read model: it left-joins the current mapping root
  * and its active version snapshot to show mapping facts, but mapping writes stay
  * in the mapping module. The same joins and WHERE are used by the count query so
- * `supplier` filtering — which must happen in SQL — changes `total` and paging
- * consistently instead of being applied to an already-paginated page in memory.
+ * `supplier`, mapping-state and price filtering — which must happen in SQL —
+ * change `total` and paging consistently instead of being applied to an
+ * already-paginated page in memory. ORDER BY is applied before LIMIT/OFFSET, so
+ * each page is a slice of the full sorted result rather than a re-sorted page.
  */
 export function listProducts(db: AppDatabase, query: ProductListQuery): ProductListResult {
   const conditions = [];
@@ -412,6 +480,26 @@ export function listProducts(db: AppDatabase, query: ProductListQuery): ProductL
     conditions.push(
       sql`COALESCE(${supplierProductMappingVersions.provider}, ${supplierProductMappings.provider}) = ${query.supplier}`,
     );
+  }
+  if (query.mappingState === 'none') {
+    conditions.push(isNull(supplierProductMappings.id));
+  } else if (query.mappingState === 'draft') {
+    conditions.push(
+      and(
+        isNotNull(supplierProductMappings.id),
+        isNull(supplierProductMappings.activeVersionId),
+      ),
+    );
+  } else if (query.mappingState === 'active') {
+    conditions.push(isNotNull(supplierProductMappings.activeVersionId));
+  }
+  if (query.displayPriceMinCents !== undefined) {
+    // SQL comparison already excludes NULL, which is the documented contract:
+    // a product without a price cannot satisfy a requested price range.
+    conditions.push(gte(catalogProducts.displayPriceCents, query.displayPriceMinCents));
+  }
+  if (query.displayPriceMaxCents !== undefined) {
+    conditions.push(lte(catalogProducts.displayPriceCents, query.displayPriceMaxCents));
   }
   const where = conditions.length > 0 ? and(...conditions) : undefined;
 
@@ -467,7 +555,7 @@ export function listProducts(db: AppDatabase, query: ProductListQuery): ProductL
       ),
     )
     .where(where)
-    .orderBy(desc(catalogProducts.createdAt), asc(catalogProducts.code))
+    .orderBy(...listOrderBy(query))
     .limit(query.pageSize)
     .offset((query.page - 1) * query.pageSize)
     .all();
