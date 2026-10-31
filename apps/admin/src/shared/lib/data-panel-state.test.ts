@@ -32,7 +32,8 @@ describe('DataPanel display preference boundaries', () => {
     const prefs = resolvePanelPreference({
       visibleKeys: ['name'], columnOrder: ['price', 'name'],
     }, ['name', 'price', 'status'], true);
-    expect(prefs.visibleKeys).toEqual(['name']);
+    // A column absent from the saved order is newly introduced, so show it.
+    expect(prefs.visibleKeys).toEqual(['name', 'status']);
     expect(prefs.columnOrder).toEqual(['price', 'name', 'status']);
     expect(moveColumn(prefs.columnOrder, 'price', 1)).toEqual(['name', 'price', 'status']);
     expect(moveColumn(prefs.columnOrder, 'price', -1)).toEqual(prefs.columnOrder);
