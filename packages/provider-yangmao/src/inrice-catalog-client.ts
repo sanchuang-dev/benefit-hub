@@ -153,10 +153,19 @@ function normalizeCredential(value: string): string {
   return value;
 }
 
-function safeVendorMessage(value: unknown): string | undefined {
+function safeVendorMessage(
+  value: unknown,
+  sensitiveValues: readonly string[],
+): string | undefined {
   if (typeof value !== 'string') return undefined;
   const normalized = value.trim();
   if (normalized === '' || normalized.length > 256 || hasControlCharacters(normalized)) {
+    return undefined;
+  }
+  if (sensitiveValues.some((secret) => secret !== '' && normalized.includes(secret))) {
+    return undefined;
+  }
+  if (/appsecret|x-signature|x-app-key|authorization|bearer\s|access[_ -]?token/i.test(normalized)) {
     return undefined;
   }
   return normalized;
@@ -411,7 +420,10 @@ class YangmaoInriceCatalogClient
       if (envelope.data.code === 403) {
         throw new YangmaoInriceError('YANGMAO_INRICE_FORBIDDEN', { vendorCode: 403 });
       }
-      const vendorMessage = safeVendorMessage(envelope.data.message);
+      const vendorMessage = safeVendorMessage(
+        envelope.data.message,
+        [this.appKey, this.appSecret],
+      );
       const classified = businessFailureClassifier?.(
         envelope.data.code,
         vendorMessage,
