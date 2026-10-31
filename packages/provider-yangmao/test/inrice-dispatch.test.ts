@@ -13,7 +13,7 @@ const APP_SECRET = 'test-secret-do-not-use';
 const PARTNER_ORDER_NO = 'P202610310001';
 const PRODUCT_CODE = 'INRICE_TEST_1';
 const MOBILE = '13800138000';
-const SIGNATURE = 'VgKuPpsQST7y70PX4RSjmsM3L4i3GG6pGgm4OVJTn/A=';
+const SIGNATURE = 'F5KZpsVLzxPywoYBldXW3IuAqer4sjTdkqSNeO7KRQk=';
 
 function jsonResponse(body: unknown, status = 200): Promise<Response> {
   return Promise.resolve(
@@ -57,11 +57,11 @@ describe('D-mode dispatch signature/body', () => {
         mobile: MOBILE,
       }),
     ).toBe(
-      '{"partnerOrderNo":"P202610310001","productCode":"INRICE_TEST_1","mobile":"13800138000"}',
+      '{"mobile":"13800138000","partnerOrderNo":"P202610310001","productCode":"INRICE_TEST_1"}',
     );
   });
 
-  it('sends one signed POST whose body is exactly the signed JSON', async () => {
+  it('signs the verified DTO order while sending the documented request body', async () => {
     let captured: Request | undefined;
     const client = createClient(async (request) => {
       captured = request;
