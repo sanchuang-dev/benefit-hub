@@ -275,7 +275,7 @@ describe('login flow', () => {
     expect(screen.queryByText('未找到匹配的菜单')).toBeNull();
   }, 20_000);
 
-  it('opens each platform destination from grouped navigation with its real capability state', async () => {
+  it('opens supplier and downstream application destinations with their real capability state', async () => {
     mockFetch((url) => {
       if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
       if (url === '/api/v1/suppliers') return jsonResponse(200, {
@@ -320,6 +320,22 @@ describe('login flow', () => {
       ),
     ).toBeTruthy();
     expect(screen.getByRole('tab', { name: /下游应用/ })).toBeTruthy();
+  }, 30_000);
+
+  it('opens planned platform destinations with their honest capability notices', async () => {
+    mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return jsonResponse(200, SESSION);
+      if (url === '/api/v1/system/status') {
+        return jsonResponse(200, {
+          service: 'benefit-hub',
+          phase: 'auth-enabled',
+          adminEnabled: true,
+          authenticationRequired: true,
+        });
+      }
+      return undefined;
+    });
+    renderRoutes('/');
 
     for (const [name, notice] of [
       ['价值换算', '价值换算规则服务尚未接入'],
@@ -330,9 +346,7 @@ describe('login flow', () => {
       expect(screen.getByText(notice)).toBeTruthy();
       expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
     }
-  // Four Ant Design route transitions render asynchronously on loaded CI runners;
-  // retain the full assertions with a bounded 45s integration budget.
-  }, 45_000);
+  }, 30_000);
 
   it('restores session-local work tabs after a refresh and drops unknown routes', async () => {
     mockFetch((url) => {
