@@ -24,6 +24,7 @@ import type { AppEnv } from '../../middleware/auth.js';
 import { NO_STORE_HEADERS, apiError, invalidRequest, issueFields, readJson } from '../http.js';
 import {
   createPrepaidGrantService,
+  PrepaidGrantWriteDisabledError,
   PurchaseNotEligibleError,
   type PrepaidGrantOutcome,
 } from './a-prepaid-grant.js';
@@ -234,7 +235,14 @@ function handleOrderError(c: Context<AppEnv>, error: unknown) {
  * Grant-specific failures. Anything not handled here is an existing order
  * failure, so the same stable mapping is reused instead of duplicated.
  */
-function handleGrantError(c: Context<AppEnv>, error: unknown) {
+export function handleGrantError(c: Context<AppEnv>, error: unknown) {
+  if (error instanceof PrepaidGrantWriteDisabledError) {
+    return c.json(
+      apiError('PREPAID_GRANT_WRITE_DISABLED', 'A 真实礼包扣额未被维护者单独启用'),
+      503,
+      NO_STORE_HEADERS,
+    );
+  }
   if (error instanceof PurchaseNotEligibleError) {
     return c.json(
       apiError('PURCHASE_NOT_ELIGIBLE', '该手机号存在限领或未领取权益，未发起上力下单'),
