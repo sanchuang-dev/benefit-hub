@@ -48,6 +48,14 @@ jobs:
           test -n "$cid"
           gate="$(docker exec "$cid" sh -lc 'printf "%s" "$BENEFIT_D_LIVE_WRITE_ENABLED"')"
           test "$gate" = false
-          curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null
+          ok=0
+          for n in $(seq 1 30); do
+            if curl -fsS --max-time 3 http://127.0.0.1:18080/healthz >/dev/null 2>&1; then
+              ok=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ok" = 1
           echo 'D_LIVE_WRITE_GATE_ENABLED=false'
           REMOTE
