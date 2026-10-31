@@ -38,6 +38,7 @@ export class TestServer {
       dLiveWritesEnabled: false,
       buildInfo: { version: null, commit: null, builtAt: null },
       ...overrides,
+      dLiveWritesEnabled: overrides.dLiveWritesEnabled ?? false,
     };
     this.database = openDatabase(this.file);
     runMigrations(this.database.sqlite);
