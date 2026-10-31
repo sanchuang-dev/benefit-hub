@@ -53,3 +53,23 @@ assets and a temporary SQLite volume. Files are `bhb-014-b-*.png`.
   only `关闭` and disabled fields, with no issue/revoke/save controls.
 - These screenshots prove the rendered UI states only. They are not Issue
   acceptance, staging/production deployment, or real supplier fulfillment.
+
+## 供应商详情页头：接入状态与次级说明（2026-10-31）
+
+`.page-header` 的布局调整，截图文件：`bhb-suppliers-header-1366.png`、
+`bhb-suppliers-header-390.png`。被测页面为 供应商管理 → 上力
+（`/suppliers/yangmao`），dev server + 本地 API，admin 账号。
+
+- 变更前：`Provider: yangmao`、目录凭证状态、目录读取状态三个标签在页签上方的
+  正文区单独占一行；面包屑下方是一行 13px 的“接入配置、商品目录与供货信息。”
+  说明。
+- 变更后：三个状态标签跟在面包屑导航后面（同一行，宽度不够时换行），说明文字
+  仍保留为面包屑下方的次级说明；不再有圆形问号按钮或 tooltip（评审后移除）。
+- 1366×900：页头高 71.4px；面包屑宽 155.3px，状态标签从 x=399.3 开始（面包屑
+  右缘 + 12px 间距），单行 23px；说明行在状态行下方；`scrollWidth === 1366`，
+  无横向溢出。
+- 390×844：标题行内换行——面包屑一行 26px，状态标签 54px（两到三行），说明行
+  在其下；页头高 129.4px；`scrollWidth === 390`，无横向溢出。
+- 浏览器控制台无 error/warning；DOM 中不存在 `.page-info-trigger`，说明文字只在
+  次级说明处出现一次。截图由 CDP 程序化采集，几何与像素做过 sanity check，但
+  没有人工视觉签字；该证据只证明渲染结果，不代表部署验收。
