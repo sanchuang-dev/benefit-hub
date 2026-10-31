@@ -920,7 +920,7 @@ describe('configurable catalogue panel', () => {
     fireEvent.click(await screen.findByTitle('已生效'));
     fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '10' } });
     fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
-    fireEvent.click(within(advancedDialog).getByRole('button', { name: /查\\s*询/ }));
+    fireEvent.click(within(advancedDialog).getByRole('button', { name: /查\s*询/ }));
 
     await waitFor(() => {
       const request = listRequests.at(-1);
@@ -999,7 +999,7 @@ describe('configurable catalogue panel', () => {
     const dialog = await screen.findByRole('dialog', { name: '高级检索' });
     fireEvent.change(screen.getByLabelText('展示价（元）最小值'), { target: { value: '30' } });
     fireEvent.change(screen.getByLabelText('展示价（元）最大值'), { target: { value: '20' } });
-    fireEvent.click(within(dialog).getByRole('button', { name: /查\\s*询/ }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
 
     expect(await screen.findByText('展示价最低值不能高于最高值')).toBeTruthy();
     expect(screen.getByRole('dialog', { name: '高级检索' })).toBeTruthy();
