@@ -158,6 +158,8 @@ describe('catalogue panel state', () => {
     expect(priceToCents(Number.POSITIVE_INFINITY)).toBeUndefined();
     expect(priceToCents(Number.MAX_SAFE_INTEGER)).toBeUndefined();
     expect(priceToCents(12.34)).toBe(1234);
+    expect(priceToCents(12.345)).toBeUndefined();
+    expect(priceToCents(0.001)).toBeUndefined();
   });
 
   it('knows whether any filter narrows the list', () => {

@@ -86,6 +86,18 @@ describe('persisted prefs validation', () => {
     });
   });
 
+  it('migrates an existing catalogue card-view preference without overwriting a new panel preference', () => {
+    expect(sanitizePersistedUiPrefs({ catalogView: 'card' }).dataPanels).toEqual({
+      'catalog-products': { view: 'card' },
+    });
+    expect(sanitizePersistedUiPrefs({
+      catalogView: 'card',
+      dataPanels: { 'catalog-products': { view: 'table', density: 'small' } },
+    }).dataPanels).toEqual({
+      'catalog-products': { view: 'table', density: 'small' },
+    });
+  });
+
   it('ignores non-object payloads', () => {
     expect(sanitizePersistedUiPrefs(null)).toEqual({});
     expect(sanitizePersistedUiPrefs('nope')).toEqual({});

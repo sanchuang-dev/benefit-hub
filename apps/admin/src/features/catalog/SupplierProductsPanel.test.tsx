@@ -220,7 +220,7 @@ describe('supplier products sub-tab', () => {
     fireEvent.click(within(section).getByText('卡片'));
     expect(await within(section).findByText('INTERNAL-01')).toBeTruthy();
 
-    const nextPage = section.querySelector('.data-panel-pagination .ant-pagination-next button');
+    const nextPage = section.querySelector('.catalog-card-pagination .ant-pagination-next button');
     expect(nextPage).toBeTruthy();
     fireEvent.click(nextPage!);
 

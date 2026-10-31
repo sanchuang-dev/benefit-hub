@@ -228,6 +228,14 @@ function CatalogPageContent() {
   const applyPanelQuery = (next: PanelQuery<CatalogFilters, ProductSortField>) => {
     const minCents = priceToCents(next.filters.displayPrice.min);
     const maxCents = priceToCents(next.filters.displayPrice.max);
+    const { min, max } = next.filters.displayPrice;
+    if (
+      ((min !== null && min !== undefined) && minCents === undefined) ||
+      ((max !== null && max !== undefined) && maxCents === undefined)
+    ) {
+      void message.error('展示价必须为非负金额，最多保留两位小数');
+      return;
+    }
     if (minCents !== undefined && maxCents !== undefined && minCents > maxCents) {
       // The API rejects this pair; ignore the submission instead of showing an
       // error page for an input the operator can still correct in place.

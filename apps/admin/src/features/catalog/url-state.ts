@@ -121,8 +121,13 @@ function centsToYuanValue(cents: number): number {
 export function priceToCents(value: number | null | undefined): number | undefined {
   if (value === null || value === undefined) return undefined;
   if (!Number.isFinite(value) || value < 0) return undefined;
-  const cents = Math.round(value * 100);
-  return Number.isSafeInteger(cents) ? cents : undefined;
+  const scaled = value * 100;
+  const cents = Math.round(scaled);
+  // Do not silently round a user-entered value with more than two decimals.
+  // Allow tiny IEEE-754 error for valid decimal cents (e.g. 12.34).
+  return Number.isSafeInteger(cents) && Math.abs(scaled - cents) < 1e-7
+    ? cents
+    : undefined;
 }
 
 function readPriceRange(params: URLSearchParams): CatalogPriceRange {

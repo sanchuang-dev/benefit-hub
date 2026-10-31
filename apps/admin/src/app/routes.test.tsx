@@ -236,10 +236,7 @@ describe('login flow', () => {
     fireEvent.click(screen.getByRole('tab', { name: '供货商品' }));
     await waitFor(() => expect(router.state.location.search).toBe('?tab=catalog'));
     expect(screen.getByRole('tab', { name: '供货商品', selected: true })).toBeTruthy();
-    // The suite grew with the catalogue panel integration; keep the full
-    // assertions while allowing the same route transitions the parallel
-    // workers already stretch past the original budget.
-  }, 60_000);
+  }, 30_000);
 
   it('filters the sidebar menu by search and restores it when cleared', async () => {
     mockFetch((url) => {
@@ -334,9 +331,8 @@ describe('login flow', () => {
       expect(screen.getByRole('tab', { name: new RegExp(name) })).toBeTruthy();
     }
   // Four Ant Design route transitions render asynchronously on loaded CI runners;
-  // retain the full assertions with a bounded integration budget that accounts
-  // for the larger parallel suite.
-  }, 90_000);
+  // retain the full assertions with a bounded 45s integration budget.
+  }, 45_000);
 
   it('restores session-local work tabs after a refresh and drops unknown routes', async () => {
     mockFetch((url) => {

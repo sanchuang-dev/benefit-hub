@@ -83,7 +83,16 @@ export function sanitizePersistedUiPrefs(value: unknown): Partial<UiPrefs> {
   }
   if (isViewMode(candidate.supplierView)) sanitized.supplierView = candidate.supplierView;
   if (isMappingTab(candidate.mappingTab)) sanitized.mappingTab = candidate.mappingTab;
-  if ('dataPanels' in candidate) sanitized.dataPanels = sanitizePanelPreferences(candidate.dataPanels);
+  // DPN-003 replaces the catalogue's legacy view selector with DataPanel.
+  // Restore an existing operator's table/card choice on the first upgrade,
+  // without overwriting an explicit panel-specific preference.
+  const panels = sanitizePanelPreferences(candidate.dataPanels);
+  if (!panels['catalog-products'] && isViewMode(candidate.catalogView)) {
+    panels['catalog-products'] = { view: candidate.catalogView };
+  }
+  if ('dataPanels' in candidate || isViewMode(candidate.catalogView)) {
+    sanitized.dataPanels = panels;
+  }
 
   return sanitized;
 }
