@@ -48,7 +48,7 @@ jobs:
             bytes="$(wc -c < "$out" 2>/dev/null || echo 0)"
             printf 'api_probe path=%s http=%s bytes=%s\n' "$path" "$status" "$bytes"
             if [ "$status" = '200' ] && [ "$bytes" -le 5000000 ]; then
-              grep -aEo '.{0,220}(/api/open/inrice/v1/orders/query|OpenInriceController|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,420}' "$out"                 | head -n 20                 | tr '\r\n' '  '                 | sed 's/[[:space:]][[:space:]]*/ /g'                 | sed "s#^#api_hit path=$path #"
+              grep -aEo '.{0,220}(/api/open/inrice/v1/orders/query|OpenInriceController|partnerOrderNo|dispatchStatus|fulfillmentSummary).{0,420}' "$out"                 | head -n 20                 | tr '\r\n' '  '                 | sed 's/[[:space:]][[:space:]]*/ /g'                 | sed "s#^#api_hit path=$path #" || true
               echo
             fi
           done
