@@ -1,10 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { and, asc, count, desc, eq, gte, isNull, lte } from 'drizzle-orm';
 import type { AppDatabase } from '../../db/client.js';
-import { directTopupSummarySchema, type DirectTopupSummaryDto } from '@sanchuang-dev/benefit-contracts';
+import {
+  dDispatchSummarySchema,
+  directTopupSummarySchema,
+  type DDispatchSummaryDto,
+  type DirectTopupSummaryDto,
+} from '@sanchuang-dev/benefit-contracts';
 import {
   benefitOrderDirectTopupObservations,
   benefitOrderDirectTopups,
+  benefitOrderDispatches,
   benefitOrderGiftVouchers,
   benefitOrderGrants,
   benefitOrders,
@@ -265,6 +271,7 @@ export interface OperationsOrderDetail {
   /** C-mode operation identity, when one was ever reserved. */
   giftVoucher: GiftVoucherOperation | null;
   directTopup: DirectTopupSummaryDto | null;
+  dispatch: DDispatchSummaryDto | null;
   statusEvents: OrderStatusEvent[];
   attempts: FulfillmentAttempt[];
 }
@@ -1657,6 +1664,8 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
       const giftVoucherRow = loadGiftVoucherRow(db, order.id);
       const bTopupRow = db.select().from(benefitOrderDirectTopups)
         .where(eq(benefitOrderDirectTopups.orderId, order.id)).get();
+      const dDispatchRow = db.select().from(benefitOrderDispatches)
+        .where(eq(benefitOrderDispatches.orderId, order.id)).get();
 
       return {
         order,
@@ -1673,6 +1682,15 @@ export function createBenefitOrderRepository(db: AppDatabase): BenefitOrderRepos
           : null,
         grant: grantRow ? toPrepaidGrant(grantRow) : null,
         giftVoucher: giftVoucherRow ? toGiftVoucherOperation(giftVoucherRow) : null,
+        dispatch: dDispatchRow ? dDispatchSummarySchema.parse({
+          state: dDispatchRow.state,
+          partnerOrderNo: dDispatchRow.partnerOrderNo,
+          upstreamOrderNo: dDispatchRow.upstreamOrderNo,
+          providerStatus: dDispatchRow.providerStatus,
+          lastVerifiedAt: dDispatchRow.lastVerifiedAt,
+          attemptedAt: dDispatchRow.attemptedAt,
+          updatedAt: dDispatchRow.updatedAt,
+        }) : null,
         directTopup: bTopupRow ? directTopupSummarySchema.parse({
           state: bTopupRow.state,
           requestId: bTopupRow.requestId,
