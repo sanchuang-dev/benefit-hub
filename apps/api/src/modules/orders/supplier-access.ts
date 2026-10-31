@@ -1,7 +1,10 @@
 import type {
   YangmaoOpenV1PurchaseReader,
 } from '@sanchuang-dev/provider-yangmao';
-import { createYangmaoOpenV1Client } from '@sanchuang-dev/provider-yangmao';
+import {
+  createYangmaoInriceCatalogClient,
+  createYangmaoOpenV1Client,
+} from '@sanchuang-dev/provider-yangmao';
 import type { AppConfig } from '../../config.js';
 import type { AppDatabase } from '../../db/client.js';
 import { findApplicationBySource, listApplicationProducts } from '../applications/applications.js';
@@ -67,4 +70,23 @@ export function requireSupplierMasterKey(config: AppConfig): Buffer {
     throw new SupplierKeyUnavailableError('上力凭证加密主密钥不可用');
   }
   return key;
+}
+
+
+/** Server-only D client built from the same encrypted Yangmao connection. */
+export function requireYangmaoInriceClient(
+  db: AppDatabase,
+  config: AppConfig,
+): ReturnType<typeof createYangmaoInriceCatalogClient> {
+  let supplier: ReturnType<typeof activeYangmaoReadConfig>;
+  try {
+    supplier = activeYangmaoReadConfig(db, config);
+  } catch (error) {
+    if (error instanceof SupplierCredentialUnavailableError) {
+      throw new SupplierKeyUnavailableError('上力凭证加密主密钥不可用');
+    }
+    throw error;
+  }
+  if (!supplier) throw new SupplierNotConfiguredError('上力接口凭证尚未保存');
+  return createYangmaoInriceCatalogClient(supplier);
 }

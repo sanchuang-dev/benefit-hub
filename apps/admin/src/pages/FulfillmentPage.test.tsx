@@ -532,6 +532,76 @@ describe('platform order detail drawer', () => {
     expect(writeCalls(fetchMock)).toEqual([]);
   });
 
+  it('shows D dispatch progress without exposing recipient payment or fulfillment secrets', { timeout: 60_000 }, async () => {
+    const detailData = detail({
+      fulfillmentMode: 'D',
+      status: 'processing',
+      frozenMapping: {
+        id: 'mapping-version-d',
+        mappingId: 'mapping-d',
+        versionNumber: 1,
+        provider: 'yangmao',
+        productCode: 'INRICE-D-FICTIONAL',
+        fulfillmentMode: 'D',
+        deductionUnit: 'amount',
+        activatedAt: NOW - 60_000,
+      },
+      dispatch: {
+        state: 'accepted',
+        partnerOrderNo: 'bhD0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab',
+        upstreamOrderNo: 'D-UPSTREAM-FICTIONAL-1',
+        providerStatus: 'RECEIVE',
+        lastVerifiedAt: NOW + 3_000,
+        attemptedAt: NOW + 1_000,
+        updatedAt: NOW + 3_000,
+      },
+      attempts: [
+        {
+          id: 'attempt-d-1',
+          operation: 'query',
+          result: 'accepted',
+          observedStatus: 'processing',
+          upstreamRequestNo: 'bhD0123456789abcdef0123456789abcdef0123456789abcdef0123456789ab',
+          upstreamOrderNo: 'D-UPSTREAM-FICTIONAL-1',
+          occurredAt: NOW + 3_000,
+          lastVerifiedAt: NOW + 3_000,
+        },
+      ],
+    });
+
+    const fetchMock = mockFetch((url) => {
+      if (url === '/api/v1/auth/session') return sessionResponse();
+      if (url === '/api/v1/operations/orders/order-1') {
+        return jsonResponse(200, { order: detailData });
+      }
+      if (url.startsWith('/api/v1/operations/orders?')) {
+        return jsonResponse(200, listResponse([order({ fulfillmentMode: 'D', status: 'processing' })]));
+      }
+      return undefined;
+    });
+
+    renderRoutes('/fulfillment');
+    expect(await screen.findByText('LO-1001', undefined, { timeout: 5000 })).toBeTruthy();
+    fireEvent.click(findButtonText('查看'));
+
+    const drawer = await screen.findByRole('dialog');
+    expect(await within(drawer).findByText('上力 D · 权益商品派发')).toBeTruthy();
+    expect(within(drawer).getByText('供应商已受理，继续核实履约状态')).toBeTruthy();
+    expect(within(drawer).getAllByText('D-UPSTREAM-FICTIONAL-1').length).toBeGreaterThanOrEqual(2);
+    expect(within(drawer).getByText('RECEIVE')).toBeTruthy();
+    expect(within(drawer).getByText(/RECEIVE 等供应商状态只按原值展示/)).toBeTruthy();
+
+    for (const secret of [
+      '13800138000',
+      'PAY-FICTIONAL-D-1',
+      'SECRET-FULFILLMENT-MUST-NOT-LEAK',
+      '已到账',
+    ]) {
+      expect(within(drawer).queryByText(secret)).toBeNull();
+    }
+    expect(writeCalls(fetchMock)).toEqual([]);
+  });
+
   it('shows a legacy order as no frozen mapping and states the absence of local attempt records', { timeout: 60_000 }, async () => {
     const fetchMock = mockFetch((url) => {
       if (url === '/api/v1/auth/session') return sessionResponse();

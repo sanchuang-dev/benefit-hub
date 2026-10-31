@@ -16,9 +16,16 @@ import {
   type YangmaoInriceOrderQueryResult,
 } from './inrice-order-query.js';
 import {
+  normalizeInriceDispatchInput,
+  type YangmaoInriceDispatchInput,
+  type YangmaoInriceDispatchResult,
+} from './inrice-dispatch.js';
+import {
+  buildInriceDispatchSignedBody,
   buildInriceOrderQuerySignedBody,
   buildInriceProductDetailSignedBody,
   createInriceSignature,
+  INRICE_DISPATCH_PATH,
   INRICE_LIST_SIGNED_BODY,
   INRICE_ORDER_QUERY_PATH,
   INRICE_PRODUCTS_PATH,
@@ -55,6 +62,18 @@ export interface YangmaoInriceReadOptions {
 
 /** Backwards-compatible name for the existing list reader options. */
 export type YangmaoInriceListOptions = YangmaoInriceReadOptions;
+
+export interface YangmaoInriceDispatchWriter {
+  /**
+   * Executes one D-mode dispatch submission. A resolved result means only that
+   * the supplier returned HTTP success + body code=0; delivery is verified
+   * later through queryOrder().
+   */
+  dispatch(
+    input: YangmaoInriceDispatchInput,
+    options?: YangmaoInriceReadOptions,
+  ): Promise<YangmaoInriceDispatchResult>;
+}
 
 export interface YangmaoInriceOrderReader {
   /**
@@ -143,7 +162,7 @@ function normalizeTimeout(value: number | undefined): number {
 }
 
 class YangmaoInriceCatalogClient
-  implements YangmaoInriceCatalogReader, YangmaoInriceOrderReader
+  implements YangmaoInriceCatalogReader, YangmaoInriceOrderReader, YangmaoInriceDispatchWriter
 {
   private readonly baseUrl: string;
   private readonly appKey: string;
@@ -213,6 +232,32 @@ class YangmaoInriceCatalogClient
     };
   }
 
+  async dispatch(
+    input: YangmaoInriceDispatchInput,
+    options: YangmaoInriceReadOptions = {},
+  ): Promise<YangmaoInriceDispatchResult> {
+    const normalized = normalizeInriceDispatchInput(input);
+    if (normalized === null) {
+      throw new YangmaoInriceError('YANGMAO_INRICE_DISPATCH_INPUT_INVALID');
+    }
+
+    const signedBody = buildInriceDispatchSignedBody(normalized);
+    await this.requestSignedData(
+      'POST',
+      INRICE_DISPATCH_PATH,
+      signedBody,
+      options.signal,
+      signedBody,
+    );
+
+    return {
+      provider: 'yangmao',
+      partnerOrderNo: normalized.partnerOrderNo,
+      accepted: true,
+      observedAt: new Date(this.clock()).toISOString(),
+    };
+  }
+
   async queryOrder(
     input: YangmaoInriceOrderQueryInput,
     options: YangmaoInriceReadOptions = {},
@@ -269,19 +314,39 @@ class YangmaoInriceCatalogClient
     callerSignal: AbortSignal | undefined,
     businessFailureClassifier?: BusinessFailureClassifier,
   ): Promise<unknown> {
+    return this.requestSignedData(
+      'GET',
+      pathWithQuery,
+      signedBody,
+      callerSignal,
+      undefined,
+      businessFailureClassifier,
+    );
+  }
+
+  private async requestSignedData(
+    method: 'GET' | 'POST',
+    pathWithQuery: string,
+    signedBody: string,
+    callerSignal: AbortSignal | undefined,
+    requestBody?: string,
+    businessFailureClassifier?: BusinessFailureClassifier,
+  ): Promise<unknown> {
     const timestamp = String(Math.trunc(this.clock()));
     const signature = createInriceSignature(this.appSecret, timestamp, signedBody);
     const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeoutSignal]) : timeoutSignal;
 
     const request = new Request(`${this.baseUrl}${pathWithQuery}`, {
-      method: 'GET',
+      method,
       headers: {
         'X-App-Key': this.appKey,
         'X-Timestamp': timestamp,
         'X-Signature': signature,
         Accept: 'application/json',
+        ...(requestBody === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
+      ...(requestBody === undefined ? {} : { body: requestBody }),
       redirect: 'manual',
       signal,
     });
@@ -361,6 +426,6 @@ class YangmaoInriceCatalogClient
  */
 export function createYangmaoInriceCatalogClient(
   options: YangmaoInriceCatalogClientOptions,
-): YangmaoInriceCatalogReader & YangmaoInriceOrderReader {
+): YangmaoInriceCatalogReader & YangmaoInriceOrderReader & YangmaoInriceDispatchWriter {
   return new YangmaoInriceCatalogClient(options);
 }

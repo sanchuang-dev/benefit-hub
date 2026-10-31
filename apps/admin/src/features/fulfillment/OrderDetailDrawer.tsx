@@ -687,6 +687,103 @@ export function OrderDetailDrawer({
             </section>
           ) : null}
 
+          {detail.fulfillmentMode === 'D' ? (
+            <section aria-label="上力 D 权益派发">
+              <Title level={5}>上力 D · 权益商品派发</Title>
+              {detail.dispatch ? (
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Descriptions
+                    size="small"
+                    column={1}
+                    bordered
+                    items={[
+                      {
+                        key: 'dispatchState',
+                        label: 'D 派发记录',
+                        children: (
+                          <Space orientation="vertical" size={2}>
+                            <Tag color={
+                              detail.dispatch.state === 'rejected'
+                                ? 'error'
+                                : detail.dispatch.state === 'unknown'
+                                  ? 'warning'
+                                  : detail.dispatch.state === 'accepted'
+                                    ? 'processing'
+                                    : 'default'
+                            }>
+                              {({
+                                reserved: '已预留，供应商结果待核实',
+                                accepted: '供应商已受理，继续核实履约状态',
+                                unknown: '供应商结果未知，禁止重新派发',
+                                rejected: '供应商已明确拒绝',
+                              } as const)[detail.dispatch.state]}
+                            </Tag>
+                            <Text type="secondary">
+                              D 模式 code=0 只表示上力受理，不代表权益已到账或订单已完成。
+                            </Text>
+                          </Space>
+                        ),
+                      },
+                      {
+                        key: 'partnerOrderNo',
+                        label: '平台派发单号（幂等键）',
+                        children: <Text code copyable>{detail.dispatch.partnerOrderNo}</Text>,
+                      },
+                      {
+                        key: 'dispatchUpstreamOrderNo',
+                        label: '上游订单号',
+                        children: detail.dispatch.upstreamOrderNo === null
+                          ? <Text type="secondary">尚未观察到</Text>
+                          : <Text code copyable>{detail.dispatch.upstreamOrderNo}</Text>,
+                      },
+                      {
+                        key: 'providerStatus',
+                        label: '供应商原始状态',
+                        children: detail.dispatch.providerStatus === null
+                          ? <Text type="secondary">尚未核实</Text>
+                          : <Tag>{detail.dispatch.providerStatus}</Tag>,
+                      },
+                      {
+                        key: 'dispatchLastVerifiedAt',
+                        label: '最近查单核实时间',
+                        children: detail.dispatch.lastVerifiedAt === null
+                          ? <Text type="secondary">尚未核实</Text>
+                          : formatDateTime(detail.dispatch.lastVerifiedAt),
+                      },
+                      {
+                        key: 'dispatchAttemptedAt',
+                        label: '首次派发时间',
+                        children: formatDateTime(detail.dispatch.attemptedAt),
+                      },
+                      {
+                        key: 'dispatchUpdatedAt',
+                        label: '平台最近更新',
+                        children: formatDateTime(detail.dispatch.updatedAt),
+                      },
+                    ]}
+                  />
+                  <Alert
+                    type={detail.dispatch.state === 'unknown' ? 'warning' : 'info'}
+                    showIcon
+                    title={
+                      detail.dispatch.state === 'unknown'
+                        ? '结果未知，只能查原单，禁止换单号重发'
+                        : '这里只展示可安全核实的 D 履约摘要'
+                    }
+                    description="平台不在运营详情展示手机号、支付凭据、卡密或 fulfillmentSummary。当前尚未核定 D 完整终态集合，因此 RECEIVE 等供应商状态只按原值展示，不自动映射为“已完成”。"
+                  />
+                </Space>
+              ) : (
+                <Alert
+                  type="info"
+                  showIcon
+                  title="尚未发起 D 模式权益派发"
+                  description="平台只有本地业务订单，不代表已扣上力权益金额。真实 D 派发必须由服务端明确开启写权限并沿用平台生成的唯一幂等单号。"
+                />
+              )}
+            </section>
+          ) : null}
+
           <section aria-label="本地状态与尝试记录">
             <Title level={5}>本地状态与尝试记录</Title>
             <Timeline

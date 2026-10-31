@@ -159,3 +159,14 @@ A/B/C 礼包额度和 D 权益金额是**两本账**，不能互用。对接总�
 - **成功响应保持保守**：总览只明确 `dispatchStatus` 与 `fulfillmentSummary` 的存在方向，并仅举例 `RECEIVE`；当前仍没有一笔合法成功 D 查单响应可证明完整状态机。因此适配器仅运行时校验已知字段、保留原始 `dispatchStatus`，统一返回 `state: "unknown"`。即使 fixture 中出现 `RECEIVE`，测试也明确要求不能自动映射 `completed`。若响应回显请求中的 `orderNo` / `partnerOrderNo` 却不一致，则整次读取视为格式异常。
 - **`fulfillmentSummary` 安全边界**：其内部结构尚未有 live 成功样本，按供应商所有字段处理为未解释 JSON 值，可能包含卡密/领取材料；server-only 调用方不得日志化或下发给无授权前端。未知上游字段继续由 schema 丢弃。
 - **未完成证据**：尚未获得成功订单的 `code=0 data` 实例，因此没有核定 processing / success / failure / cancel / refund 终态集合，也没有证明 `RECEIVE` 的最终业务含义。#42 在取得该证据前不应以“完整状态机已验收”收卡；本实现也不授权或触发 `POST /dispatch`。
+
+
+## 16. D 金额派发与原单恢复（BHB-012-B / Issue #72）
+
+- **代码边界**：D 写仍由 `packages/provider-yangmao` 的独立 `X-Signature` 客户端负责，未与 A/B/C `X-Sign` 流水线混用。新增 `POST /api/open/inrice/v1/dispatch`，签名和 HTTP body 使用完全相同的紧凑 JSON 字节，字段顺序固定为 `partnerOrderNo`、`productCode`、`mobile`。provider 返回 HTTP 成功 + body `code=0` 时只表达“上力受理了派发请求”，不产生 completed/delivered 结论。
+- **平台写入口**：业务方使用 `POST /api/v1/business/orders/:orderId/dispatch`，请求体只包含收件手机号和业务授权/支付引用。provider、D 模式、上游 `productCode` 与 `partnerOrderNo` 都来自平台持久化事实；调用方不能覆盖。真实金额扣减由 `BENEFIT_D_LIVE_WRITE_ENABLED` 单独控制，默认 `false`。
+- **幂等与并发**：新增 `benefit_order_dispatches`，每个平台订单最多一条 D operation；`partnerOrderNo` 由平台订单 ID 确定性派生。平台在供应商 HTTP 之前用 IMMEDIATE 事务写入 operation、订单 `processing` 和一次 before-send `unknown` attempt；身份字段不可改、记录不可删。并发调用只能有一个 reservation 获得供应商 POST 权限。
+- **未知结果处理**：timeout、网络异常、HTTP 5xx 或无法验证的供应商响应均将 operation/订单保持为 unknown 语义，不生成新 `partnerOrderNo`，不自动重发。后续只允许对原 `partnerOrderNo` 使用 #42 已核定的 `GET /orders/query`。
+- **只读恢复**：`POST /api/v1/business/orders/:orderId/dispatch/recover` 永远只执行 query，不受 D live-write gate 关闭影响。query 成功只证明供应商存在这张原单；当前仍没有真实成功订单状态机证据，因此即使供应商返回文档示例 `RECEIVE`，平台也只保存原始 `providerStatus` 并保持 `processing`，不会映射 `completed`。
+- **敏感数据边界**：SQLite 不存明文手机号，只存现有主密钥域隔离 HMAC；不存供应商原始 response、签名、AppSecret，也不存 `fulfillmentSummary` / 卡密 / 领取材料。运营详情只读展示 operation state、`partnerOrderNo`、上游订单号、原始 `providerStatus` 与核实时间。
+- **当前证据边界**：provider 固定 HMAC 向量、Hono → SQLite → loopback supplier 的集成测试覆盖单次扣费请求、并发只有一次 POST、明确业务拒绝、HTTP 500 → unknown、只读恢复及敏感字段不泄漏。**本实现尚未开启真实 D 写 gate，也尚未执行真实金额扣减**；真实 live acceptance 必须明确授权一笔最小测试派发，并在同一 `partnerOrderNo` 上持续 query 到可解释的供应商状态后才能补齐 #72 的最终状态机验收。

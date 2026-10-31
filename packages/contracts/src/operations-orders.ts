@@ -16,6 +16,7 @@ import { z } from 'zod';
 import { deductionUnitSchema, fulfillmentModeSchema } from './mapping.js';
 import { giftVoucherSchema } from './gift-voucher.js';
 import { directTopupSummarySchema } from './direct-topup.js';
+import { dDispatchSummarySchema } from './d-dispatch.js';
 import {
   attemptOperationSchema,
   attemptResultSchema,
@@ -149,6 +150,8 @@ export const operationsOrderDetailSchema = z
     giftVoucher: giftVoucherSchema.nullable(),
     /** B direct topup: supplier acceptance vs item completion kept separate. */
     directTopup: directTopupSummarySchema.nullable().optional(),
+    /** D amount-debit operation: only the safe persisted summary. */
+    dispatch: dDispatchSummarySchema.nullable().optional(),
     statusEvents: z.array(operationsOrderStatusEventSchema),
     attempts: z.array(operationsOrderAttemptSchema),
   })

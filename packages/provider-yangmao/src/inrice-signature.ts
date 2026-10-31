@@ -26,6 +26,30 @@ export function buildInriceProductDetailSignedBody(productCode: string): string 
 /** D-mode read-only order query path. */
 export const INRICE_ORDER_QUERY_PATH = '/api/open/inrice/v1/orders/query';
 
+/** D-mode amount-debit dispatch endpoint. */
+export const INRICE_DISPATCH_PATH = '/api/open/inrice/v1/dispatch';
+
+export interface InriceDispatchSignedInput {
+  partnerOrderNo: string;
+  productCode: string;
+  mobile: string;
+}
+
+/**
+ * Dispatch signature/body bytes. Keep this field order frozen: the D HMAC is
+ * over the exact compact JSON string, and the same bytes are sent as the POST
+ * body so signing and transport cannot drift.
+ */
+export function buildInriceDispatchSignedBody(
+  input: InriceDispatchSignedInput,
+): string {
+  return JSON.stringify({
+    partnerOrderNo: input.partnerOrderNo,
+    productCode: input.productCode,
+    mobile: input.mobile,
+  });
+}
+
 export interface InriceOrderQuerySignedInput {
   orderNo?: string | null;
   partnerOrderNo?: string | null;
