@@ -130,7 +130,7 @@ export function AppSidebar({ activeKey, onNavigate, variant = 'sider' }: AppSide
           theme="light"
           selectedKeys={[activeKey]}
           items={items}
-          openKeys={openKeys}
+          openKeys={isCollapsed ? undefined : openKeys}
           onOpenChange={(keys) => {
             if (!searching) setExpandedGroups(keys);
           }}
@@ -146,7 +146,7 @@ export function AppSidebar({ activeKey, onNavigate, variant = 'sider' }: AppSide
 
   return (
     <Sider className="app-sider" theme="light" width={248} collapsedWidth={68}
-      collapsed={collapsed} trigger={null}>
+      collapsed={collapsed} trigger={null} breakpoint="lg" onBreakpoint={setCollapsed}>
       {navigation}
     </Sider>
   );
