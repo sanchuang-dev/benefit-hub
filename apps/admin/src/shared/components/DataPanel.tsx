@@ -314,7 +314,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
         </div>
       ) : prefs.view === 'card' && renderCard ? (
         <Spin spinning={loading}>
-          <div className="data-panel-cards" role="list">
+          <div className="data-panel-cards" role="list" aria-label="数据卡片">
             {rows.length === 0 && !loading ? empty : rows.map((row) => (
               <div key={rowKey(row)} className="data-panel-card" role="listitem">
                 {renderCard(row)}
