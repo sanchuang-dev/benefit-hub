@@ -1,0 +1,94 @@
+name: BHB-012-B D Live Acceptance Preflight
+
+on:
+  push:
+    branches:
+      - feat/bhb-012-b-d-live-acceptance-20261031
+    paths:
+      - .github/workflows/bhb-012-b-d-live-acceptance.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Inspect deployed D live-acceptance prerequisites without secret values
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Unexpected host"; exit 1 ;;
+          esac
+          test -n "$SSHPASS"
+          mkdir -m 700 -p "$RUNNER_TEMP/ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/ssh/known_hosts"
+          test -s "$RUNNER_TEMP/ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw'
+
+          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -o ConnectTimeout=15             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          cd /srv/benefit-hub
+          test -f .env
+          echo "=== DEPLOYED_IMAGE ==="
+          sed -n 's/^BENEFIT_IMAGE_TAG=//p' .env | head -1
+          echo "=== END_DEPLOYED_IMAGE ==="
+
+          cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
+          test -n "$cid"
+
+          echo "=== D_GATE ==="
+          gate="$(docker exec "$cid" sh -lc 'printf "%s" "$BENEFIT_D_LIVE_WRITE_ENABLED"')"
+          case "$gate" in
+            true) echo "enabled=true" ;;
+            false|'') echo "enabled=false" ;;
+            *) echo "enabled=unexpected"; exit 1 ;;
+          esac
+          echo "=== END_D_GATE ==="
+
+          echo "=== TEST_RECIPIENT_CONFIG_NAMES ==="
+          # Names only; never print values.
+          sed -n 's/^\([A-Z0-9_]*\)=.*/\1/p' .env             | grep -E '(MOBILE|PHONE|RECIPIENT|TEST.*D|D.*TEST)'             | sort -u || true
+          echo "=== END_TEST_RECIPIENT_CONFIG_NAMES ==="
+
+          docker exec -i "$cid" node --input-type=module - <<'NODE'
+          import Database from 'better-sqlite3';
+          import { drizzle } from 'drizzle-orm/better-sqlite3';
+          import * as schema from './dist/db/schema.js';
+          import { loadConfig } from './dist/config.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import { createYangmaoInriceCatalogClient } from '@sanchuang-dev/provider-yangmao';
+
+          const config = loadConfig(process.env);
+          const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
+          try {
+            const db = drizzle(sqlite, { schema });
+            const supplier = activeYangmaoReadConfig(db, config);
+            if (!supplier) throw new Error('supplier config unavailable');
+            const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
+            console.log('=== D_PRODUCTS ===');
+            for (const item of [...catalog.products].sort((a,b) => a.sellPriceCents - b.sellPriceCents)) {
+              console.log('productCode=' + item.productCode + ' sellPriceCents=' + item.sellPriceCents);
+            }
+            console.log('count=' + catalog.products.length);
+            console.log('=== END_D_PRODUCTS ===');
+          } finally {
+            sqlite.close();
+          }
+          NODE
+          REMOTE
