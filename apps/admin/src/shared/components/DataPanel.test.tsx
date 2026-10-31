@@ -94,19 +94,12 @@ describe('DataPanel controlled query contract', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
-    const dialog = await screen.findByRole('dialog').catch((err: unknown) => {
-      // Preserve browser DOM evidence without relying on console output in CI.
-      const modal = document.querySelector('.ant-modal');
-      throw new Error(
-        'Advanced modal diagnostic: present=' + Boolean(modal) +
-        ', roles=' + document.querySelectorAll('[role="dialog"]').length +
-        ', title=' + (modal?.querySelector('.ant-modal-title')?.textContent ?? 'none') +
-        ', html=' + (modal?.outerHTML.slice(0, 900) ?? 'none') +
-        '; original=' + String(err),
-      );
-    });
+    const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByText('高级检索')).toBeTruthy();
-    expect((within(dialog).getByLabelText('名称') as HTMLInputElement).value).toBe('咖啡');
+    const modalKeyword = within(dialog).getByLabelText('名称') as HTMLInputElement;
+    const quickKeyword = document.querySelector('.data-panel-quick-line input') as HTMLInputElement;
+    expect(modalKeyword.id).not.toBe(quickKeyword.id);
+    expect(modalKeyword.value).toBe('咖啡');
     fireEvent.change(within(dialog).getByLabelText('价格最小值'), { target: { value: '100' } });
     fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes.mock.lastCall?.[0]).toMatchObject({
@@ -126,7 +119,7 @@ describe('DataPanel controlled query contract', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: /查\s*询/ }));
     await waitFor(() => expect(changes).toHaveBeenCalled());
     expect(screen.getByRole('dialog')).toBeTruthy();
-    fireEvent.click(within(dialog).getByRole('button', { name: '取消' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: /取\s*消/ }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(screen.getByRole('button', { name: '高级检索' }));
     dialog = await screen.findByRole('dialog');
