@@ -2,6 +2,10 @@ name: BHB-011-D Read-only Protocol Investigation
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [dev]
+    paths:
+      - .github/workflows/bhb-011-d-protocol-investigation.yml
   push:
     branches:
       - feat/bhb-011-d-order-query-investigation-20261031
