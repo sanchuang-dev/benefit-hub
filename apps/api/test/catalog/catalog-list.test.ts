@@ -1,4 +1,6 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { catalogProductEvents, catalogProducts } from '../../src/db/schema.js';
 import type {
   CatalogProductDto,
   ProductMappingSummary,
@@ -88,6 +90,30 @@ function rowFor(body: ProductListResponse, code: string): CatalogListItem {
   const row = body.products.find((product) => product.code === code);
   if (!row) throw new Error(`Expected catalogue list to contain ${code}`);
   return row;
+}
+
+/**
+ * Products created through the API share wall-clock milliseconds, which is not
+ * enough to prove a deterministic ORDER BY. The test pins timestamps on the
+ * real SQLite rows so ties are intentional rather than incidental.
+ */
+function pinTimes(id: string, createdAt: number, updatedAt = createdAt): void {
+  server.database.db
+    .update(catalogProducts)
+    .set({ createdAt, updatedAt })
+    .where(eq(catalogProducts.id, id))
+    .run();
+}
+
+function codes(body: ProductListResponse): string[] {
+  return body.products.map((product) => product.code);
+}
+
+async function expectInvalidListQuery(path: string, fields: string[]): Promise<void> {
+  const response = await admin.request(`/api/v1/catalog/products${path}`);
+  expect(response.status).toBe(400);
+  expect(response.headers.get('cache-control')).toBe('no-store');
+  expect(await response.json()).toMatchObject({ error: 'INVALID_REQUEST', fields });
 }
 
 describe('catalogue list mapping summary', () => {
@@ -236,6 +262,247 @@ describe('catalogue supplier filter', () => {
     const activeOnly = await listProducts('?supplier=yangmao&status=active');
     expect(activeOnly.total).toBe(1);
     expect(activeOnly.products.map((product) => product.code)).toEqual(['PG-YM-2']);
+  });
+});
+
+describe('catalogue list sorting', () => {
+  it('keeps the legacy createdAt DESC, code ASC order across page boundaries', async () => {
+    for (const code of ['SORT-C', 'SORT-A', 'SORT-E', 'SORT-B', 'SORT-D']) {
+      const product = await createProduct({ code, name: `商品 ${code}` });
+      pinTimes(product.id, 1_000);
+    }
+    const newest = await createProduct({ code: 'SORT-NEW', name: '最新商品' });
+    pinTimes(newest.id, 2_000);
+
+    const seen: string[] = [];
+    for (let page = 1; page <= 4; page += 1) {
+      const body = await listProducts(`?page=${page}&pageSize=2`);
+      expect(body.total).toBe(6);
+      seen.push(...codes(body));
+    }
+
+    expect(seen).toEqual(['SORT-NEW', 'SORT-A', 'SORT-B', 'SORT-C', 'SORT-D', 'SORT-E']);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it('sorts createdAt and updatedAt in both directions with code as the tie-breaker', async () => {
+    const a = await createProduct({ code: 'TS-A', name: '时间 A' });
+    const b = await createProduct({ code: 'TS-B', name: '时间 B' });
+    const c = await createProduct({ code: 'TS-C', name: '时间 C' });
+    pinTimes(a.id, 1_000, 3_000);
+    pinTimes(b.id, 2_000, 2_000);
+    pinTimes(c.id, 2_000, 1_000);
+
+    expect(codes(await listProducts('?sortBy=createdAt&sortOrder=asc'))).toEqual(['TS-A', 'TS-B', 'TS-C']);
+    expect(codes(await listProducts('?sortBy=createdAt&sortOrder=desc'))).toEqual(['TS-B', 'TS-C', 'TS-A']);
+    // A lone sortBy is fixed to ascending, matching the documented rule.
+    expect(codes(await listProducts('?sortBy=createdAt'))).toEqual(['TS-A', 'TS-B', 'TS-C']);
+
+    expect(codes(await listProducts('?sortBy=updatedAt&sortOrder=asc'))).toEqual(['TS-C', 'TS-B', 'TS-A']);
+    expect(codes(await listProducts('?sortBy=updatedAt&sortOrder=desc'))).toEqual(['TS-A', 'TS-B', 'TS-C']);
+  });
+
+  it('sorts code and name in both directions and pages the sorted result', async () => {
+    await createProduct({ code: 'SORT-Z', name: 'Bravo' });
+    await createProduct({ code: 'SORT-A', name: 'Charlie' });
+    await createProduct({ code: 'SORT-M', name: 'Alpha' });
+
+    expect(codes(await listProducts('?sortBy=code&sortOrder=asc'))).toEqual(['SORT-A', 'SORT-M', 'SORT-Z']);
+    expect(codes(await listProducts('?sortBy=code&sortOrder=desc'))).toEqual(['SORT-Z', 'SORT-M', 'SORT-A']);
+    expect(codes(await listProducts('?sortBy=name&sortOrder=asc'))).toEqual(['SORT-M', 'SORT-Z', 'SORT-A']);
+    expect(codes(await listProducts('?sortBy=name&sortOrder=desc'))).toEqual(['SORT-A', 'SORT-Z', 'SORT-M']);
+
+    const firstPage = await listProducts('?sortBy=code&sortOrder=desc&pageSize=1&page=1');
+    const secondPage = await listProducts('?sortBy=code&sortOrder=desc&pageSize=1&page=2');
+    expect(firstPage.total).toBe(3);
+    expect(codes(firstPage)).toEqual(['SORT-Z']);
+    expect(codes(secondPage)).toEqual(['SORT-M']);
+  });
+
+  it('sorts displayPriceCents with NULL prices last in both directions', async () => {
+    await createProduct({ code: 'PRICE-300B', name: '价格 300 B', displayPriceCents: 300 });
+    await createProduct({ code: 'PRICE-NULL', name: '无价格' });
+    await createProduct({ code: 'PRICE-100', name: '价格 100', displayPriceCents: 100 });
+    await createProduct({ code: 'PRICE-300A', name: '价格 300 A', displayPriceCents: 300 });
+
+    expect(codes(await listProducts('?sortBy=displayPriceCents&sortOrder=asc'))).toEqual([
+      'PRICE-100',
+      'PRICE-300A',
+      'PRICE-300B',
+      'PRICE-NULL',
+    ]);
+    expect(codes(await listProducts('?sortBy=displayPriceCents&sortOrder=desc'))).toEqual([
+      'PRICE-300A',
+      'PRICE-300B',
+      'PRICE-100',
+      'PRICE-NULL',
+    ]);
+
+    // The same order must survive a LIMIT/OFFSET split, not just one full page.
+    const first = await listProducts('?sortBy=displayPriceCents&sortOrder=desc&pageSize=2&page=1');
+    const second = await listProducts('?sortBy=displayPriceCents&sortOrder=desc&pageSize=2&page=2');
+    expect([...codes(first), ...codes(second)]).toEqual([
+      'PRICE-300A',
+      'PRICE-300B',
+      'PRICE-100',
+      'PRICE-NULL',
+    ]);
+  });
+
+  it('pages every sort field in both directions without duplicates or gaps', async () => {
+    const rows: Array<{ code: string; name: string; price: number | null; createdAt: number; updatedAt: number }> = [
+      { code: 'PAGE-A', name: 'Delta', price: 300, createdAt: 2_000, updatedAt: 1_000 },
+      { code: 'PAGE-B', name: 'Alpha', price: null, createdAt: 1_000, updatedAt: 2_000 },
+      { code: 'PAGE-C', name: 'Echo', price: 100, createdAt: 2_000, updatedAt: 2_000 },
+      { code: 'PAGE-D', name: 'Bravo', price: 300, createdAt: 3_000, updatedAt: 3_000 },
+      { code: 'PAGE-E', name: 'Charlie', price: 100, createdAt: 3_000, updatedAt: 3_000 },
+    ];
+    for (const row of rows) {
+      const product = await createProduct({
+        code: row.code,
+        name: row.name,
+        displayPriceCents: row.price,
+      });
+      pinTimes(product.id, row.createdAt, row.updatedAt);
+    }
+
+    const fields = ['createdAt', 'updatedAt', 'code', 'name', 'displayPriceCents'] as const;
+    for (const field of fields) {
+      for (const order of ['asc', 'desc'] as const) {
+        const full = await listProducts(`?sortBy=${field}&sortOrder=${order}&pageSize=100`);
+        expect(full.total).toBe(5);
+
+        const paged: string[] = [];
+        for (let page = 1; page <= 4; page += 1) {
+          const body = await listProducts(`?sortBy=${field}&sortOrder=${order}&pageSize=2&page=${page}`);
+          expect(body.total).toBe(5);
+          paged.push(...codes(body));
+        }
+
+        expect(paged, `${field} ${order}`).toEqual(codes(full));
+        expect(new Set(paged).size, `${field} ${order}`).toBe(5);
+      }
+    }
+  });
+});
+
+describe('catalogue mapping state filter', () => {
+  it('filters none, draft and active snapshots consistently with total', async () => {
+    await createProduct({ code: 'MS-NONE', name: '无映射' });
+    const draft = await createProduct({ code: 'MS-DRAFT', name: '草稿映射' });
+    await saveDraft(draft.id);
+    const active = await createProduct({ code: 'MS-ACTIVE', name: '生效映射' });
+    await saveDraft(active.id);
+    await validateAndActivate(active.id, 1);
+    // An edited draft under an accepted snapshot must still count as active.
+    await saveDraft(active.id, { expectedVersion: 2, productCode: 'YM-DRAFT-EDIT' });
+
+    const none = await listProducts('?mappingState=none');
+    expect(none.total).toBe(1);
+    expect(codes(none)).toEqual(['MS-NONE']);
+
+    const draftOnly = await listProducts('?mappingState=draft');
+    expect(draftOnly.total).toBe(1);
+    expect(codes(draftOnly)).toEqual(['MS-DRAFT']);
+
+    const activeOnly = await listProducts('?mappingState=active');
+    expect(activeOnly.total).toBe(1);
+    expect(codes(activeOnly)).toEqual(['MS-ACTIVE']);
+
+    const combined = await listProducts('?mappingState=active&supplier=yangmao');
+    expect(combined.total).toBe(1);
+    expect(codes(combined)).toEqual(['MS-ACTIVE']);
+  });
+});
+
+describe('catalogue display price filter', () => {
+  it('applies inclusive bounds in SQL and excludes NULL prices', async () => {
+    await createProduct({ code: 'PF-NULL', name: '无价格' });
+    await createProduct({ code: 'PF-100', name: '一百', displayPriceCents: 100 });
+    await createProduct({ code: 'PF-500', name: '五百', displayPriceCents: 500 });
+    await createProduct({ code: 'PF-1000', name: '一千', displayPriceCents: 1000 });
+
+    const range = await listProducts(
+      '?displayPriceMinCents=100&displayPriceMaxCents=500&sortBy=displayPriceCents&sortOrder=asc',
+    );
+    expect(range.total).toBe(2);
+    expect(codes(range)).toEqual(['PF-100', 'PF-500']);
+
+    const minOnly = await listProducts(
+      '?displayPriceMinCents=500&sortBy=displayPriceCents&sortOrder=asc',
+    );
+    expect(minOnly.total).toBe(2);
+    expect(codes(minOnly)).toEqual(['PF-500', 'PF-1000']);
+
+    const maxOnly = await listProducts('?displayPriceMaxCents=100');
+    expect(maxOnly.total).toBe(1);
+    expect(codes(maxOnly)).toEqual(['PF-100']);
+
+    // A NULL price is not "zero or more": requesting any bound excludes it.
+    const zeroMin = await listProducts(
+      '?displayPriceMinCents=0&sortBy=displayPriceCents&sortOrder=asc',
+    );
+    expect(zeroMin.total).toBe(3);
+    expect(codes(zeroMin)).not.toContain('PF-NULL');
+
+    const combined = await listProducts(
+      '?displayPriceMinCents=100&displayPriceMaxCents=500&keyword=PF-5',
+    );
+    expect(combined.total).toBe(1);
+    expect(codes(combined)).toEqual(['PF-500']);
+  });
+});
+
+describe('catalogue list query validation', () => {
+  it('rejects unknown sort fields, directions and invalid price bounds with field names', async () => {
+    await expectInvalidListQuery('?sortBy=estimatedCostCents', ['sortBy']);
+    await expectInvalidListQuery('?sortOrder=asc', ['sortOrder']);
+    await expectInvalidListQuery('?sortBy=code&sortOrder=sideways', ['sortOrder']);
+    await expectInvalidListQuery('?mappingState=live', ['mappingState']);
+    await expectInvalidListQuery('?displayPriceMinCents=-1', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=0x10', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=1e3', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMaxCents=9007199254740992', ['displayPriceMaxCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=1.5', ['displayPriceMinCents']);
+    await expectInvalidListQuery('?displayPriceMaxCents=12.5', ['displayPriceMaxCents']);
+    await expectInvalidListQuery('?displayPriceMinCents=500&displayPriceMaxCents=100', [
+      'displayPriceMinCents',
+    ]);
+  });
+
+  it('still ignores unknown extra query keys and still requires a session', async () => {
+    const product = await createProduct({ code: 'Q-COMPAT', name: '兼容' });
+    pinTimes(product.id, 1_000);
+
+    const withUnknown = await listProducts('?sortBy=code&sortOrder=asc&cacheBust=123');
+    expect(withUnknown.total).toBe(1);
+
+    const anonymous = new TestClient(server);
+    const response = await anonymous.request('/api/v1/catalog/products?sortBy=code');
+    expect(response.status).toBe(401);
+    expect((await response.json()).error).toBe('UNAUTHENTICATED');
+  });
+
+  it('reads without writing rows or calling an upstream supplier', async () => {
+    await createProduct({ code: 'RO-1', name: '只读一', displayPriceCents: 10 });
+    await createProduct({ code: 'RO-2', name: '只读二' });
+    const productsBefore = server.database.db.select().from(catalogProducts).all();
+    const eventsBefore = server.database.db.select().from(catalogProductEvents).all();
+
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    try {
+      const body = await listProducts(
+        '?mappingState=none&displayPriceMinCents=0&sortBy=displayPriceCents&sortOrder=desc',
+      );
+      expect(body.total).toBe(1);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+
+    expect(server.database.db.select().from(catalogProducts).all()).toEqual(productsBefore);
+    expect(server.database.db.select().from(catalogProductEvents).all()).toEqual(eventsBefore);
   });
 });
 
