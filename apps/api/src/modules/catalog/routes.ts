@@ -43,7 +43,7 @@ const centsSchema = z.number().int('金额必须为整数分').min(0, '金额不
  */
 const queryCentsSchema = z
   .string()
-  .regex(/^\\d+$/, '金额必须为十进制非负整数分')
+  .regex(/^\d+$/, '金额必须为十进制非负整数分')
   .transform(Number)
   .pipe(z.number().int('金额必须为整数分').min(0).max(MAX_CENTS));
 const versionSchema = z.number().int().min(1);
