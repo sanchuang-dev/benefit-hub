@@ -15,6 +15,7 @@ const config: AppConfig = {
   businessOrderClients: null,
   verifiedBTravelProducts: {},
   bLiveWritesEnabled: false,
+  dLiveWritesEnabled: false,
   buildInfo: { version: null, commit: null, builtAt: null },
 };
 
