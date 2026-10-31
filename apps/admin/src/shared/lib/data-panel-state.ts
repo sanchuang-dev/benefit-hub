@@ -62,12 +62,20 @@ export function resolvePanelPreference(
   const known = new Set(unique);
   const order = [...(clean.columnOrder ?? []).filter((key) => known.has(key))];
   for (const key of unique) if (!order.includes(key)) order.push(key);
-  const visible = clean.visibleKeys?.filter((key) => known.has(key)) ?? unique;
+  const knownVisible = clean.visibleKeys?.filter((key) => known.has(key)) ?? unique;
+  // Columns introduced after a preference was saved must start visible.
+  // Previously hidden keys remain hidden; a fully stale selection restores all.
+  const newColumns = clean.columnOrder
+    ? unique.filter((key) => !clean.columnOrder?.includes(key))
+    : [];
+  const visible = knownVisible.length > 0
+    ? [...new Set([...knownVisible, ...newColumns])]
+    : unique;
   return {
     view: allowCard && clean.view === 'card' ? 'card' : 'table',
     density: clean.density ?? 'middle',
     columnOrder: order,
-    visibleKeys: visible.length > 0 ? visible : unique,
+    visibleKeys: visible,
   };
 }
 
