@@ -364,7 +364,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
           </Space>
         </div>
       </div>
-      {hasAdvanced ? (
+      {hasAdvanced && advancedOpen ? (
         <Modal
           title="高级检索"
           aria-label="高级检索"
@@ -374,7 +374,6 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
           onOk={() => advancedForm.submit()}
           okText="查询"
           cancelText="取消"
-          destroyOnHidden
         >
           <Form<Filters>
             form={advancedForm}
