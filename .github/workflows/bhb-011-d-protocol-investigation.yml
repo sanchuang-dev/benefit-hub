@@ -84,3 +84,134 @@ jobs:
           done
 
           echo 'public_probe_complete=true'
+
+
+  signed-read-hypothesis:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/feat/bhb-011-d-order-query-investigation-20261031'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Install SSH transport
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
+
+      - name: Compare known-good D read with one bounded order-query signature hypothesis
+        shell: bash
+        env:
+          TARGET_HOST: ${{ secrets.PROTO_HOST }}
+          TARGET_USER: ${{ secrets.PROTO_USER }}
+          TARGET_PORT: ${{ secrets.PROTO_SSH_PORT }}
+          SSHPASS: ${{ secrets.PROTO_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$SSHPASS" && test -n "$TARGET_USER" && test -n "$TARGET_PORT"
+          case "$TARGET_HOST" in
+            8.148.148.135|proto.3cgroup.cn) ;;
+            *) echo "::error::Unexpected host"; exit 1 ;;
+          esac
+          case "$TARGET_PORT" in ''|*[!0-9]*) exit 1 ;; esac
+          case "$TARGET_USER" in ''|*[!a-zA-Z0-9_.-]*) exit 1 ;; esac
+          test "$(getent ahostsv4 proto.3cgroup.cn | awk 'NR==1 {print $1}')" = '8.148.148.135'
+          mkdir -m 700 -p "$RUNNER_TEMP/bhb_ssh"
+          ssh-keyscan -T 10 -p "$TARGET_PORT" -t ed25519 "$TARGET_HOST" 2>/dev/null > "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          test -s "$RUNNER_TEMP/bhb_ssh/known_hosts"
+          fp="$(ssh-keygen -lf "$RUNNER_TEMP/bhb_ssh/known_hosts" -E sha256 | awk 'NR==1 {print $2}')"
+          test "$fp" = 'SHA256:wRPdG4mucUA07fKN1V/Fes+r38VK0zYWXZ4BYm/6Niw' || {
+            echo "::error::SSH host fingerprint mismatch"
+            exit 1
+          }
+
+          sshpass -e ssh             -o StrictHostKeyChecking=yes             -o UserKnownHostsFile="$RUNNER_TEMP/bhb_ssh/known_hosts"             -o PreferredAuthentications=password             -o PubkeyAuthentication=no             -o ConnectTimeout=15             -p "$TARGET_PORT" "$TARGET_USER@$TARGET_HOST" 'sh -s' <<'REMOTE'
+          set -eu
+          test "$(id -u)" -eq 0 || { echo 'Expected root deploy identity'; exit 1; }
+          cd /srv/benefit-hub
+          cid="$(docker compose --project-name benefit-hub -f compose.yaml ps -q benefit-hub)"
+          test -n "$cid" || { echo 'Benefit Hub container missing'; exit 1; }
+
+          docker exec -i "$cid" node --input-type=module - <<'NODE'
+          import Database from 'better-sqlite3';
+          import { drizzle } from 'drizzle-orm/better-sqlite3';
+          import * as schema from './dist/db/schema.js';
+          import { loadConfig } from './dist/config.js';
+          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
+          import {
+            createInriceSignature,
+            createYangmaoInriceCatalogClient,
+          } from '@sanchuang-dev/provider-yangmao';
+
+          const config = loadConfig(process.env);
+          const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
+          try {
+            const db = drizzle(sqlite, { schema });
+            const supplier = activeYangmaoReadConfig(db, config);
+            if (!supplier) throw new Error('Supplier read configuration unavailable');
+
+            // Positive control: same current credentials + D signing implementation.
+            const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
+            console.log('D_products_positive_control=success');
+            console.log('D_products_positive_count=' + catalog.products.length);
+
+            // One bounded negative identifier. It is deliberately namespaced and
+            // not derived from any real business/user/order record.
+            const probeOrderNo = 'BHB011D_READONLY_PROBE_20261031_NO_ORDER';
+            const timestamp = String(Date.now());
+            const signedBody = '{}';
+            const signature = createInriceSignature(supplier.appSecret, timestamp, signedBody);
+            const url = new URL('/api/open/inrice/v1/orders/query', supplier.baseUrl);
+            url.searchParams.set('partnerOrderNo', probeOrderNo);
+
+            const response = await fetch(url, {
+              method: 'GET',
+              headers: {
+                'X-App-Key': supplier.appKey,
+                'X-Timestamp': timestamp,
+                'X-Signature': signature,
+                Accept: 'application/json',
+              },
+              redirect: 'manual',
+              signal: AbortSignal.timeout(10_000),
+            });
+
+            const text = await response.text();
+            let body = null;
+            try {
+              body = JSON.parse(text);
+            } catch {
+              console.log('D_order_query_empty_signature_json=invalid_json');
+              console.log('D_order_query_http_status=' + response.status);
+              process.exit(0);
+            }
+
+            const code = Number.isInteger(body?.code) ? body.code : null;
+            const message = typeof body?.message === 'string' ? body.message : '';
+            const dataType =
+              body?.data === null ? 'null'
+              : Array.isArray(body?.data) ? 'array'
+              : typeof body?.data === 'object' ? 'object'
+              : typeof body?.data;
+
+            let messageClass = 'other_or_absent';
+            if (/验签|签名/.test(message)) messageClass = 'signature_rejected';
+            else if (/不存在|未找到|找不到/.test(message)) messageClass = 'not_found';
+            else if (/参数|必填|不能为空|格式/.test(message)) messageClass = 'parameter_rejected';
+            else if (/鉴权|无权限|禁用/.test(message)) messageClass = 'auth_or_permission';
+
+            console.log('D_order_query_hypothesis=query_partnerOrderNo_signed_empty_json');
+            console.log('D_order_query_http_status=' + response.status);
+            console.log('D_order_query_vendor_code=' + (code ?? 'invalid'));
+            console.log('D_order_query_message_class=' + messageClass);
+            console.log('D_order_query_data_type=' + dataType);
+
+            if (code === 0 && body?.data && typeof body.data === 'object' && !Array.isArray(body.data)) {
+              const safeKeys = Object.keys(body.data)
+                .filter((key) => /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key))
+                .slice(0, 30)
+                .sort();
+              console.log('D_order_query_success_keys=' + safeKeys.join(','));
+            }
+          } finally {
+            sqlite.close();
+          }
+          NODE
+          REMOTE
