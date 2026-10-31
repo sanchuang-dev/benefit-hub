@@ -242,12 +242,17 @@ class YangmaoInriceCatalogClient
     }
 
     const signedBody = buildInriceDispatchSignedBody(normalized);
+    const requestBody = JSON.stringify({
+      partnerOrderNo: normalized.partnerOrderNo,
+      productCode: normalized.productCode,
+      mobile: normalized.mobile,
+    });
     await this.requestSignedData(
       'POST',
       INRICE_DISPATCH_PATH,
       signedBody,
       options.signal,
-      signedBody,
+      requestBody,
     );
 
     return {
