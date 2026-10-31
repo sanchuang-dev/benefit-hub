@@ -587,7 +587,7 @@ describe('platform order detail drawer', () => {
     const drawer = await screen.findByRole('dialog');
     expect(await within(drawer).findByText('上力 D · 权益商品派发')).toBeTruthy();
     expect(within(drawer).getByText('供应商已受理，继续核实履约状态')).toBeTruthy();
-    expect(within(drawer).getByText('D-UPSTREAM-FICTIONAL-1')).toBeTruthy();
+    expect(within(drawer).getAllByText('D-UPSTREAM-FICTIONAL-1').length).toBeGreaterThanOrEqual(2);
     expect(within(drawer).getByText('RECEIVE')).toBeTruthy();
     expect(within(drawer).getByText(/RECEIVE 等供应商状态只按原值展示/)).toBeTruthy();
 
