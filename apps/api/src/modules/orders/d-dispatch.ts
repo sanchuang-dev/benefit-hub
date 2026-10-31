@@ -192,12 +192,11 @@ export function createDDispatchService(deps: {
     );
     assertApplicationEntitlement(deps.db, command.businessSource, order.productId);
     const frozen = requireFrozenD(order);
-    const masterKey = requireSupplierMasterKey(deps.config);
-    const paymentReference = normalizeBusinessOrderNo(command.paymentReference);
-    const phoneHmac = hashRecipientPhone(masterKey, D_MODE_DOMAIN, command.mobile);
-
     const existing = dispatchRepository.get(order.id);
     if (existing) {
+      const masterKey = requireSupplierMasterKey(deps.config);
+      const paymentReference = normalizeBusinessOrderNo(command.paymentReference);
+      const phoneHmac = hashRecipientPhone(masterKey, D_MODE_DOMAIN, command.mobile);
       assertSameIntent(existing, phoneHmac, paymentReference);
       return recoverExisting(order, existing, command.signal);
     }
@@ -207,6 +206,10 @@ export function createDDispatchService(deps: {
         'D 真实金额扣减未被维护者单独启用',
       );
     }
+
+    const masterKey = requireSupplierMasterKey(deps.config);
+    const paymentReference = normalizeBusinessOrderNo(command.paymentReference);
+    const phoneHmac = hashRecipientPhone(masterKey, D_MODE_DOMAIN, command.mobile);
 
     // Resolve/validate the supplier configuration before persisting a billable
     // reservation. Once reserved, this method will never generate a replacement
