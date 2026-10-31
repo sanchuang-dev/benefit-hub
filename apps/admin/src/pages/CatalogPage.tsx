@@ -234,15 +234,16 @@ function CatalogPageContent() {
       ((max !== null && max !== undefined) && maxCents === undefined)
     ) {
       void message.error('展示价必须为非负金额，最多保留两位小数');
-      return;
+      return false;
     }
     if (minCents !== undefined && maxCents !== undefined && minCents > maxCents) {
       // The API rejects this pair; ignore the submission instead of showing an
       // error page for an input the operator can still correct in place.
       void message.error('展示价最低值不能高于最高值');
-      return;
+      return false;
     }
     updateSearch(next);
+    return true;
   };
 
   const resetFilters = () => {
