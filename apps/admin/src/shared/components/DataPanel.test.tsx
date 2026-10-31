@@ -117,7 +117,7 @@ describe('DataPanel controlled query contract', () => {
     expect(changes).not.toHaveBeenCalled();
     expect(refreshed).not.toHaveBeenCalled();
     expect(useUiPrefs.getState().dataPanels['fixture-a']?.view).toBe('card');
-    fireEvent.click(screen.getAllByRole('button', { name: '查看' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: /查\s*看/ })[0]);
     expect(selected).toHaveBeenCalledWith(ROWS[0]);
   });
 
@@ -143,7 +143,7 @@ describe('DataPanel controlled query contract', () => {
     expect(refreshed).toHaveBeenCalledTimes(1);
     rerender(<Fixture readonly withCards={false} rows={[]} />);
     expect(screen.getByText('暂无数据')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: '查看' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /查\s*看/ })).toBeNull();
     expect(screen.queryByText('卡片')).toBeNull();
   });
 
