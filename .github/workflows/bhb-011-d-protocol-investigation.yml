@@ -1,4 +1,4 @@
-name: BHB-011-D Read-only Order Query Contract Probe
+name: BHB-011-D Existing Local Evidence Inventory
 
 on:
   workflow_dispatch:
@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 jobs:
-  order-query-contract:
+  local-evidence-inventory:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
@@ -21,7 +21,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends sshpass >/dev/null
 
-      - name: Verify query keys against recovered signed DTO shape
+      - name: Count local fulfillment evidence without exposing identifiers
         shell: bash
         env:
           TARGET_HOST: ${{ secrets.PROTO_HOST }}
@@ -52,88 +52,60 @@ jobs:
 
           docker exec -i "$cid" node --input-type=module - <<'NODE'
           import Database from 'better-sqlite3';
-          import { drizzle } from 'drizzle-orm/better-sqlite3';
-          import * as schema from './dist/db/schema.js';
           import { loadConfig } from './dist/config.js';
-          import { activeYangmaoReadConfig } from './dist/modules/suppliers/connection.js';
-          import { createInriceSignature, createYangmaoInriceCatalogClient } from '@sanchuang-dev/provider-yangmao';
 
           const config = loadConfig(process.env);
-          const sqlite = new Database(config.databaseFile, { readonly: true, fileMustExist: true });
-          const probe = 'BHB011D_READONLY_PROBE_20261031_NO_ORDER';
-
-          async function rawGet(supplier, label, query, signedObject) {
-            const signedBody = JSON.stringify(signedObject);
-            const timestamp = String(Date.now());
-            const signature = createInriceSignature(supplier.appSecret, timestamp, signedBody);
-            const url = new URL('/api/open/inrice/v1/orders/query', supplier.baseUrl);
-            for (const [key, value] of Object.entries(query)) {
-              url.searchParams.set(key, value);
-            }
-
-            const response = await fetch(url, {
-              method: 'GET',
-              headers: {
-                'X-App-Key': supplier.appKey,
-                'X-Timestamp': timestamp,
-                'X-Signature': signature,
-                Accept: 'application/json',
-              },
-              redirect: 'manual',
-              signal: AbortSignal.timeout(10_000),
-            });
-            const rawBody = await response.text();
-
-            console.log('=== ' + label + ' ===');
-            console.log('query=' + JSON.stringify(query));
-            console.log('signed_json=' + signedBody);
-            console.log('http_status=' + response.status);
-            console.log('response_body_raw_begin');
-            console.log(rawBody);
-            console.log('response_body_raw_end');
-            console.log('=== END_' + label + ' ===');
-          }
+          const db = new Database(config.databaseFile, {
+            readonly: true,
+            fileMustExist: true,
+          });
 
           try {
-            const db = drizzle(sqlite, { schema });
-            const supplier = activeYangmaoReadConfig(db, config);
-            if (!supplier) throw new Error('Supplier read configuration unavailable');
+            const byMode = db.prepare(`
+              SELECT
+                fulfillment_mode AS mode,
+                COUNT(*) AS orderCount
+              FROM benefit_orders
+              GROUP BY fulfillment_mode
+              ORDER BY fulfillment_mode
+            `).all();
 
-            const catalog = await createYangmaoInriceCatalogClient(supplier).listProducts();
-            console.log('positive_control_products=' + catalog.products.length);
+            const attemptsByMode = db.prepare(`
+              SELECT
+                o.fulfillment_mode AS mode,
+                COUNT(a.id) AS attemptCount,
+                SUM(CASE
+                  WHEN a.upstream_order_no IS NOT NULL
+                   AND a.upstream_order_no <> ''
+                  THEN 1 ELSE 0 END) AS withUpstreamOrderNo,
+                SUM(CASE
+                  WHEN a.upstream_request_no IS NOT NULL
+                   AND a.upstream_request_no <> ''
+                  THEN 1 ELSE 0 END) AS withUpstreamRequestNo
+              FROM benefit_orders o
+              LEFT JOIN fulfillment_attempts a ON a.order_id = o.id
+              GROUP BY o.fulfillment_mode
+              ORDER BY o.fulfillment_mode
+            `).all();
 
-            await rawGet(
-              supplier,
-              'ORDERNO_NONEMPTY',
-              { orderNo: probe },
-              { orderNo: probe, partnerOrderNo: null },
-            );
-            await rawGet(
-              supplier,
-              'PARTNER_ORDERNO_NONEMPTY',
-              { partnerOrderNo: probe },
-              { orderNo: null, partnerOrderNo: probe },
-            );
-            await rawGet(
-              supplier,
-              'BOTH_NONEMPTY',
-              { orderNo: probe, partnerOrderNo: probe },
-              { orderNo: probe, partnerOrderNo: probe },
-            );
-            await rawGet(
-              supplier,
-              'ORDERNO_EMPTY',
-              { orderNo: '' },
-              { orderNo: '', partnerOrderNo: null },
-            );
-            await rawGet(
-              supplier,
-              'PARTNER_ORDERNO_EMPTY',
-              { partnerOrderNo: '' },
-              { orderNo: null, partnerOrderNo: '' },
-            );
+            console.log('=== ORDER_COUNTS_BY_MODE ===');
+            for (const row of byMode) {
+              console.log('mode=' + row.mode + ' orders=' + row.orderCount);
+            }
+            console.log('=== END_ORDER_COUNTS_BY_MODE ===');
+
+            console.log('=== ATTEMPT_COUNTS_BY_MODE ===');
+            for (const row of attemptsByMode) {
+              console.log(
+                'mode=' + row.mode +
+                ' attempts=' + row.attemptCount +
+                ' upstream_order_refs=' + (row.withUpstreamOrderNo ?? 0) +
+                ' upstream_request_refs=' + (row.withUpstreamRequestNo ?? 0)
+              );
+            }
+            console.log('=== END_ATTEMPT_COUNTS_BY_MODE ===');
           } finally {
-            sqlite.close();
+            db.close();
           }
           NODE
           REMOTE
