@@ -41,6 +41,8 @@ import { useOrderDetailQuery } from './use-orders';
 import { useSessionQuery } from '../auth/use-auth';
 import {
   dispatchDOrder,
+  grantAPrepaidOrder,
+  recoverAPrepaidOrder,
   recoverDOrder,
   reissueDirectTopup,
 } from './api';
@@ -179,6 +181,12 @@ export function OrderDetailDrawer({
     refCode: string;
     paymentReference: string;
   }>();
+  const [aForm] = Form.useForm<{
+    phone: string;
+    refCode: string;
+    paymentReference: string;
+    confirmPackDebit: boolean;
+  }>();
   const [dForm] = Form.useForm<{
     mobile: string;
     paymentReference: string;
@@ -187,6 +195,10 @@ export function OrderDetailDrawer({
   const [messageApi, contextHolder] = message.useMessage();
   const [reissueOpen, setReissueOpen] = useState(false);
   const [reissuePending, setReissuePending] = useState(false);
+  const [aGrantOpen, setAGrantOpen] = useState(false);
+  const [aGrantPending, setAGrantPending] = useState(false);
+  const [aRecoverPending, setARecoverPending] = useState(false);
+  const [aClaimUrl, setAClaimUrl] = useState<string | null>(null);
   const [dDispatchOpen, setDDispatchOpen] = useState(false);
   const [dDispatchPending, setDDispatchPending] = useState(false);
   const [dRecoverPending, setDRecoverPending] = useState(false);
@@ -219,6 +231,67 @@ export function OrderDetailDrawer({
     }
   }
 
+
+  async function handleAGrant() {
+    if (!orderId) return;
+    let fields: {
+      phone: string;
+      refCode: string;
+      paymentReference: string;
+      confirmPackDebit: boolean;
+    };
+    try {
+      fields = await aForm.validateFields();
+    } catch {
+      return;
+    }
+
+    setAGrantPending(true);
+    try {
+      const result = await grantAPrepaidOrder(orderId, {
+        phone: fields.phone,
+        refCode: fields.refCode,
+        paymentReference: fields.paymentReference,
+      });
+      setAClaimUrl(result.claimUrl ?? null);
+      messageApi.success(
+        result.claimUrl
+          ? 'A 真实下单已受理，并返回领取链接'
+          : 'A 下单已返回结果，请继续按原 requestId 核实领取链接',
+      );
+      aForm.resetFields();
+      setAGrantOpen(false);
+      void detailQuery.refetch();
+    } catch (error) {
+      messageApi.error(
+        error instanceof ApiError
+          ? error.message
+          : 'A 下单结果未能确认。请刷新订单并按原 requestId 恢复，切勿再次下单。',
+      );
+      void detailQuery.refetch();
+    } finally {
+      setAGrantPending(false);
+    }
+  }
+
+  async function handleARecover() {
+    if (!orderId) return;
+    setARecoverPending(true);
+    try {
+      const result = await recoverAPrepaidOrder(orderId);
+      setAClaimUrl(result.claimUrl ?? null);
+      messageApi.success(
+        result.claimUrl ? '已按原 requestId 恢复领取链接' : '已按原 requestId 查询上力',
+      );
+    } catch (error) {
+      messageApi.error(
+        error instanceof ApiError ? error.message : 'A 原单恢复失败，请稍后重试',
+      );
+    } finally {
+      setARecoverPending(false);
+      void detailQuery.refetch();
+    }
+  }
 
   async function handleDDispatch() {
     if (!orderId) return;
@@ -500,20 +573,55 @@ export function OrderDetailDrawer({
                       },
                     ]}
                   />
+                  {aClaimUrl ? (
+                    <Alert
+                      type="success"
+                      showIcon
+                      title="本次调用拿到了领取链接"
+                      description={
+                        <Space orientation="vertical" size={4}>
+                          <Text code copyable={{ text: aClaimUrl }}>{aClaimUrl}</Text>
+                          <Button type="link" href={aClaimUrl} target="_blank" rel="noreferrer">
+                            打开领取链接
+                          </Button>
+                        </Space>
+                      }
+                    />
+                  ) : null}
+                  {session.data?.admin.role === 'admin' &&
+                  detail.grant.state !== 'rejected' ? (
+                    <Button
+                      onClick={() => void handleARecover()}
+                      loading={aRecoverPending}
+                    >
+                      恢复原领取链接（同一 requestId）
+                    </Button>
+                  ) : null}
                   <Alert
                     type="info"
                     showIcon
                     title="领取链接不落库"
-                    description="平台不持久化 claimUrl，也不会自动重发下单。运营可在「供应商管理 → 上力 → 只读联调 → A 订单查询」用上面的 requestId 取回原领取链接；必须使用同一个 requestId，超时或未知结果不代表可以重新下单。"
+                    description="平台不持久化 claimUrl，也不会自动重发下单。后续只能使用同一个 requestId 查原单恢复链接；生成链接不等于用户已领取到账。"
                   />
                 </Space>
               ) : (
-                <Alert
-                  type="info"
-                  showIcon
-                  title="尚未发起上力下单"
-                  description="平台只记录本地业务意图，不会自动扣减礼包额度。只有在业务方确认已收款/已授权后，才可通过业务订单接口发起 A 模式下单。"
-                />
+                <Space orientation="vertical" size={8} className="fulfillment-detail">
+                  <Alert
+                    type="info"
+                    showIcon
+                    title="尚未发起上力下单"
+                    description="平台只记录本地业务意图，不会自动扣减礼包额度。真实下单必须由维护者临时开启 A 写权限，并使用平台生成的唯一 requestId。"
+                  />
+                  {session.data?.admin.role === 'admin' ? (
+                    <Button
+                      type="primary"
+                      danger
+                      onClick={() => setAGrantOpen(true)}
+                    >
+                      管理员真实下单一次
+                    </Button>
+                  ) : null}
+                </Space>
               )}
             </section>
           ) : null}
@@ -905,6 +1013,66 @@ export function OrderDetailDrawer({
         <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="没有可显示的订单详情" />
       )}
       </Drawer>
+      <Modal
+        open={aGrantOpen}
+        title="确认上力 A 真实下单"
+        okText="确认真实下单一次"
+        okButtonProps={{ danger: true }}
+        confirmLoading={aGrantPending}
+        onOk={() => void handleAGrant()}
+        onCancel={() => {
+          if (aGrantPending) return;
+          aForm.resetFields();
+          setAGrantOpen(false);
+        }}
+      >
+        <Alert
+          type="warning"
+          showIcon
+          title="这会真实创建上力 A 预充值订单，并可能扣除 1 份礼包额度"
+          description="系统使用订单冻结的 A 商品和平台生成的唯一 requestId。提交后无论成功、失败还是未知，都不要再次下单；后续只恢复原 requestId。"
+        />
+        <Form form={aForm} layout="vertical" autoComplete="off" style={{ marginTop: 16 }}>
+          <Form.Item
+            name="phone"
+            label="测试收件手机号"
+            rules={[{ required: true, pattern: /^1\d{10}$/, message: '请输入 11 位手机号' }]}
+          >
+            <Input type="tel" autoComplete="off" placeholder="请输入本次真实验收收件手机号" />
+          </Form.Item>
+          <Form.Item
+            name="refCode"
+            label="推广编码"
+            rules={[{ required: true, pattern: /^[!-~]{1,64}$/, message: '请输入推广编码' }]}
+          >
+            <Input autoComplete="off" placeholder="例如 SLD" />
+          </Form.Item>
+          <Form.Item
+            name="paymentReference"
+            label="业务支付或授权凭据号"
+            rules={[{ required: true, pattern: /^[!-~]{1,128}$/, message: '请输入可见 ASCII 凭据号' }]}
+          >
+            <Input autoComplete="off" placeholder="例如 A-LIVE-ACCEPT-20261031" />
+          </Form.Item>
+          <Form.Item
+            name="confirmPackDebit"
+            valuePropName="checked"
+            rules={[
+              {
+                validator: (_rule, value) =>
+                  value === true
+                    ? Promise.resolve()
+                    : Promise.reject(new Error('请确认这是真实供应商写操作')),
+              },
+            ]}
+          >
+            <Checkbox>
+              我确认这是真实供应商写操作，可能扣除 1 份上力礼包额度；提交后不重复下单。
+            </Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
+
       <Modal
         open={dDispatchOpen}
         title="确认上力 D 真实派发"
