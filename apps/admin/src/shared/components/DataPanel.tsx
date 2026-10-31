@@ -21,6 +21,8 @@ import {
   moveColumn,
   resolvePanelPreference,
   type DataPanelPreference,
+  type PanelDensity,
+  type PanelView,
 } from '../lib/data-panel-state';
 import { useUiPrefs } from '../lib/ui-prefs';
 import './DataPanel.css';
@@ -178,24 +180,23 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
   };
 
   const renderFilter = (filter: PanelFilter<Filters>) => {
-    const width = filter.width ?? (filter.kind === 'text' ? 230 : 160);
     if (filter.kind === 'text') {
-      return <Form.Item name={filter.key} label={filter.label}>
+      return <Form.Item name={String(filter.key)} label={filter.label}>
         <Input allowClear placeholder={filter.placeholder} style={{ width: '100%', minWidth: 0 }} />
       </Form.Item>;
     }
     if (filter.kind === 'select') {
-      return <Form.Item name={filter.key} label={filter.label}>
+      return <Form.Item name={String(filter.key)} label={filter.label}>
         <Select options={[...filter.options]} style={{ width: '100%' }} />
       </Form.Item>;
     }
     return <Form.Item label={filter.label}>
       <Space size={4} wrap>
-        <Form.Item name={[filter.key, 'min']} noStyle>
+        <Form.Item name={[String(filter.key), 'min']} noStyle>
           <InputNumber min={filter.min} max={filter.max} placeholder="最小值" aria-label={`${filter.label}最小值`} style={{ width: 104 }} />
         </Form.Item>
         <span aria-hidden="true">—</span>
-        <Form.Item name={[filter.key, 'max']} noStyle>
+        <Form.Item name={[String(filter.key), 'max']} noStyle>
           <InputNumber min={filter.min} max={filter.max} placeholder="最大值" aria-label={`${filter.label}最大值`} style={{ width: 104 }} />
         </Form.Item>
       </Space>
@@ -208,6 +209,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
       {prefs.columnOrder.map((key, index) => {
         const column = columns.find((item) => item.key === key);
         if (!column) return null;
+        const columnLabel = typeof column.title === 'string' ? column.title : column.key;
         return (
           <div key={key} className="data-panel-settings-row">
             <Checkbox
@@ -215,16 +217,16 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
               disabled={column.hideable === false || (visibleKeys.length === 1 && visibleKeys.includes(key))}
               onChange={(event) => toggleColumn(key, event.target.checked)}
             >
-              {column.title}
+              {columnLabel}
             </Checkbox>
             <Button
-              aria-label={`上移${String(column.title)}`}
+              aria-label={`上移${columnLabel}`}
               size="small" type="text" disabled={index === 0}
               icon={<ArrowUp size={14} />}
               onClick={() => savePreference({ columnOrder: moveColumn(prefs.columnOrder, key, -1) })}
             />
             <Button
-              aria-label={`下移${String(column.title)}`}
+              aria-label={`下移${columnLabel}`}
               size="small" type="text" disabled={index === prefs.columnOrder.length - 1}
               icon={<ArrowDown size={14} />}
               onClick={() => savePreference({ columnOrder: moveColumn(prefs.columnOrder, key, 1) })}
@@ -241,7 +243,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
           { label: '宽松', value: 'large' },
         ]}
         value={prefs.density}
-        onChange={(value) => savePreference({ density: value })}
+        onChange={(value) => savePreference({ density: value as PanelDensity })}
       />
     </div>
   );
@@ -291,7 +293,7 @@ export function DataPanel<Row extends object, Filters extends object, SortKey ex
                 aria-label="数据视图"
                 options={[{ label: '表格', value: 'table' }, { label: '卡片', value: 'card' }]}
                 value={prefs.view}
-                onChange={(view) => savePreference({ view })}
+                onChange={(view) => savePreference({ view: view as PanelView })}
               />
             ) : null}
             <Popover content={settings} trigger="click" placement="bottomRight">
